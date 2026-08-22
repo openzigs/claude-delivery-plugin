@@ -1,7 +1,7 @@
 ---
 name: research
 description: "Gathers and synthesizes research material from local files, web pages and library documentation into a structured research summary that feeds planning. Use before planning when the user provides document paths, URLs, or an unfamiliar standard governs the work."
-tools: Read, Bash, Skill, WebFetch, WebSearch
+tools: Read, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
 disallowedTools: Write, Edit
 model: sonnet
 color: yellow
@@ -50,9 +50,16 @@ rather than an exhaustive sweep — this feeds a planning step, not a dissertati
 
 ## Source types
 
-**Assume you have no MCP tools.** A `tools:` allowlist naming no `mcp__*` pattern excludes
-every MCP tool, however many servers are configured globally. If a documentation or search
-MCP server does happen to be available, use it; never make a step depend on one.
+**Never make a step depend on an MCP server.** A `tools:` allowlist naming no `mcp__*`
+pattern excludes every MCP tool, however many servers are configured globally — so most
+agents in this plugin have none, deliberately, and reach GitHub through the `gh` CLI.
+
+This agent is one of two exceptions: its allowlist names `mcp__tavily__*` and
+`mcp__context7__*`, because search and library documentation are what it does. **That is a
+permission, not a promise.** The allowlist cannot conjure a server the user has not
+configured, so both may simply be absent — check rather than assume, and treat them as
+accelerators over `WebSearch`/`WebFetch`, never as a dependency. A step that only works
+with Tavily configured is a step that silently does nothing for most users.
 
 | Source | Tools | When |
 |--------|-------|------|

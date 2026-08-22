@@ -1,7 +1,7 @@
 ---
 name: code-planner
 description: "Autonomous project planning agent. Turns a feature request or a research summary into a structured GitHub epic and its sub-issues, with Mermaid diagrams, checkable acceptance criteria, story points and a phased dependency order. Writes no code and opens no pull request."
-tools: Read, Write, Edit, Bash, Skill, WebFetch, WebSearch
+tools: Read, Write, Edit, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
 model: inherit
 color: blue
 ---
@@ -87,8 +87,17 @@ with a single sub-issue is pure overhead.
 
 ## Tool guidance
 
-**Assume you have no MCP tools.** A `tools:` allowlist naming no `mcp__*` pattern excludes
-every MCP tool, however many servers are configured globally. Use:
+**Never make a step depend on an MCP server.** A `tools:` allowlist naming no `mcp__*`
+pattern excludes every MCP tool, however many servers are configured globally — so most
+agents in this plugin have none, deliberately.
+
+This agent's allowlist does name `mcp__tavily__*` and `mcp__context7__*`, because planning
+often needs to check how something is actually specified. **That is a permission, not a
+promise:** the allowlist cannot conjure a server the user has not configured, so check
+rather than assume, and treat them as accelerators over `WebSearch`/`WebFetch`. A step
+that only works with Tavily configured silently does nothing for most users.
+
+Use:
 
 - `gh` CLI — create issues, epics, labels and milestones. Write every issue body to a file
   and pass `--body-file`; a Mermaid diagram inlined into `gh issue create --body "..."`

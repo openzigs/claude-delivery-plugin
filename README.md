@@ -150,6 +150,35 @@ More checks, including what each failure looks like, are in
 
 ---
 
+## MCP servers: what this plugin needs, and what it merely uses
+
+**Nothing here requires an MCP server.** Every step works with the built-in tools plus the
+`gh` CLI, and that is deliberate: an agent whose procedure depends on a server the user has
+not configured fails by quietly skipping a step, which is the failure mode this plugin
+exists to remove.
+
+| Server | Used by | Required? |
+|---|---|---|
+| **Playwright** (`mcp__playwright__*`) | `delivery:e2e-test`, `delivery:ui-vision` | **Yes, for those two.** Driving a real browser is what they do; without it they cannot work and will say so |
+| **Tavily** (`mcp__tavily__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebSearch` |
+| **Context7** (`mcp__context7__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebFetch` on official docs |
+| **GitHub** | *nobody* | No — every agent uses the `gh` CLI instead |
+
+GitHub is deliberately absent. The `gh` CLI authenticates separately, works in every
+environment these agents run in, and does not silently stop working when an MCP server's
+credentials go stale — which is a real failure mode, and one that presents as an agent
+inexplicably unable to read a pull request.
+
+**A `tools:` allowlist naming `mcp__tavily__*` is a permission, not a promise.** It cannot
+conjure a server you have not configured. The two agents that name those patterns are told
+to check rather than assume, and to treat them as faster paths rather than dependencies —
+so the plugin behaves identically whether or not you have them, only slower.
+
+If you want the accelerators, configure the servers as you normally would; there is nothing
+plugin-specific to do. If you want to *remove* Playwright's requirement, the two browser
+agents are the ones to fork — see [docs/customising.md](docs/customising.md).
+
+
 ## Per-project configuration
 
 The generic agents cannot hardcode your project's rules, but they still need them. The
