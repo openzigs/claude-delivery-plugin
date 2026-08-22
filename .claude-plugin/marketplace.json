@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "claude-delivery-plugin",
+  "description": "Single-plugin marketplace for the delivery pipeline plugin. This repository is both the plugin and the marketplace that serves it, so `claude plugin marketplace add openzigs/claude-delivery-plugin` is all a consumer needs.",
+  "owner": {
+    "name": "openzigs",
+    "url": "https://github.com/openzigs"
+  },
+  "plugins": [
+    {
+      "name": "delivery",
+      "description": "A project-agnostic delivery pipeline: workflows that take a GitHub issue through implement, independent review, fix and re-review, and that turn a topic into a filed epic with sub-issues. Seven agents, eight skills, no hardcoded project rules.",
+      "author": {
+        "name": "openzigs"
+      },
+      "category": "development",
+      "source": "./",
+      "homepage": "https://github.com/openzigs/claude-delivery-plugin"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "delivery",
+  "version": "0.1.0",
+  "description": "A project-agnostic delivery pipeline for Claude Code: workflows that take a GitHub issue from implementation through independent review, fix and re-review, and that turn a topic into a filed epic with sub-issues. Exists because Claude Code cannot invoke an agent directly — dispatch is only ever a model reading a description and choosing — so a pipeline written as a convention is a request, while a workflow is a command whose sequence is code. Ships seven agents and eight skills; every dispatched prompt reads the project's own CLAUDE.md for its hard rules rather than hardcoding any.",
+  "author": {
+    "name": "openzigs",
+    "url": "https://github.com/openzigs"
+  },
+  "homepage": "https://github.com/openzigs/claude-delivery-plugin",
+  "repository": "https://github.com/openzigs/claude-delivery-plugin",
+  "license": "MIT",
+  "keywords": ["workflow", "agents", "code-review", "tdd", "github", "delivery", "orchestration"]
+}

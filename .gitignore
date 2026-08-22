@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# Node — the plugin ships no runtime dependencies, but tooling may be added
+node_modules/
+npm-debug.log*
+yarn-error.log*
+package-lock.json.bak
+
+# Local Claude Code state (never commit machine-specific settings)
+.claude/settings.local.json
+.claude/agent-memory/
+
+# Scratch
+tmp/
+*.log
