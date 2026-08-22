@@ -174,8 +174,11 @@ conjure a server you have not configured. The two agents that name those pattern
 to check rather than assume, and to treat them as faster paths rather than dependencies —
 so the plugin behaves identically whether or not you have them, only slower.
 
-If you want the accelerators, configure the servers as you normally would; there is nothing
-plugin-specific to do. If you want to *remove* Playwright's requirement, the two browser
+**[docs/mcp-servers.md](docs/mcp-servers.md) has the registration commands** for macOS,
+Linux and Windows, including the Windows `npx.cmd` and quoting traps that make a server
+register successfully and then silently fail to start. It names the environment variable
+each key goes in and links to the vendor for the key itself, rather than reproducing signup
+flows that go stale. If you want to *remove* Playwright's requirement, the two browser
 agents are the ones to fork — see [docs/customising.md](docs/customising.md).
 
 
