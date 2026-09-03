@@ -2,7 +2,7 @@
 name: e2e-test
 description: "Playwright end-to-end test writer. Maps acceptance criteria from a GitHub issue to concrete browser-based test cases, follows the Page Object Model, uses accessible locators, and pushes the specs to the existing feature branch."
 tools: Read, Write, Edit, Bash, Skill, WebFetch, mcp__playwright__*
-model: sonnet
+model: inherit
 color: cyan
 ---
 
