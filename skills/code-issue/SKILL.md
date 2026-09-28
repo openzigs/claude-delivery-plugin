@@ -19,21 +19,20 @@ It is written to be repository-agnostic. Nothing here assumes a language, a pack
 - The user says "start coding", "pick up the next issue", or "implement this"
 - There is an epic with multiple sub-issues to complete in sequence
 
-## Step 0: Read the project's rules — before anything else
+## Step 0: The project's rules come first
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
-project states its own hard rules: the exact build / test / lint commands, coverage floors, the
-changelog convention, protected paths and data-handling rules. A generic workflow that guesses at
-these produces plausible commands that do not exist and gates that never ran.
+The project's `CLAUDE.md` is already in your context — do not re-read it. It is the authority
+on the exact build / test / lint commands, coverage floors, the changelog convention, protected
+paths and data-handling rules; where it and this document disagree, the project wins, and the
+numbers here are defaults for a repository that names none. If the repository has an
+`AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`. **If `.claude/delivery.md` exists, read it** —
+it holds delivery-pipeline constraints such as branch naming, PR body shape and which gates
+block a merge.
 
-**If `.claude/delivery.md` exists, read it too.** It holds delivery-pipeline constraints the project
-wants every dispatched agent to carry — branch naming, PR body shape, which gates block a merge.
-
-**Neither file existing is fine.** Fall back to inferring commands from the repository itself —
-`package.json` scripts, `Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, the CI workflow under
-`.github/workflows/` — and **say in your report what you inferred**, so the user can correct a wrong
-guess instead of discovering it in CI. Where this document and the project's own file disagree, the
-project wins; the numbers here are defaults for a repository that names none.
+If the project states no commands, infer them from the repository — `package.json` scripts,
+`Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, and above all the CI workflow under
+`.github/workflows/` — and **say in your report what you inferred**. An inferred command
+presented as a known one is how a "green" report gets made from a suite that never ran.
 
 ## Agent and tools
 
@@ -97,6 +96,10 @@ installed it is a convenience, not the path; the `gh` command is.
 
 Always name the remote explicitly rather than relying on a default. A repository may carry more than
 one remote, and some of them are unreachable provenance records rather than push targets.
+
+**If the checkout may be shared with another session, do not `git checkout` in it** — a branch
+switch under another agent moves its HEAD mid-task. Create your own worktree (`git worktree add`)
+and remove it when you are done.
 
 #### Resuming an Existing Branch (Merge Conflict Handling)
 
@@ -243,8 +246,9 @@ exist. **If a document does not exist, skip it — do not create it here.**
 Follow the project's changelog convention if it has one — `CLAUDE.md` states it. **If it uses
 per-PR fragments, add a fragment rather than editing the shared CHANGELOG.** A shared-file
 convention puts every open PR on the same anchor line, so the first merge conflicts every other
-branch and each one pays a rebase; a fragment is a new file and merges silently. Never bump a
-version unless the project says that is part of a PR.
+branch and each one pays a rebase; a fragment is a new file and merges silently. **Run whatever
+fragment validator the project ships** — a misnamed fragment is typically skipped in silence at
+assembly. Never bump a version unless the project says that is part of a PR.
 
 #### Architecture documentation
 
@@ -286,12 +290,14 @@ scratch — and what stops it running a command that no longer exists.
 
 ### Step 6: Delivery
 
-1. Stage the changes: `git add -A`. Review `git status` first — never stage files that the
-   repository's ignore rules or `CLAUDE.md` mark as protected, and never force past an ignore rule.
-   Some projects ignore paths because publishing them cannot be undone by a later commit.
+1. Stage explicit paths with `git add <paths>` — never `git add -A`, which can sweep in another
+   session's work in progress. Review `git status` first; never stage files that `CLAUDE.md` marks
+   as protected, and never `git add -f` past an ignore rule. Some projects ignore paths because
+   publishing them cannot be undone by a later commit.
 2. Commit with a conventional message: `feat: [Issue #N] description` or `fix: [Issue #N] description`
 3. Push the branch to the origin remote
-4. Create the PR with `gh pr create`:
+4. Create the PR with `gh pr create --body-file <file>` — inlining prose into a `gh` command is
+   how quoting bugs and truncation happen:
    - Title: `feat: Resolve #{epic-number} — {description}`
    - Body: summary of changes; `Closes #N` for every resolved issue; the coverage numbers; the
      mutations you used to prove the tests can fail; the security scan result

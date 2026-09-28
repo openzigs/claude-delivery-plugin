@@ -17,29 +17,23 @@ caller's context. It starts cold, in your repository, with whatever the prompt t
 
 One sentence, applied everywhere:
 
-> **Every dispatched prompt instructs the agent to read the project's `CLAUDE.md` (or
-> `AGENTS.md`) first and obey it exactly**, because that is where a project states its own
-> hard rules.
+> **Every dispatched agent obeys the project's `CLAUDE.md` (or `AGENTS.md`) exactly**,
+> because that is where a project states its own hard rules.
 
-Every agent in this plugin opens with a section saying so. Every workflow prompt repeats it.
-And where a project rule conflicts with a plugin default, **the project wins** — that
-precedence is stated in each agent, not left to be inferred.
+Where a project rule conflicts with a plugin default, **the project wins** — that precedence
+is stated in each agent and skill, not left to be inferred.
 
-### Plus a Preflight phase, because naming a file is weaker than carrying it
+### How the rules reach each agent
 
-Both workflows begin with a **Preflight** phase that:
+Claude Code injects `CLAUDE.md` into every subagent's context at start, including the ones
+these workflows dispatch. So the workflows do **not** read it and quote it back into each
+prompt — an earlier version did, in a Preflight phase, and paid for the same text two or
+three times per dispatch with no gain in adherence.
 
-1. Identifies the repository (`gh repo view --json nameWithOwner`) and its default branch.
-2. Reads `CLAUDE.md`, or `AGENTS.md` if there is no `CLAUDE.md`.
-3. Quotes every hard rule **verbatim** — commands are never paraphrased, because a
-   paraphrased command is a wrong command.
-4. Reads `.claude/delivery.md` if it exists, and quotes it in full.
-5. If neither file exists, derives the gate from `.github/workflows/` and the package
-   manifests, and labels every derived command **INFERRED**.
+What the workflows *do* name in every prompt is what is not auto-loaded:
 
-The result is interpolated into every later prompt in that run. So the implementer does not
-merely get told to read your rules — it gets handed them, and is also told to read them
-itself.
+1. **`.claude/delivery.md`** — each agent is told to read it if it exists.
+2. **`AGENTS.md`** — for repositories that keep their rules there instead of in `CLAUDE.md`.
 
 ### If you have neither file
 
@@ -132,5 +126,5 @@ The agents ask specific questions of it. Answer these and the pipeline behaves w
   than the number.
 - **Rules you will not enforce.** An agent treats a stated rule as binding. A wish list makes
   it cautious about the wrong things.
-- **Secrets, tokens, or internal URLs** that you would not want quoted verbatim into a
-  subagent prompt — which is exactly what Preflight does with these files.
+- **Secrets, tokens, or internal URLs** that you would not want read into every subagent's
+  transcript — which is exactly where both files end up.

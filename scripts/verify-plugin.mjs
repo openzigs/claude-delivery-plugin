@@ -16,7 +16,8 @@
 //      executing the module, so a variable, a call, a template interpolation or
 //      even a `+` concatenation is rejected
 //   7. every workflow body actually runs, against stubbed agent/phase/log, and
-//      produces the intended phase order -- including the conditional branches
+//      produces the intended phase order -- including the conditional branches,
+//      which are driven by the review's structured output
 //
 // It exists because every one of those failures is silent at runtime.
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
@@ -144,6 +145,16 @@ function purityViolations(metaSrc) {
   return bad
 }
 
+const CLEAN_REVIEW = {
+  pr: 7, recommendation: 'Recommendation: merge — no blocking findings', blocking: false,
+  findings: [{ severity: 'nit', location: 'a.ts:1', summary: 'naming', blocking: false }],
+  verification: 'ran the suite',
+}
+const BLOCKING_REVIEW = {
+  ...CLEAN_REVIEW, recommendation: 'Recommendation: do not merge — 1 blocking finding', blocking: true,
+  findings: [{ severity: 'high', location: 'db.ts:9', summary: 'missing scope column', blocking: true }],
+}
+
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const workflowFiles = readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsWith('.js')).sort()
 
@@ -178,20 +189,19 @@ for (const file of workflowFiles) {
         argv,
         async (prompt, opts = {}) => {
           dispatches.push({ label: opts.label, phase: opts.phase, agentType: opts.agentType || null, promptLen: prompt.length })
-          if (opts.label === 'triage') return 'CLEAR\nNothing blocking was reported.'
+          if (opts.schema) return CLEAN_REVIEW
           return `[stub output for ${opts.label}]`
         },
         (t) => phases.push(t),
         (m) => logs.push(m),
       )
       const expected = file === 'orchestrate.js'
-        ? ['Preflight', 'Implement', 'Review', 'Fix']
-        : ['Preflight', 'Research', 'Plan']
+        ? ['Implement', 'Review', 'Fix']
+        : ['Research', 'Plan']
       JSON.stringify(phases) === JSON.stringify(expected)
         ? ok(`${file} ${label}: phase order ${phases.join(' -> ')}`)
         : bad(`${file} ${label}: phase order ${phases.join(' -> ')} != ${expected.join(' -> ')}`)
       for (const d of dispatches) {
-        if (['preflight', 'triage'].includes(d.label)) continue
         if (!d.agentType?.startsWith('delivery:')) bad(`${file}: dispatch "${d.label}" has agentType ${d.agentType}`)
       }
       if (argv === '412' && file === 'orchestrate.js') {
@@ -206,19 +216,43 @@ for (const file of workflowFiles) {
     } catch (e) { bad(`${file} ${label}: threw — ${e.message}`) }
   }
 
-  // 5. blocking path exercised: triage says BLOCKING -> Fix + Re-review must run
+  // 5. the fix branch is decided by the review's structured output, not by prose.
+  //    Exercise every way a review can come back.
   if (file === 'orchestrate.js') {
-    const phases = [], dispatches = []
-    const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
-    const result = await fn('412',
-      async (p, o = {}) => { dispatches.push(o.label); return o.label === 'triage' ? 'BLOCKING\nA missing scope column.' : `[stub ${o.label}]` },
-      (t) => phases.push(t), () => {})
-    JSON.stringify(phases) === JSON.stringify(['Preflight', 'Implement', 'Review', 'Fix', 'Re-review'])
-      ? ok(`orchestrate.js blocking path: ${phases.join(' -> ')}`)
-      : bad(`orchestrate.js blocking path: ${phases.join(' -> ')}`)
-    result.blockingFindings && result.fix && result.reReview && result.merged === false
-      ? ok('orchestrate.js blocking path: fix + re-review ran, merged=false')
-      : bad('orchestrate.js blocking path: fix/re-review missing')
+    const run = async (review) => {
+      const phases = [], dispatches = []
+      const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
+      const result = await fn('412',
+        async (p, o = {}) => { dispatches.push(o); return o.schema ? review : `[stub ${o.label}]` },
+        (t) => phases.push(t), () => {})
+      return { phases, dispatches, result }
+    }
+    const reviewDispatchesHaveSchema = (ds) =>
+      ds.filter((d) => d.agentType === 'delivery:code-review').every((d) => d.schema?.properties?.blocking)
+
+    let r = await run(BLOCKING_REVIEW)
+    JSON.stringify(r.phases) === JSON.stringify(['Implement', 'Review', 'Fix', 'Re-review'])
+      && r.result.blockingFindings && r.result.fix && r.result.reReview && r.result.merged === false
+      ? ok(`orchestrate.js blocking review: ${r.phases.join(' -> ')}, merged=false`)
+      : bad(`orchestrate.js blocking review: ${r.phases.join(' -> ')}`)
+    reviewDispatchesHaveSchema(r.dispatches)
+      ? ok('orchestrate.js: every review dispatch carries the structured-output schema')
+      : bad('orchestrate.js: a review dispatch is missing the schema')
+    r.dispatches.every((d) => d.agentType?.startsWith('delivery:'))
+      ? ok('orchestrate.js: no untyped helper agents (no preflight/triage dispatch)')
+      : bad(`orchestrate.js: untyped dispatch ${r.dispatches.filter((d) => !d.agentType).map((d) => d.label)}`)
+
+    // top-level flag false but one finding blocking -> still a fix pass
+    r = await run({ ...CLEAN_REVIEW, findings: [{ ...BLOCKING_REVIEW.findings[0] }] })
+    r.phases.includes('Fix') && r.result.fix
+      ? ok('orchestrate.js: a blocking finding under blocking=false still triggers the fix')
+      : bad('orchestrate.js: flag/finding disagreement skipped the fix')
+
+    // review died -> stop loudly, never report as reviewed
+    r = await run(null)
+    r.result.reviewCompleted === false && !r.phases.includes('Fix')
+      ? ok('orchestrate.js: a review that never returned stops the run as unreviewed')
+      : bad('orchestrate.js: a missing review was treated as clean')
   }
 }
 

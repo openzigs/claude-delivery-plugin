@@ -25,15 +25,13 @@ If you want a phase to definitely happen, run the workflow.
 /delivery:orchestrate                       (uses what you described in conversation)
 ```
 
-**Phases:** Preflight → Implement → Review → *(Fix → Re-review, conditionally)*
+**Phases:** Implement → Review → *(Fix → Re-review, conditionally)*
 
 | Phase | Agent | Notes |
 |---|---|---|
-| Preflight | *(default)* | Reads `CLAUDE.md` / `AGENTS.md` / `.claude/delivery.md` and returns the project's rules verbatim. Low effort |
 | Implement | `delivery:code-issue` | TDD, coverage, branch, PR, CI watch |
-| Review | `delivery:code-review` | Independent read of the PR; publishes inline comments |
-| *(triage)* | *(default)* | One low-effort call answering `BLOCKING` or `CLEAR` |
-| Fix | `delivery:code-issue` | Only if triage said `BLOCKING` |
+| Review | `delivery:code-review` | Independent read of the PR; publishes inline comments, and returns its findings as structured output with a `blocking` flag |
+| Fix | `delivery:code-issue` | Only if the review flagged a blocking finding |
 | Re-review | `delivery:code-review` | Cycle 2 of a maximum 2 |
 
 **It never merges.** Merging is your decision, and an automated merge on a branch nobody
@@ -68,10 +66,13 @@ and is not one.)
 
 Identical to `412`. The `#` is stripped.
 
-**Why the triage step is a model call and not a regex.** Reviewers phrase blockers several
-ways — "must fix before merge", "blocking", "I would not ship this". A regex that missed one
-would silently skip the fix phase, which is precisely the class of failure this workflow
-exists to prevent. So a small, cheap model call reads the review and answers one word.
+**Why the fix decision is structured output and not a regex.** Reviewers phrase blockers
+several ways — "must fix before merge", "blocking", "I would not ship this". A regex that
+missed one would silently skip the fix phase, which is precisely the class of failure this
+workflow exists to prevent. So the review agent is given a JSON schema and must commit to a
+`blocking` boolean, and a per-finding `blocking` flag, at the tool-call layer. The fix runs
+if *either* says blocking. A review that never returns stops the run as unreviewed rather
+than being treated as clean.
 
 ---
 
@@ -84,13 +85,12 @@ exists to prevent. So a small, cheap model call reads the review and answers one
 /delivery:plan-epic                          (uses what you described in conversation)
 ```
 
-**Phases:** Preflight → Research → Plan
+**Phases:** Research → Plan
 
 | Phase | Agent | Notes |
 |---|---|---|
-| Preflight | *(default)* | Project rules, plus `gh label list` so the planner does not invent parallel labels |
 | Research | `delivery:research` | Local files, web, library docs, **and this repository** — including the open backlog, so the plan does not duplicate filed work |
-| Plan | `delivery:code-planner` | Files the epic and sub-issues with Mermaid diagrams, acceptance criteria, story points, phase order |
+| Plan | `delivery:code-planner` | Runs `gh label list` first so it does not invent parallel labels, then files the epic and sub-issues with Mermaid diagrams, acceptance criteria, story points, phase order |
 
 **It writes no code and opens no pull request.** It ends at filed issues. To take one
 forward: `/delivery:orchestrate <that issue number>`.
@@ -220,12 +220,12 @@ claude
 ```
 > /delivery:plan-epic add audit-log retention with a configurable window
 
-  ... Preflight → Research → Plan ...
+  ... Research → Plan ...
   Filed epic #530 with sub-issues #531, #532, #533.
 
 > /delivery:orchestrate 531
 
-  ... Preflight → Implement → Review ...
+  ... Implement → Review ...
   PR #540 opened. Review found 1 blocking finding.
   ... Fix → Re-review ...
   Re-review: no blocking findings remain. Nothing was merged.

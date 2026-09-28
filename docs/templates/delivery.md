@@ -9,9 +9,9 @@
   EVERY session's context and pays its token cost on every turn, whereas this file
   is read only when a delivery agent actually runs.
 
-  How it is used: the Preflight phase of /delivery:orchestrate and
-  /delivery:plan-epic reads this file and quotes it VERBATIM into every subsequent
-  prompt. So write it as instructions to an agent, not as notes to yourself.
+  How it is used: every agent dispatched by /delivery:orchestrate and
+  /delivery:plan-epic is told to read this file if it exists. So write it as
+  instructions to an agent, not as notes to yourself.
 
   Commit it. It describes the project, not your machine.
 

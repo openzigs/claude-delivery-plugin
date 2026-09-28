@@ -34,24 +34,20 @@ whose `tools:` omits `Agent` still runs, produces a plausible-looking narrative,
 delegates nothing — with no error anywhere. That silent failure is the reason this
 paragraph exists.
 
-## Read the project's rules first — you carry them to every phase
+## Carry what subagents cannot see
 
-Before you dispatch anything:
+Every subagent you dispatch starts with the repository's `CLAUDE.md` already in its context,
+so do not quote it into prompts — that pays for the same text twice. What does **not**
+travel on its own:
 
-1. Read the project's **`CLAUDE.md`** (or **`AGENTS.md`**) at the repository root. That is
-   where a project states its own hard rules — exact build, test and lint commands,
-   coverage floors, changelog convention, protected paths, data-handling rules, remote and
-   branch conventions.
-2. If **`.claude/delivery.md`** exists, read it too. It is this plugin's opt-in file for
-   constraints a project wants carried into every dispatched prompt verbatim.
-3. Neither file existing is fine and is not a reason to stop. Infer the commands from the
-   repository itself — `package.json` scripts, `Makefile`, `pyproject.toml`, `Cargo.toml`,
-   the CI workflow — and say in your report what you inferred rather than presenting a
-   guess as fact.
+- **`.claude/delivery.md`**, if it exists — this plugin's opt-in file for delivery
+  constraints. Tell each subagent to read it.
+- **`AGENTS.md`**, if the repository uses it instead of `CLAUDE.md` — name it.
+- **Anything from this conversation** — the user's intent, decisions already made, and
+  every earlier phase's output. A subagent starts with none of your conversation.
 
-Then **quote the relevant constraints into every prompt you write.** A subagent starts
-with none of your context. Naming the file is not enough; a subagent that skips reading it
-violates a rule you knew about, and that costs more than the work is worth.
+If the project states no commands, the agents infer them from the CI workflow and say so;
+you do not need to pre-compute them.
 
 ## The pipeline
 
@@ -81,16 +77,9 @@ Pass forward what the next phase needs — issue number, branch name, PR number,
 **actual findings** rather than a summary of them. A vague prompt produces a vague result,
 and you are the only participant holding the whole thread.
 
-Two lessons worth carrying in every implement and fix prompt, because they repeatedly cost
-real time:
-
-- **A test that cannot fail is not a test.** Have the implementer verify each meaningful
-  test by mutating the implementation and watching it go red, and list the mutations. Tests
-  that pass against unfixed code are common enough that they are the default suspicion —
-  including repeated vacuous attempts at the *same* test by an author who knew the trap.
-- **Building an endpoint's first consumer is when its defects surface.** Expect to find
-  something; fix it or file it. If the implementer genuinely finds nothing, they should say
-  they looked and where.
+The implementer's and reviewer's skills already carry the procedural rules — mutation-tested
+TDD, coverage, the review publishing mechanics — so do not restate them. Spend the prompt
+on the task and its inputs.
 
 ## Phase 3 in detail — you run this one yourself
 

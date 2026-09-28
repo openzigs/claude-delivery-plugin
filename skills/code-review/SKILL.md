@@ -22,21 +22,17 @@ Inspired by [Google's Engineering Practices](https://google.github.io/eng-practi
 - The user asks to "check if PR #N meets the requirements for issue #M"
 - As a handoff target from the Code Issue agent's delivery step
 
-## Step 0: Read the project's rules — before reading any diff
+## Step 0: The project's rules come first
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
-project states its own hard rules: the exact build / test / lint commands, coverage floors, the
-changelog convention, protected paths and data-handling rules. Reviewing against invented standards
-produces confident findings that are wrong, which is worse than no review.
+The project's `CLAUDE.md` is already in your context — do not re-read it. Review against it:
+reviewing against invented standards produces confident findings that are wrong, which is worse
+than no review. If the repository has an `AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`. **If
+`.claude/delivery.md` exists, read it** — it is often where the blocking-versus-advisory line is
+drawn.
 
-**If `.claude/delivery.md` exists, read it too** — it holds the delivery-pipeline constraints the
-project wants every dispatched agent to carry, and it is often where the blocking-versus-advisory
-line is drawn.
-
-**Neither file existing is fine.** Infer the commands and conventions from the repository —
-`package.json` scripts, `Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, the CI workflow — and
-**say in the review what you inferred**. A finding that rests on an inferred standard must be
-labelled as such, not asserted as a rule.
+If the project states no commands or conventions, infer them from the repository — package
+manifests, `Makefile`, the CI workflow — and **say in the review what you inferred**. A finding
+that rests on an inferred standard must be labelled as such, not asserted as a rule.
 
 ## Agent and tools
 
@@ -94,6 +90,10 @@ Step 9 is `gh`, deliberately.
 5. **List changed files:** `gh pr view {PR_NUMBER} --json files --jq '.files[].path'`
 6. **Read each changed file in full** — not just the diff hunks. Context matters, and the defects
    that matter most are usually visible only in the part the diff did not touch.
+7. **Check CI:** `gh pr checks {PR_NUMBER}`. Failing CI is blocking. A job stuck in `queued` is
+   not the PR's fault — a deep queue and a runner outage look identical from `gh pr checks`, so say
+   which it is (or that you could not tell) rather than reporting a red check. Do **not** report
+   pre-existing lint or type findings as PR findings.
 
 ### Step 2: Requirements Validation
 
@@ -216,6 +216,15 @@ The dominant defect shape to hunt in the tests is **a write that reports success
 cannot see it** — wrong storage, wrong layer, wrong time (never committed), or wrong harness (the
 test never re-read). Ask of each persistence test: what would this catch if the write were deleted?
 
+Two more shapes that survive a green build:
+
+- **Green build, broken artifact.** A type-check and a bundle both succeeding says nothing about
+  what loads at runtime. Where a project has chained extra verification into its build to catch
+  that, a PR that unpicks the chain removes the only check between a passing build and a broken
+  app — blocking.
+- **A guard that cannot fire.** A validation, permission check or assertion placed where the
+  condition it tests is already impossible.
+
 ### Step 8: Documentation Review
 
 | Check | Question |
@@ -233,10 +242,11 @@ test never re-read). Ask of each persistence test: what would this catch if the 
 Publish with the `gh` CLI. The mechanics below are not incidental — each one corresponds to a
 failure mode that silently publishes the wrong thing, or nothing.
 
-**1. Build the payload as a file, at an absolute, PR-unique path.**
+**1. Build the payload as a file, at a fresh, PR-unique path.**
 
 ```bash
-/tmp/review-{PR_NUMBER}.json
+REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+PAYLOAD="$(mktemp -d)/review-{PR_NUMBER}.json"
 ```
 
 ```json
@@ -249,72 +259,59 @@ failure mode that silently publishes the wrong thing, or nothing.
 }
 ```
 
+Put every finding in `comments` (one `{path, line, body}` entry each) rather than in the body —
+`gh pr review` cannot post inline comments, and a review without them reads as empty.
+
 **`event` and `body` go INSIDE the JSON passed to `--input` — never as `-f` flags.** Fields passed
 as `-f` on a `POST` with `--input` land in the *query string*, where a real review body is far too
-long: the request fails with a 414. The JSON file is the only place they belong.
+long: the request fails with **HTTP 414**, which reads like a size limit on reviews rather than a
+mistake in the invocation.
 
 **2. Read the payload back before POSTing.**
 
 ```bash
-jq '{event, body_len: (.body|length), comments: (.comments|length)}' /tmp/review-{PR_NUMBER}.json
+jq '{event, body_len: (.body|length), comments: (.comments|length), first: (.comments[0].path // "none")}' "$PAYLOAD"
+gh api -X POST "repos/$REPO/pulls/{PR_NUMBER}/reviews" --input "$PAYLOAD"
 ```
 
-The path must be **absolute and PR-unique**. A reused, relative `findings.json` left over from an
-earlier session publishes a *previous PR's* inline comments against this PR — and the symptom is not
-an obvious one: it surfaces as repeated `422 Unprocessable Entity` with `Path could not be resolved`
-for files that do not exist on this branch. Reading the file back with `jq` first turns a confusing
-422 loop into an obvious mismatch you catch before the POST.
+A reused scratch file such as `findings.json` left over from an earlier session publishes a
+*previous PR's* inline comments against this PR — and the symptom is not an obvious one: it
+surfaces as repeated `422 Path could not be resolved`, once per comment, which reads like a
+line-number bug in your own payload. The tell is that the error count matches the *stale* file's
+comment count, not yours. A fresh `mktemp -d` path plus the `jq` read-back rules it out.
 
-**3. Choose the event — and know that you cannot review your own PR.**
+**3. Publish `"event": "COMMENT"` with a `Recommendation:` line — always.**
 
-```bash
-gh api repos/<owner>/<repo>/pulls/{PR_NUMBER}/reviews --input /tmp/review-{PR_NUMBER}.json
-```
+GitHub rejects `APPROVE` and `REQUEST_CHANGES` on your own pull request with **422 — `Can not
+request changes on your own pull request`**, and in an automated pipeline the authenticated `gh`
+user is usually also the PR author. More fundamentally, **no automated review is an independent
+approval**, whoever the identity is. So publish `COMMENT`, open the body with a recommendation,
+and leave the merge decision with a human:
 
-GitHub rejects `APPROVE` and `REQUEST_CHANGES` on your own pull request with a **422**. **When the
-authenticated `gh` user is also the PR author — common for automated pipelines, where one identity
-opens and reviews — publish `"event": "COMMENT"`** and open the body with a `Recommendation:` line
-carrying the judgement instead:
+- `Recommendation: merge — no blocking findings`
+- `Recommendation: merge with follow-ups — N non-blocking findings`
+- `Recommendation: do not merge — N blocking findings`
 
-```
-Recommendation: REQUEST_CHANGES (advisory)
-
-This is automated analysis published as a comment, not a human sign-off:
-the reviewing identity is also the PR author, so GitHub cannot record an
-approval or a change request from it. A human still owns the merge decision.
-```
-
-Check first rather than discovering it at the 422:
-
-```bash
-gh api user --jq .login
-gh pr view {PR_NUMBER} --json author --jq .author.login
-```
-
-**Do not work around the 422** by retrying with a different event, and do not write
-`APPROVE` / `REQUEST_CHANGES` / a bare `Verdict:` line as though the review carried authority it
-does not. Say plainly what this is. When the reviewer and the author are different identities, the
-normal events apply and `Verdict:` is the right word.
+Follow it with one line saying this is automated analysis, not a human sign-off. **Do not write
+APPROVE, REQUEST_CHANGES or "Verdict:" anywhere**, and do not work around the 422 by retrying with
+a different event — writing an approval into a COMMENT defeats the control rather than
+satisfying it.
 
 **4. An empty-looking review and a clean one must not read the same.** "No inline comments" is
 ambiguous — it reads identically whether you found nothing, ran out of budget, or failed to attach
 the comments. If the review is genuinely clean, say what was examined and what was checked for. If
 it is truncated or partial, say that instead. Never publish a review whose emptiness is unexplained.
 
-**Recommendation / verdict logic:**
-
-- **APPROVE** — no critical or high findings, minor nits only
-- **COMMENT** — informational findings and suggestions, no blockers; also the *only* legal event on
-  your own PR, whatever the judgement
-- **REQUEST_CHANGES** — any critical, high or medium security finding; missing requirements; broken
-  or unfalsifiable tests; undocumented architectural change
+**What makes a finding blocking** (→ `do not merge`): failing CI; any critical, high or medium
+security finding; missing requirements; broken or unfalsifiable tests; undocumented architectural
+change; a missing changelog entry on a user-facing change. Everything else is a follow-up or a nit.
 
 **Review body structure:**
 
 ```markdown
 ## Code Review Summary — PR #{PR_NUMBER}
 
-Recommendation: {APPROVE|COMMENT|REQUEST_CHANGES}
+Recommendation: {merge | merge with follow-ups | do not merge} — {N blocking findings}
 
 ### Requirements: {PASS|PARTIAL|FAIL}
 - [x] Acceptance criterion 1
@@ -352,7 +349,7 @@ as named in CLAUDE.md. Did not exercise the running application.
 **Fallback**, for a body short enough to survive it and no inline comments:
 
 ```bash
-gh pr review {PR_NUMBER} --comment --body-file /tmp/review-{PR_NUMBER}.md
+gh pr review {PR_NUMBER} --comment --body-file "${PAYLOAD%.json}.md"
 ```
 
 ### Step 10: Handoff (Optional)
@@ -385,7 +382,7 @@ Follow [Google's guidance on review comments](https://google.github.io/eng-pract
 | Cannot read the PR diff | Fall back to `git fetch origin pull/{N}/head` and diff locally |
 | No linked issue found | Review without requirements validation, and note that gap in the review |
 | `422 Path could not be resolved` | The payload references files not on this branch — you are almost certainly POSTing a stale payload; re-check the file path is PR-unique, and re-read it with `jq` |
-| `422` on submit with a verdict | You are the PR author; republish as `COMMENT` with a `Recommendation:` line |
+| `422` on submit with APPROVE / REQUEST_CHANGES | You are the PR author, and should have published `COMMENT` anyway — see Step 9 |
 | `414` on submit | `body` was passed as `-f` and went into the query string; move it inside the `--input` JSON |
 | Too many files to review | Prioritize non-generated, non-config files; state in the review what was not read |
 | Cannot determine coverage | Run the project's coverage command; if it will not run, say so rather than implying a number |

@@ -84,13 +84,12 @@ Full instructions, including the IDE extensions and private-repository access, a
 
 | Command | What it does | Ends at |
 |---|---|---|
-| `/delivery:orchestrate <issue \| description>` | Preflight → Implement → Review → *(Fix → Re-review, only if review found something blocking)* | An open PR, **never merged** |
-| `/delivery:plan-epic <topic \| path \| URL>` | Preflight → Research → Plan | Filed GitHub issues, **no code written** |
+| `/delivery:orchestrate <issue \| description>` | Implement → Review → *(Fix → Re-review, only if review found something blocking)* | An open PR, **never merged** |
+| `/delivery:plan-epic <topic \| path \| URL>` | Research → Plan | Filed GitHub issues, **no code written** |
 
-Both start with a **Preflight** phase that reads the project's own rules out of the
-repository and carries them verbatim into every later prompt. That is how a generic
-pipeline obeys a specific project — see
-[Per-project configuration](#per-project-configuration).
+Every dispatched agent starts with the project's `CLAUDE.md` already in context, and is
+told to read `.claude/delivery.md` if it exists. That is how a generic pipeline obeys a
+specific project — see [Per-project configuration](#per-project-configuration).
 
 ### Agents — the workers
 
@@ -187,13 +186,13 @@ agents are the ones to fork — see [docs/customising.md](docs/customising.md).
 The generic agents cannot hardcode your project's rules, but they still need them. The
 convention is one sentence:
 
-> **Every dispatched prompt instructs the agent to read the project's `CLAUDE.md` (or
-> `AGENTS.md`) first and obey it exactly**, because that is where a project states its own
-> hard rules.
+> **Every dispatched agent obeys the project's `CLAUDE.md` (or `AGENTS.md`) exactly**,
+> because that is where a project states its own hard rules.
 
-On top of that, both workflows run a **Preflight** phase that reads those files and quotes
-the rules *verbatim* into every subsequent prompt — because a subagent starts with none of
-the caller's context, and naming a file is weaker than carrying its contents.
+Claude Code injects `CLAUDE.md` into every subagent automatically, so the workflows do not
+re-quote it — that would pay for the same text two or three times per dispatch. They name
+only what is *not* auto-loaded: `.claude/delivery.md`, and `AGENTS.md` for repositories
+that use it instead of `CLAUDE.md`.
 
 Two files participate, both optional:
 

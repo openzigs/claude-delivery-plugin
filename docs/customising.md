@@ -141,14 +141,16 @@ Options worth knowing on `agent()`:
 | `agentType` | **Pin which agent runs.** Namespaced. Omit it and the runtime picks a default agent |
 | `label` | Identifies the dispatch in logs and in your own control flow |
 | `phase` | Groups the dispatch under a phase in the UI |
-| `effort` | `'low'` for cheap classification calls like triage |
+| `effort` | `'low'` for cheap mechanical calls |
+| `schema` | A JSON Schema; the agent must return a validated object. Use it wherever script control flow branches on an agent's answer |
 
-### 3. Carry the project's rules yourself
+### 3. Do not re-carry `CLAUDE.md`
 
-A subagent starts with none of your context. Do what the shipped workflows do: run a
-low-effort **Preflight** dispatch that reads `CLAUDE.md` and `.claude/delivery.md` and returns
-the rules, then interpolate that text into every later prompt. Naming the file is weaker than
-carrying its contents, so do both.
+Every workflow subagent starts with the repository's `CLAUDE.md` already in context, so do
+not read it and paste it into prompts — that pays for it again on every dispatch. Name only
+what is not auto-loaded: `.claude/delivery.md`, and `AGENTS.md` where a repository uses it
+instead. A subagent does start with none of *your conversation*, so pass earlier phases'
+output forward explicitly.
 
 ### Testing a workflow without spending tokens
 
@@ -169,8 +171,9 @@ await fn(
 console.log(phases)   // assert the order, including conditional branches
 ```
 
-Drive the stubbed `agent` to return each answer a real one might — for a triage step, return
-`BLOCKING` on one run and `CLEAR` on another — and assert that both branches produce the
+Drive the stubbed `agent` to return each answer a real one might — for a review with a
+schema, return `blocking: true` on one run, `blocking: false` on another, and `null` for an
+agent that died — and assert that both branches produce the
 phase sequence you intended. This plugin's own conditional fix/re-review path is tested
 exactly this way, in [`scripts/verify-plugin.mjs`](../scripts/verify-plugin.mjs). Run it:
 
