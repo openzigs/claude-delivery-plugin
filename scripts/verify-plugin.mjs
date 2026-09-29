@@ -253,6 +253,20 @@ for (const file of workflowFiles) {
     r.result.reviewCompleted === false && !r.phases.includes('Fix')
       ? ok('orchestrate.js: a review that never returned stops the run as unreviewed')
       : bad('orchestrate.js: a missing review was treated as clean')
+
+    // model tiering: the first review is the gate and never downgrades; the
+    // narrow post-review work drops to sonnet.
+    const modelOf = (ds, label) => ds.find((d) => d.label === label)?.model ?? null
+    r = await run(BLOCKING_REVIEW)
+    modelOf(r.dispatches, 'review:412') === null
+      ? ok('orchestrate.js: first review inherits the session model')
+      : bad(`orchestrate.js: first review pinned to ${modelOf(r.dispatches, 'review:412')}`)
+    modelOf(r.dispatches, 'fix') === 'sonnet' && modelOf(r.dispatches, 'rereview') === 'sonnet'
+      ? ok('orchestrate.js: fix and re-review run on sonnet after a session-model implementation')
+      : bad(`orchestrate.js: fix=${modelOf(r.dispatches, 'fix')} rereview=${modelOf(r.dispatches, 'rereview')}`)
+    r.result.models?.review === 'session model' && r.result.models?.fix === 'sonnet'
+      ? ok('orchestrate.js: the models used are reported in the result')
+      : bad(`orchestrate.js: result.models = ${JSON.stringify(r.result.models)}`)
   }
 }
 

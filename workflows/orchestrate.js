@@ -91,6 +91,31 @@ const formatReview = (r) =>
 // finding says so. Disagreement between the two should err towards a fix pass.
 const isBlocking = (r) => Boolean(r.blocking || r.findings.some((f) => f.blocking))
 
+// Model tiering lives here, in the script, and NOT in agent frontmatter. Every
+// agent stays `model: inherit`: a frontmatter pin applies however the agent is
+// reached and is invisible to the caller (a pinned research agent once dropped
+// an opus-driven run to sonnet for its whole phase). A choice made here applies
+// only to this pipeline, is decided by code, and is logged on every run.
+//
+// INHERIT means "omit `model`", i.e. run on whatever the session runs on. Aliases
+// rather than model IDs, so the plugin tracks new releases without an edit.
+const INHERIT = null
+const SONNET = 'sonnet'
+const modelOpt = (m) => (m ? { model: m } : {})
+const modelName = (m) => m || 'session model'
+
+// The first review is the quality gate and always inherits: a reviewer weaker
+// than the implementer is the pairing most likely to wave a defect through.
+// What follows it is narrow -- the findings spell out the fix, and the re-review
+// only has to confirm those findings are gone -- so both drop to sonnet. The one
+// exception: if sonnet did the implementing and still produced blocking
+// findings, that is evidence the task was harder than it looked, so the fix
+// escalates to the session model rather than asking sonnet to try again.
+const fixModel = (implementedOn) => (implementedOn === SONNET ? INHERIT : SONNET)
+const REREVIEW_MODEL = SONNET
+// fix and rereview are only set when those phases run.
+const models = { implement: INHERIT, review: INHERIT }
+
 const raw = (args && String(args).trim()) || ''
 
 // `/delivery:orchestrate 301` and `/delivery:orchestrate make the audit filter
@@ -119,6 +144,7 @@ const closes = issueNumber
     'work without an issue leaves no record of why it was done.'
 
 phase('Implement')
+log(`Implement on ${modelName(models.implement)}.`)
 const built = await agent(
   `Implement ${subject} end to end in this repository, following the ` +
     `\`/delivery:code-issue\` skill.\n\n${RULES}\n\n` +
@@ -130,6 +156,7 @@ const built = await agent(
     label: `implement:${issueNumber || 'task'}`,
     phase: 'Implement',
     agentType: 'delivery:code-issue',
+    ...modelOpt(models.implement),
   },
 )
 
@@ -172,7 +199,14 @@ let fixed = null
 let rereviewed = null
 
 if (blocking) {
-  log('Review returned blocking findings — dispatching the fix.')
+  models.fix = fixModel(models.implement)
+  models.rereview = REREVIEW_MODEL
+  log(
+    `Review returned blocking findings — dispatching the fix on ${modelName(models.fix)}` +
+      (models.fix === INHERIT && models.implement === SONNET
+        ? ' (escalated: the sonnet implementation did not pass review).'
+        : '.'),
+  )
   fixed = await agent(
     `Fix the blocking findings from this code review of the open PR for ${subject}.\n\n` +
       `${reviewText}\n\n${RULES}\n\n` +
@@ -180,10 +214,11 @@ if (blocking) {
       `without it. For non-blocking ones, either take them or say why not — do not ` +
       `silently ignore them. Re-run the gates and push.\n\n` +
       `Report what you changed and what you declined, with reasons.`,
-    { label: 'fix', phase: 'Fix', agentType: 'delivery:code-issue' },
+    { label: 'fix', phase: 'Fix', agentType: 'delivery:code-issue', ...modelOpt(models.fix) },
   )
 
   phase('Re-review')
+  log(`Re-review on ${modelName(models.rereview)}.`)
   rereviewed = await agent(
     `Re-review the PR for ${subject}, following the \`/delivery:code-review\` skill. ` +
       `This is cycle 2 of a maximum 2 — be decisive and do not open new lines of inquiry ` +
@@ -198,6 +233,7 @@ if (blocking) {
       phase: 'Re-review',
       agentType: 'delivery:code-review',
       schema: REVIEW_SCHEMA,
+      ...modelOpt(models.rereview),
     },
   )
 } else {
@@ -214,6 +250,7 @@ return {
   fix: fixed,
   reReview: rereviewed,
   stillBlocking: rereviewed ? isBlocking(rereviewed) : null,
+  models: Object.fromEntries(Object.entries(models).map(([k, m]) => [k, modelName(m)])),
   merged: false,
   note:
     'Nothing was merged. Two review cycles is the cap; if the re-review still reports ' +
