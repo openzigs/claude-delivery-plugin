@@ -155,6 +155,12 @@ const BLOCKING_REVIEW = {
   findings: [{ severity: 'high', location: 'db.ts:9', summary: 'missing scope column', blocking: true }],
 }
 
+// What the haiku sizing call returns for an issue, by case.
+const MEDIUM_ISSUE = { storyPoints: 5, labels: ['enhancement'] }
+const SMALL_ISSUE = { storyPoints: 2, labels: ['bug'] }
+const SMALL_RISKY_ISSUE = { storyPoints: 1, labels: ['security'] }
+const UNSIZED_ISSUE = { storyPoints: null, labels: [] }
+
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const workflowFiles = readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsWith('.js')).sort()
 
@@ -189,6 +195,7 @@ for (const file of workflowFiles) {
         argv,
         async (prompt, opts = {}) => {
           dispatches.push({ label: opts.label, phase: opts.phase, agentType: opts.agentType || null, promptLen: prompt.length })
+          if (opts.schema?.properties?.storyPoints) return MEDIUM_ISSUE
           if (opts.schema) return CLEAN_REVIEW
           return `[stub output for ${opts.label}]`
         },
@@ -219,11 +226,15 @@ for (const file of workflowFiles) {
   // 5. the fix branch is decided by the review's structured output, not by prose.
   //    Exercise every way a review can come back.
   if (file === 'orchestrate.js') {
-    const run = async (review) => {
+    const run = async (review, size = MEDIUM_ISSUE, argv = '412') => {
       const phases = [], dispatches = []
       const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
-      const result = await fn('412',
-        async (p, o = {}) => { dispatches.push(o); return o.schema ? review : `[stub ${o.label}]` },
+      const result = await fn(argv,
+        async (p, o = {}) => {
+          dispatches.push(o)
+          if (o.schema?.properties?.storyPoints) return size
+          return o.schema ? review : `[stub ${o.label}]`
+        },
         (t) => phases.push(t), () => {})
       return { phases, dispatches, result }
     }
@@ -267,6 +278,39 @@ for (const file of workflowFiles) {
     r.result.models?.review === 'session model' && r.result.models?.fix === 'sonnet'
       ? ok('orchestrate.js: the models used are reported in the result')
       : bad(`orchestrate.js: result.models = ${JSON.stringify(r.result.models)}`)
+
+    // routing the implement step on the issue's story points and labels
+    const sizeCall = (ds) => ds.find((d) => d.label === 'size:412')
+    r = await run(CLEAN_REVIEW, MEDIUM_ISSUE)
+    sizeCall(r.dispatches)?.model === 'haiku' && sizeCall(r.dispatches)?.effort === 'low'
+      ? ok('orchestrate.js: the issue is sized by a haiku call at low effort')
+      : bad('orchestrate.js: the sizing call is not haiku/low')
+    modelOf(r.dispatches, 'implement:412') === null
+      ? ok('orchestrate.js: a 5-point issue is implemented on the session model')
+      : bad(`orchestrate.js: 5-point issue implemented on ${modelOf(r.dispatches, 'implement:412')}`)
+
+    r = await run(BLOCKING_REVIEW, SMALL_ISSUE)
+    modelOf(r.dispatches, 'implement:412') === 'sonnet'
+      ? ok('orchestrate.js: a 2-point issue is implemented on sonnet')
+      : bad(`orchestrate.js: 2-point issue implemented on ${modelOf(r.dispatches, 'implement:412')}`)
+    modelOf(r.dispatches, 'review:412') === null
+      ? ok('orchestrate.js: the review still inherits when sonnet implemented')
+      : bad('orchestrate.js: review downgraded along with the implementation')
+    modelOf(r.dispatches, 'fix') === null
+      ? ok('orchestrate.js: a sonnet implementation that fails review escalates the fix')
+      : bad(`orchestrate.js: failed sonnet implementation fixed on ${modelOf(r.dispatches, 'fix')}`)
+
+    for (const [name, size] of [['a risk label', SMALL_RISKY_ISSUE], ['no story points', UNSIZED_ISSUE], ['a sizing call that died', null]]) {
+      r = await run(CLEAN_REVIEW, size)
+      modelOf(r.dispatches, 'implement:412') === null
+        ? ok(`orchestrate.js: ${name} keeps the implementation on the session model`)
+        : bad(`orchestrate.js: ${name} downgraded the implementation`)
+    }
+
+    r = await run(CLEAN_REVIEW, SMALL_ISSUE, 'make the export honour a date range')
+    !r.dispatches.some((d) => d.label?.startsWith('size:')) && modelOf(r.dispatches, 'implement:task') === null
+      ? ok('orchestrate.js: a description is not sized and inherits')
+      : bad('orchestrate.js: a description was sized or downgraded')
   }
 }
 

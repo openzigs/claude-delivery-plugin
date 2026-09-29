@@ -144,7 +144,56 @@ const closes = issueNumber
     'work without an issue leaves no record of why it was done.'
 
 phase('Implement')
-log(`Implement on ${modelName(models.implement)}.`)
+
+// Route the implementation on facts already written into the issue, not on a
+// model's opinion of how hard it looks. epic-planner puts a Fibonacci
+// `**Story Points**: N` line in every sub-issue, and labels mark risky areas. The
+// workflow runtime has no network access, so haiku fetches them, at low effort
+// and with a schema. It does the reading only; the rules below make the decision.
+// Anything the router cannot establish falls back to the session model. An
+// unknown size is never a reason to use a cheaper model.
+const SIZE_SCHEMA = {
+  type: 'object',
+  properties: {
+    storyPoints: {
+      type: ['integer', 'null'],
+      description: 'The number on the issue body\'s "Story Points" line, or null if there is none',
+    },
+    labels: { type: 'array', items: { type: 'string' }, description: 'Every label name on the issue' },
+  },
+  required: ['storyPoints', 'labels'],
+}
+const SMALL_POINTS = 2
+const RISKY_LABEL = /secur|auth|migrat|breaking|payment|billing|privacy|infra|data-loss/i
+
+const routeImplement = (size) => {
+  if (!size) return { model: INHERIT, why: 'issue size unknown' }
+  const risky = size.labels.filter((l) => RISKY_LABEL.test(l))
+  if (risky.length) return { model: INHERIT, why: `risk label ${risky.join(', ')}` }
+  if (size.storyPoints == null) return { model: INHERIT, why: 'no story points on the issue' }
+  if (size.storyPoints <= SMALL_POINTS) return { model: SONNET, why: `${size.storyPoints} story points` }
+  return { model: INHERIT, why: `${size.storyPoints} story points` }
+}
+
+let route = { model: INHERIT, why: 'no issue number to size' }
+if (issueNumber) {
+  const size = await agent(
+    `Do not research, plan or change anything. Run exactly ` +
+      `\`gh issue view ${issueNumber} --json labels,body\` and report the issue's labels and ` +
+      `the number on its "Story Points" line (null if there is no such line).`,
+    {
+      label: `size:${issueNumber}`,
+      phase: 'Implement',
+      agentType: 'delivery:research',
+      schema: SIZE_SCHEMA,
+      model: 'haiku',
+      effort: 'low',
+    },
+  )
+  route = routeImplement(size)
+}
+models.implement = route.model
+log(`Implement on ${modelName(models.implement)} (${route.why}).`)
 const built = await agent(
   `Implement ${subject} end to end in this repository, following the ` +
     `\`/delivery:code-issue\` skill.\n\n${RULES}\n\n` +

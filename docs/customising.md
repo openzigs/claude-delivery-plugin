@@ -141,8 +141,34 @@ Options worth knowing on `agent()`:
 | `agentType` | **Pin which agent runs.** Namespaced. Omit it and the runtime picks a default agent |
 | `label` | Identifies the dispatch in logs and in your own control flow |
 | `phase` | Groups the dispatch under a phase in the UI |
+| `model` | `'sonnet'`, `'haiku'`, `'opus'`. Omit it to inherit the session model |
 | `effort` | `'low'` for cheap mechanical calls |
 | `schema` | A JSON Schema; the agent must return a validated object. Use it wherever script control flow branches on an agent's answer |
+
+### Choosing models: in the script, not in frontmatter
+
+Every agent in this plugin is `model: inherit`. Any tiering is done by the workflow, per
+`agent()` call, so it applies only to that pipeline, is decided by code and shows in the
+run's log. A `model:` pin in an agent's frontmatter applies however the agent is reached,
+and the caller cannot see it. That is how an Opus-driven planning run once did its whole
+research phase on Sonnet.
+
+What `/delivery:orchestrate` does today:
+
+| Step | Model | Why |
+|---|---|---|
+| Size the issue | `haiku`, `effort: 'low'` | Reads the labels and the `Story Points` line with `gh`. It does no reasoning |
+| Implement | `sonnet` if ≤2 points and no risk label, otherwise the session model | Size unknown, no points or any risky label (`security`, `auth`, `migration`…) all fall back to the session model |
+| Review | Always the session model | This is the merge check. It should never run on a weaker model than the implementer |
+| Fix | `sonnet`, or the session model if sonnet did the implementing | A sonnet implementation that failed review moves up to the stronger model rather than getting another try on sonnet |
+| Re-review | `sonnet` | It only confirms that the listed findings were fixed |
+
+`result.models` records what each phase ran on. To change the policy, edit the constants
+at the top of `workflows/orchestrate.js` (`SMALL_POINTS`, `RISKY_LABEL`, `fixModel`,
+`REREVIEW_MODEL`). `scripts/verify-plugin.mjs` checks every routing case.
+
+`/delivery:plan-epic` is not tiered. Its research output is what every sub-issue gets
+written from, so both of its phases inherit.
 
 ### 3. Do not re-carry `CLAUDE.md`
 
