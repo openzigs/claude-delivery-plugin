@@ -1,7 +1,7 @@
 ---
 name: code-review
 description: "Senior code reviewer. Validates a pull request against its requirements, OWASP security, code quality, performance and test coverage, then publishes a structured GitHub review with inline comments. Use before merging anything."
-tools: Read, Bash, Skill, WebFetch, WebSearch
+tools: Read, Bash, Skill
 disallowedTools: Write, Edit
 model: inherit
 color: orange
