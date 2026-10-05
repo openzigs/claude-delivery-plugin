@@ -267,26 +267,36 @@ you can anticipate the question.
 
 #### The repository's agent-instruction file
 
-`CLAUDE.md`, `AGENTS.md` or `.github/copilot-instructions.md` — update only when the change affects
-how a future agent would navigate or build this repository.
+`CLAUDE.md`, `AGENTS.md` or `.github/copilot-instructions.md` is **injected into every agent session
+and every dispatched subagent, and re-sent on every turn**. Every byte added to it is paid again by
+every future agent, for as long as it stays. So it is an index, not a notebook. Repositories where
+agents appended a little on each PR have grown it to hundreds of kilobytes in weeks, and the size
+became the largest cost of working in them.
 
-| Change Type | Example | Update? |
+Change it only when the change affects how a future agent would navigate or build this repository:
+
+| Change Type | Example | Where it goes |
 |---|---|---|
-| New top-level module or service | Added `src/payments/` | Yes — project layout + architecture |
-| New build/test/run command | Added a migration script | Yes — build and run commands |
-| New coding convention established | Adopted schema validation everywhere | Yes — coding conventions |
-| New major dependency with unusual setup | Added a browser test runner, a cache server | Yes — known gotchas |
-| New CI check or lint rule | Added a typecheck step to CI | Yes — CI / validation pipeline |
-| Routine bug fix or small feature | Fixed a null check | No — no structural change |
-| Test added for existing logic | Added a unit test | No |
+| New top-level module or service | Added `src/payments/` | One line in the index's layout section |
+| New build/test/run command | Added a migration script | One line in the index's commands section |
+| New coding convention, CI check or lint rule | Adopted schema validation; added a typecheck step | The matching topic file; the index only if it is a hard rule every task must know |
+| Non-obvious gotcha you actually hit | A tool resolves to a system install | The matching topic file |
+| Measurements, decisions, history, rationale | Timings, why a library was chosen | The topic file, an ADR or the PR body — never the index |
+| Routine bug fix, small feature or test | Fixed a null check | Nowhere |
 
-**Surgical edits only.** Update the relevant section in place; do not rewrite the file. Add gotchas
-only for non-obvious things you actually hit. Close with
-`<!-- Last updated: {date} by delivery:code-issue resolving #{issue-number} -->`.
+Rules:
 
-**Why this matters:** the agent-instruction file is injected into every future agent session for
-this repository. Keeping it accurate is what stops the next agent re-exploring the codebase from
-scratch — and what stops it running a command that no longer exists.
+- **Detail goes in a topic file, not the root file.** If the project keeps agent docs under a
+  directory (for example `docs/agents/`, `docs/`, or files the root file links to), put the detail
+  there. In the root file, add **at most one line**, and only when you create a new topic: a pointer
+  saying which file to read and when.
+- **Respect the budget.** If the root file states a size budget, or a check enforces one, stay under
+  it. If it states none and is already over ~40 KB, do not add to it at all. Put the detail in a topic
+  file and say in the PR body that the root file should be split.
+- **Surgical edits only.** Update the relevant line in place; never rewrite or reorder the file in a
+  feature PR.
+- **No stamps.** Do not add "last updated" markers or authorship comments. Git already records that,
+  and in an injected file a stamp is churn every agent pays for.
 
 ### Step 6: Delivery
 
