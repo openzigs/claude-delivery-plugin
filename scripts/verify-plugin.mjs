@@ -15,7 +15,7 @@
 //   6. every workflow's `meta` is a PURE LITERAL -- the runtime reads it without
 //      executing the module, so a variable, a call, a template interpolation or
 //      even a `+` concatenation is rejected
-//   7. every workflow body actually runs, against stubbed agent/phase/log, and
+//   7. every workflow body actually runs, against stubbed agent/phase/log/parallel, and
 //      produces the intended phase order -- including the conditional branches,
 //      which are driven by the review's structured output
 //
@@ -155,14 +155,43 @@ const BLOCKING_REVIEW = {
   findings: [{ severity: 'high', location: 'db.ts:9', summary: 'missing scope column', blocking: true }],
 }
 
-// What the haiku sizing call returns for an issue, by case.
-const MEDIUM_ISSUE = { storyPoints: 5, labels: ['enhancement'] }
-const SMALL_ISSUE = { storyPoints: 2, labels: ['bug'] }
-const SMALL_RISKY_ISSUE = { storyPoints: 1, labels: ['security'] }
-const UNSIZED_ISSUE = { storyPoints: null, labels: [] }
+// What the implementer reports for an issue, by case: the issue's own points
+// and labels, and its PR's size. These drive the review routing.
+const MEDIUM_ISSUE = { storyPoints: 5, labels: ['enhancement'], filesChanged: 3, linesChanged: 80 }
+const SMALL_ISSUE = { storyPoints: 2, labels: ['bug'], filesChanged: 2, linesChanged: 40 }
+const AT_LIMIT_ISSUE = { storyPoints: 1, labels: [], filesChanged: 5, linesChanged: 150 }
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const workflowFiles = readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsWith('.js')).sort()
+const stubParallel = (thunks) => Promise.all(thunks.map((t) => t().catch(() => null)))
+
+// Consecutive-distinct phases, whether set by phase() or by an agent's opts.phase.
+function runner(body) {
+  return async ({ argv = '412', review = CLEAN_REVIEW, facts = {}, implement } = {}) => {
+    const dispatches = [], logs = [], seq = []
+    let current = null
+    const fn = new AsyncFunction('args', 'agent', 'phase', 'log', 'parallel', body)
+    const result = await fn(
+      argv,
+      async (prompt, o = {}) => {
+        const p = o.phase || current
+        if (seq[seq.length - 1] !== p) seq.push(p)
+        dispatches.push({ ...o, prompt })
+        if (o.schema?.properties?.issues) {
+          if (implement !== undefined) return typeof implement === 'function' ? implement(o) : implement
+          const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
+          return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `[stub report ${n}]` })) }
+        }
+        if (o.schema) return typeof review === 'function' ? review(o) : review
+        return `[stub ${o.label}]`
+      },
+      (t) => { current = t },
+      (m) => logs.push(m),
+      stubParallel,
+    )
+    return { phases: seq, dispatches, logs, result }
+  }
+}
 
 for (const file of workflowFiles) {
   const src = readFileSync(join(ROOT, 'workflows', file), 'utf8')
@@ -185,26 +214,13 @@ for (const file of workflowFiles) {
   if (meta.name !== basename(file, '.js')) bad(`${file}: meta.name "${meta.name}" != filename stem`)
   if (!meta.description || !meta.whenToUse) bad(`${file}: meta missing description/whenToUse`)
 
-  // 4. run the body with stubbed agent/phase/log and check the phase order
+  // 4. run the body with stubbed agent/phase/log/parallel and check the phase order
   const body = src.replace(/export const meta = \{[\s\S]*?\n\}\n/, '')
+  const run = runner(body)
   for (const [label, argv] of [['with an issue number', '412'], ['with a description', 'make the export honour a date range'], ['with no args', '']]) {
-    const phases = [], dispatches = [], logs = []
-    const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
     try {
-      const result = await fn(
-        argv,
-        async (prompt, opts = {}) => {
-          dispatches.push({ label: opts.label, phase: opts.phase, agentType: opts.agentType || null, promptLen: prompt.length })
-          if (opts.schema?.properties?.storyPoints) return MEDIUM_ISSUE
-          if (opts.schema) return CLEAN_REVIEW
-          return `[stub output for ${opts.label}]`
-        },
-        (t) => phases.push(t),
-        (m) => logs.push(m),
-      )
-      const expected = file === 'orchestrate.js'
-        ? ['Implement', 'Review', 'Fix']
-        : ['Research', 'Plan']
+      const { phases, dispatches, logs, result } = await run({ argv })
+      const expected = file === 'orchestrate.js' ? ['Implement', 'Review'] : ['Research', 'Plan']
       JSON.stringify(phases) === JSON.stringify(expected)
         ? ok(`${file} ${label}: phase order ${phases.join(' -> ')}`)
         : bad(`${file} ${label}: phase order ${phases.join(' -> ')} != ${expected.join(' -> ')}`)
@@ -212,10 +228,12 @@ for (const file of workflowFiles) {
         if (!d.agentType?.startsWith('delivery:')) bad(`${file}: dispatch "${d.label}" has agentType ${d.agentType}`)
       }
       if (argv === '412' && file === 'orchestrate.js') {
-        result.issue === '412' ? ok('orchestrate.js: bare number parsed as issue 412') : bad(`issue parsed as ${result.issue}`)
+        JSON.stringify(result.batches?.[0]?.issues) === '[412]'
+          ? ok('orchestrate.js: bare number parsed as issue 412')
+          : bad(`issue parsed as ${JSON.stringify(result.batches?.[0]?.issues)}`)
       }
       if (argv.startsWith('make the') && file === 'orchestrate.js') {
-        result.issue === null && !JSON.stringify(dispatches).includes('issue #make')
+        result.batches[0].issues.length === 0 && !JSON.stringify(dispatches).includes('issue #make')
           ? ok('orchestrate.js: description not mangled into a fake issue reference')
           : bad('orchestrate.js: description became a fake issue reference')
       }
@@ -223,95 +241,129 @@ for (const file of workflowFiles) {
     } catch (e) { bad(`${file} ${label}: threw — ${e.message}`) }
   }
 
-  // 5. the fix branch is decided by the review's structured output, not by prose.
-  //    Exercise every way a review can come back.
-  if (file === 'orchestrate.js') {
-    const run = async (review, size = MEDIUM_ISSUE, argv = '412') => {
-      const phases = [], dispatches = []
-      const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
-      const result = await fn(argv,
-        async (p, o = {}) => {
-          dispatches.push(o)
-          if (o.schema?.properties?.storyPoints) return size
-          return o.schema ? review : `[stub ${o.label}]`
-        },
-        (t) => phases.push(t), () => {})
-      return { phases, dispatches, result }
-    }
-    const reviewDispatchesHaveSchema = (ds) =>
-      ds.filter((d) => d.agentType === 'delivery:code-review').every((d) => d.schema?.properties?.blocking)
+  if (file !== 'orchestrate.js') continue
 
-    let r = await run(BLOCKING_REVIEW)
-    JSON.stringify(r.phases) === JSON.stringify(['Implement', 'Review', 'Fix', 'Re-review'])
-      && r.result.blockingFindings && r.result.fix && r.result.reReview && r.result.merged === false
-      ? ok(`orchestrate.js blocking review: ${r.phases.join(' -> ')}, merged=false`)
-      : bad(`orchestrate.js blocking review: ${r.phases.join(' -> ')}`)
-    reviewDispatchesHaveSchema(r.dispatches)
-      ? ok('orchestrate.js: every review dispatch carries the structured-output schema')
-      : bad('orchestrate.js: a review dispatch is missing the schema')
-    r.dispatches.every((d) => d.agentType?.startsWith('delivery:'))
-      ? ok('orchestrate.js: no untyped helper agents (no preflight/triage dispatch)')
-      : bad(`orchestrate.js: untyped dispatch ${r.dispatches.filter((d) => !d.agentType).map((d) => d.label)}`)
+  // 5. orchestrate.js: every routing and branching case.
+  const modelOf = (ds, label) => (ds.find((d) => d.label === label) || {}).model ?? null
+  const check = (cond, pass, fail) => (cond ? ok(`orchestrate.js: ${pass}`) : bad(`orchestrate.js: ${fail ?? pass}`))
+  const pr0 = (r) => r.result.batches[0].prs[0]
+  let r
 
-    // top-level flag false but one finding blocking -> still a fix pass
-    r = await run({ ...CLEAN_REVIEW, findings: [{ ...BLOCKING_REVIEW.findings[0] }] })
-    r.phases.includes('Fix') && r.result.fix
-      ? ok('orchestrate.js: a blocking finding under blocking=false still triggers the fix')
-      : bad('orchestrate.js: flag/finding disagreement skipped the fix')
+  // --- no sizing agent
+  r = await run()
+  check(!r.dispatches.some((d) => d.label?.startsWith('size:') || d.agentType === 'delivery:research' || d.model === 'haiku'),
+    'no separate sizing agent is dispatched')
+  check(r.dispatches.length === 2, 'a clean single issue costs two agents (implement, review)', `clean run dispatched ${r.dispatches.length} agents`)
+  const implSchema = r.dispatches.find((d) => d.label === 'implement:412')?.schema?.properties?.issues?.items?.properties || {}
+  check(['storyPoints', 'labels', 'filesChanged', 'linesChanged', 'report'].every((k) => implSchema[k]),
+    'the implementer reports points, labels and diff size as structured output')
 
-    // review died -> stop loudly, never report as reviewed
-    r = await run(null)
-    r.result.reviewCompleted === false && !r.phases.includes('Fix')
-      ? ok('orchestrate.js: a review that never returned stops the run as unreviewed')
-      : bad('orchestrate.js: a missing review was treated as clean')
-
-    // model tiering: the first review is the gate and never downgrades; the
-    // narrow post-review work drops to sonnet.
-    const modelOf = (ds, label) => ds.find((d) => d.label === label)?.model ?? null
-    r = await run(BLOCKING_REVIEW)
-    modelOf(r.dispatches, 'review:412') === null
-      ? ok('orchestrate.js: first review inherits the session model')
-      : bad(`orchestrate.js: first review pinned to ${modelOf(r.dispatches, 'review:412')}`)
-    modelOf(r.dispatches, 'fix') === 'sonnet' && modelOf(r.dispatches, 'rereview') === 'sonnet'
-      ? ok('orchestrate.js: fix and re-review run on sonnet after a session-model implementation')
-      : bad(`orchestrate.js: fix=${modelOf(r.dispatches, 'fix')} rereview=${modelOf(r.dispatches, 'rereview')}`)
-    r.result.models?.review === 'session model' && r.result.models?.fix === 'sonnet'
-      ? ok('orchestrate.js: the models used are reported in the result')
-      : bad(`orchestrate.js: result.models = ${JSON.stringify(r.result.models)}`)
-
-    // routing the implement step on the issue's story points and labels
-    const sizeCall = (ds) => ds.find((d) => d.label === 'size:412')
-    r = await run(CLEAN_REVIEW, MEDIUM_ISSUE)
-    sizeCall(r.dispatches)?.model === 'haiku' && sizeCall(r.dispatches)?.effort === 'low'
-      ? ok('orchestrate.js: the issue is sized by a haiku call at low effort')
-      : bad('orchestrate.js: the sizing call is not haiku/low')
-    modelOf(r.dispatches, 'implement:412') === null
-      ? ok('orchestrate.js: a 5-point issue is implemented on the session model')
-      : bad(`orchestrate.js: 5-point issue implemented on ${modelOf(r.dispatches, 'implement:412')}`)
-
-    r = await run(BLOCKING_REVIEW, SMALL_ISSUE)
-    modelOf(r.dispatches, 'implement:412') === 'sonnet'
-      ? ok('orchestrate.js: a 2-point issue is implemented on sonnet')
-      : bad(`orchestrate.js: 2-point issue implemented on ${modelOf(r.dispatches, 'implement:412')}`)
-    modelOf(r.dispatches, 'review:412') === null
-      ? ok('orchestrate.js: the review still inherits when sonnet implemented')
-      : bad('orchestrate.js: review downgraded along with the implementation')
-    modelOf(r.dispatches, 'fix') === null
-      ? ok('orchestrate.js: a sonnet implementation that fails review escalates the fix')
-      : bad(`orchestrate.js: failed sonnet implementation fixed on ${modelOf(r.dispatches, 'fix')}`)
-
-    for (const [name, size] of [['a risk label', SMALL_RISKY_ISSUE], ['no story points', UNSIZED_ISSUE], ['a sizing call that died', null]]) {
-      r = await run(CLEAN_REVIEW, size)
-      modelOf(r.dispatches, 'implement:412') === null
-        ? ok(`orchestrate.js: ${name} keeps the implementation on the session model`)
-        : bad(`orchestrate.js: ${name} downgraded the implementation`)
-    }
-
-    r = await run(CLEAN_REVIEW, SMALL_ISSUE, 'make the export honour a date range')
-    !r.dispatches.some((d) => d.label?.startsWith('size:')) && modelOf(r.dispatches, 'implement:task') === null
-      ? ok('orchestrate.js: a description is not sized and inherits')
-      : bad('orchestrate.js: a description was sized or downgraded')
+  // --- implementation routing on the caller's hint
+  for (const [argv, want, name] of [
+    ['412', null, 'no hint implements on the session model'],
+    ['412 --points 2', 'sonnet', '--points 2 implements on sonnet'],
+    ['412 --points=1', 'sonnet', '--points=1 implements on sonnet'],
+    ['412 --small', 'sonnet', '--small implements on sonnet'],
+    ['412 --points 5', null, '--points 5 implements on the session model'],
+  ]) {
+    r = await run({ argv })
+    check(modelOf(r.dispatches, 'implement:412') === want, name, `${name} — got ${modelOf(r.dispatches, 'implement:412')}`)
   }
+
+  // --- review routing on reported facts
+  for (const [facts, want, name] of [
+    [SMALL_ISSUE, 'sonnet', 'a 2-point, unlabelled-risk, small-diff PR gets a light sonnet review'],
+    [AT_LIMIT_ISSUE, 'sonnet', 'a diff of exactly 5 files / 150 lines is still light'],
+    [MEDIUM_ISSUE, null, 'a 5-point issue gets the full review on the session model'],
+    [{ ...SMALL_ISSUE, labels: ['security'] }, null, 'a risk label forces the full review'],
+    [{ ...SMALL_ISSUE, storyPoints: null }, null, 'no story points forces the full review'],
+    [{ ...SMALL_ISSUE, labels: null }, null, 'unknown labels force the full review'],
+    [{ ...SMALL_ISSUE, linesChanged: 151 }, null, '151 changed lines force the full review'],
+    [{ ...SMALL_ISSUE, filesChanged: 6 }, null, '6 changed files force the full review'],
+    [{ ...SMALL_ISSUE, filesChanged: null }, null, 'unknown diff size forces the full review'],
+  ]) {
+    r = await run({ facts: { 412: facts } })
+    const rv = r.dispatches.find((d) => d.label === 'review:412')
+    const light = rv?.prompt.includes('Review scope: LIGHT')
+    check((rv?.model ?? null) === want && light === (want === 'sonnet'), name,
+      `${name} — got model=${rv?.model ?? null} light=${light}`)
+    check(r.logs.some((l) => l.startsWith('#412:') && l.includes('review on')), `the review routing is logged (${name})`)
+  }
+
+  // --- the fix branch is decided by structured output
+  r = await run({ review: BLOCKING_REVIEW })
+  check(JSON.stringify(r.phases) === JSON.stringify(['Implement', 'Review', 'Fix', 'Re-review'])
+    && pr0(r).blockingFindings && pr0(r).fix && pr0(r).reReview && r.result.merged === false,
+  `blocking review: ${r.phases.join(' -> ')}, merged=false`)
+  check(r.dispatches.filter((d) => d.agentType === 'delivery:code-review').every((d) => d.schema?.properties?.blocking),
+    'every review dispatch carries the structured-output schema')
+  check(modelOf(r.dispatches, 'fix:412') === 'sonnet' && modelOf(r.dispatches, 'rereview:412') === 'sonnet',
+    'after a full review, fix and re-review run on sonnet',
+    `fix=${modelOf(r.dispatches, 'fix:412')} rereview=${modelOf(r.dispatches, 'rereview:412')}`)
+  check(pr0(r).models?.review === 'session model' && pr0(r).models?.fix === 'sonnet',
+    'the models used are reported in the result', `models = ${JSON.stringify(pr0(r).models)}`)
+
+  r = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+  check(modelOf(r.dispatches, 'rereview:412') === null
+    && !r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('Review scope: LIGHT')
+    && r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('full-scope'),
+  'a light review that blocks escalates the re-review to a full one on the session model')
+
+  r = await run({ argv: '412 --small', review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+  check(modelOf(r.dispatches, 'fix:412') === null, 'a sonnet implementation that fails review escalates the fix')
+
+  r = await run({ review: { ...CLEAN_REVIEW, findings: [{ ...BLOCKING_REVIEW.findings[0] }] } })
+  check(r.phases.includes('Fix') && pr0(r).fix, 'a blocking finding under blocking=false still triggers the fix')
+
+  r = await run({ review: null })
+  check(pr0(r).reviewCompleted === false && r.result.reviewCompleted === false && !r.phases.includes('Fix'),
+    'a review that never returned marks the run unreviewed')
+
+  r = await run({ implement: null })
+  check(r.result.reviewCompleted === false && !r.dispatches.some((d) => d.label?.startsWith('review:')),
+    'an implementer that never returned marks the run unreviewed')
+
+  // --- batches
+  r = await run({ argv: '412 413 415' })
+  check(r.dispatches.filter((d) => d.label?.startsWith('implement:')).length === 1
+    && ['review:412', 'review:413', 'review:415'].every((l) => r.dispatches.some((d) => d.label === l))
+    && r.result.batches[0].prs.length === 3,
+  'a batch is one implementer and one review per PR')
+  check(r.dispatches.every((d) => !d.isolation), 'a single batch runs in the caller checkout (no worktree)')
+  check(r.dispatches[0].prompt.includes('never combine two issues in one PR'), 'a batch is told one PR per issue')
+
+  r = await run({ argv: '412 413 415', implement: { issues: [412, 413].map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, report: 'x' })) } })
+  check(r.result.reviewCompleted === false && JSON.stringify(r.result.batches[0].notImplemented) === '[415]'
+    && r.logs.some((l) => l.startsWith('#415:')),
+  'an issue the implementer did not report is named and the run is not reviewed')
+
+  r = await run({ implement: { issues: [{ issue: 412, pr: null, ...MEDIUM_ISSUE, report: 'blocked' }] } })
+  check(r.result.reviewCompleted === false && !r.dispatches.some((d) => d.label?.startsWith('review:')),
+    'an issue with no PR is reported as unreviewed')
+
+  r = await run({ argv: '412 413 ; 500 501 --small', review: BLOCKING_REVIEW })
+  const impls = r.dispatches.filter((d) => d.label?.startsWith('implement:'))
+  check(impls.length === 2 && r.result.batches.length === 2, 'two ;-separated batches get one implementer each')
+  check(r.dispatches.every((d) => d.isolation === 'worktree'), 'concurrent batches put every agent in its own worktree')
+  check(r.dispatches.every((d) => d.prompt.includes('own git worktree')), 'every isolated agent is told how to share branches')
+  check(modelOf(r.dispatches, 'implement:412+413') === null && modelOf(r.dispatches, 'implement:500+501') === 'sonnet',
+    'size hints apply to their own batch')
+  check(r.result.batches.every((b) => b.prs.every((p) => p.reReview)), 'every PR in every batch gets its review cycles')
+
+  r = await run({ argv: '412, 413' })
+  check(r.dispatches.some((d) => d.label === 'implement:412+413'), 'comma-separated issues are a batch')
+
+  r = await run({ argv: '412 ; 412' })
+  check(r.dispatches.filter((d) => d.label?.startsWith('implement:')).length === 1, 'an issue listed twice is worked once')
+
+  r = await run({ argv: 'fix the export, then the filter --small' })
+  check(r.dispatches[0].prompt.includes('this request: fix the export, then the filter end to end')
+    && modelOf(r.dispatches, 'implement:task') === 'sonnet',
+  'a description keeps its punctuation and loses only the hint flag')
+
+  r = await run({ argv: 'fix the export; then the filter' })
+  check(r.result.batches.length === 1 && r.result.batches[0].issues.length === 0 && r.dispatches.every((d) => !d.isolation),
+    'a description containing ; is one request, not batches')
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)

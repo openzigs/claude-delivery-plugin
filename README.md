@@ -39,11 +39,9 @@ indistinguishable from one that does not exist.
 and a JavaScript file runs. Its phase sequence is code, not intention:
 
 ```js
-phase('Implement')
-const built = await agent(/* ... */, { agentType: 'delivery:code-issue' })
-
-phase('Review')
-const reviewed = await agent(/* ... */, { agentType: 'delivery:code-review' })
+const built = await agent(/* ... */, { phase: 'Implement', agentType: 'delivery:code-issue' })
+for (const it of built.issues.filter((i) => i.pr))
+  await agent(/* ... */, { phase: 'Review', agentType: 'delivery:code-review' })
 ```
 
 The review phase cannot be skipped, because skipping it would require the script not to
@@ -84,12 +82,20 @@ Full instructions, including the IDE extensions and private-repository access, a
 
 | Command | What it does | Ends at |
 |---|---|---|
-| `/delivery:orchestrate <issue \| description>` | Implement → Review → *(Fix → Re-review, only if review found something blocking)* | An open PR, **never merged** |
+| `/delivery:orchestrate <issue \| issues \| issues ; issues \| description> [--points N \| --small]` | Implement → Review → *(Fix → Re-review, only if review found something blocking)*, per PR. Several issues are one batch for one implementer; `;`-separated batches run concurrently in separate git worktrees | One open PR per issue, each reviewed, **never merged** |
 | `/delivery:plan-epic <topic \| path \| URL>` | Research → Plan | Filed GitHub issues, **no code written** |
 
 Every dispatched agent starts with the project's `CLAUDE.md` already in context, and is
 told to read `.claude/delivery.md` if it exists. That is how a generic pipeline obeys a
 specific project — see [Per-project configuration](#per-project-configuration).
+
+**Cost.** Every dispatched agent pays for the project's `CLAUDE.md` before it starts, so the
+pipeline keeps the agent count low: no separate sizing agent, one implementer per batch, and
+a review that is light and on Sonnet only for a small, low-risk change (≤ 2 story points, no
+risk label, ≤ 5 files and ≤ 150 lines) and full on the session model otherwise. A clean
+issue costs two agents. The biggest lever is yours, though: keep `CLAUDE.md` a small index
+and move detail into topic files read on demand — see
+[per-project configuration](docs/per-project-configuration.md#keep-claudemd-small--it-is-the-biggest-cost-lever).
 
 ### Agents — the workers
 
@@ -283,8 +289,9 @@ README.md
    claude plugin validate . --strict           # manifest schema, warnings as errors
    claude --plugin-dir . plugin details delivery   # expect Skills (8), Agents (7)
    ```
-   `verify-plugin.mjs` executes each workflow body against stubbed `agent`/`phase`/`log`
-   functions and asserts the phase order, including the conditional fix/re-review branch. It
+   `verify-plugin.mjs` executes each workflow body against stubbed `agent`/`phase`/`log`/`parallel`
+   functions and asserts the phase order, the conditional fix/re-review branch, every model
+   routing case, batching and worktree isolation. It
    costs no tokens and catches the failures that are otherwise silent.
 4. Keep it project-agnostic. This is the one rule that matters: no project names, no
    organisation names, no domain vocabulary, no toolchain assumptions, and no bare issue

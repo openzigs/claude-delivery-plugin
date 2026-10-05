@@ -118,6 +118,22 @@ The agents ask specific questions of it. Answer these and the pipeline behaves w
    identical from `gh pr checks`, and an agent that guesses will report a healthy pipeline as
    broken or vice versa.
 
+## Keep `CLAUDE.md` small — it is the biggest cost lever
+
+Outside the plugin, nothing moves the bill as much as the size of your `CLAUDE.md`. It is
+injected into **every** agent the workflows dispatch — the implementer, every review, every
+fix, every re-review — before that agent does any work. A 160k-token `CLAUDE.md` makes a
+two-agent issue cost over 300k input tokens before a line of code is read, and a batch of
+three issues with fixes pays it six or seven times over. Prompt caching softens the repeat
+cost; it does not remove it, and every byte still competes for the agent's attention.
+
+So keep `CLAUDE.md` an **index**: the gate commands, the hard rules (protected paths, merge
+and branch conventions), and one line per topic pointing at where the detail lives — for
+example `docs/agents/testing.md`, `docs/agents/migrations.md`. Agents read those topic files
+on demand, when the task touches that topic, and the rest of the pipeline never pays for
+them. A rule an agent must obey on *every* task belongs in `CLAUDE.md`; everything else is
+reference material and belongs one link away.
+
 ## What not to put in either file
 
 - **Bare issue references.** `#412` is meaningful inside your repository and meaningless in a

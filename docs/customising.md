@@ -111,9 +111,11 @@ export const meta = {
 }
 ```
 
-### 2. The body gets `args`, `agent`, `phase` and `log`
+### 2. The body gets `args`, `agent`, `phase`, `log` and `parallel`
 
-They are provided by the runtime; do not import or declare them.
+They are provided by the runtime; do not import or declare them. `parallel(thunks)` runs
+several `() => agent(...)` chains concurrently and resolves to their results, with `null`
+for any that threw.
 
 ```js
 const target = (args && String(args).trim()) || ''
@@ -144,6 +146,7 @@ Options worth knowing on `agent()`:
 | `model` | `'sonnet'`, `'haiku'`, `'opus'`. Omit it to inherit the session model |
 | `effort` | `'low'` for cheap mechanical calls |
 | `schema` | A JSON Schema; the agent must return a validated object. Use it wherever script control flow branches on an agent's answer |
+| `isolation` | `'worktree'` runs the agent in a fresh git worktree. Use it for agents that change files **concurrently** — two agents in one checkout switch branches under each other. Not free (setup time and disk per agent), so not for sequential work |
 
 ### Choosing models: in the script, not in frontmatter
 
@@ -153,19 +156,33 @@ run's log. A `model:` pin in an agent's frontmatter applies however the agent is
 and the caller cannot see it. That is how an Opus-driven planning run once did its whole
 research phase on Sonnet.
 
-What `/delivery:orchestrate` does today:
+What `/delivery:orchestrate` does today. The cost driver it is built around: every dispatched
+agent starts by paying for the repository's `CLAUDE.md`, so on a repository with a large one,
+the **number** of agents per issue and the tier each runs on dominate the bill.
 
 | Step | Model | Why |
 |---|---|---|
-| Size the issue | `haiku`, `effort: 'low'` | Reads the labels and the `Story Points` line with `gh`. It does no reasoning |
-| Implement | `sonnet` if ≤2 points and no risk label, otherwise the session model | Size unknown, no points or any risky label (`security`, `auth`, `migration`…) all fall back to the session model |
-| Review | Always the session model | This is the merge check. It should never run on a weaker model than the implementer |
+| Implement | `sonnet` if the caller hinted `--small` or `--points N` (N ≤ 2), otherwise the session model | No sizing agent: nothing has read the issue yet, and an unknown size is never a reason to use a cheaper model. One implementer works a whole batch |
+| Review | **Light**, on `sonnet`, if the issue's own `Story Points` ≤ 2 **and** no label matches `RISKY_LABEL` **and** the PR is ≤ 5 files and ≤ 150 changed lines. Otherwise **full**, on the session model | Routed on facts the implementer reported from `gh` (structured output), never on the hint. Anything unknown → full |
 | Fix | `sonnet`, or the session model if sonnet did the implementing | A sonnet implementation that failed review moves up to the stronger model rather than getting another try on sonnet |
-| Re-review | `sonnet` | It only confirms that the listed findings were fixed |
+| Re-review | `sonnet`; the session model, at full scope, if the first review was light | A light review that still blocked means the change was misjudged as low-risk, so cycle 2 is its first full-scope look |
 
-`result.models` records what each phase ran on. To change the policy, edit the constants
-at the top of `workflows/orchestrate.js` (`SMALL_POINTS`, `RISKY_LABEL`, `fixModel`,
-`REREVIEW_MODEL`). `scripts/verify-plugin.mjs` checks every routing case.
+A light review runs the `code-review` skill's requirements, security (changed lines),
+correctness and test steps, and skips design, performance and documentation; it is told to
+widen to the full skill if the diff touches auth, secrets, payments, migrations or anything
+destructive. Lines are GitHub's additions + deletions, so a lockfile or a generated file
+counts towards the limit — that errs towards the full review, which is the direction to err.
+
+Each PR's result records `reviewScope`, `reviewRouting` and `models`; every routing decision
+is logged with its reason. To change the policy, edit the constants at the top of
+`workflows/orchestrate.js` (`SMALL_POINTS`, `RISKY_LABEL`, `LIGHT_REVIEW_MAX_FILES`,
+`LIGHT_REVIEW_MAX_LINES`, `fixModel`, `rereviewModel`). `scripts/verify-plugin.mjs` checks
+every routing case.
+
+Concurrent batches (`412 413 ; 500 501`) pass `isolation: 'worktree'` on **every** agent in
+every batch, and tell each agent how to share branches across worktrees (a branch can be
+checked out in only one at a time). A single batch runs in the caller's checkout with no
+isolation.
 
 `/delivery:plan-epic` is not tiered. Its research output is what every sub-issue gets
 written from, so both of its phases inherit.
@@ -180,19 +197,20 @@ output forward explicitly.
 
 ### Testing a workflow without spending tokens
 
-The body is plain JavaScript with four injected names, so you can execute it against stubs:
+The body is plain JavaScript with injected names, so you can execute it against stubs:
 
 ```js
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const body = src.replace(/export const meta = \{[\s\S]*?\n\}\n/, '')
 
 const phases = []
-const fn = new AsyncFunction('args', 'agent', 'phase', 'log', body)
+const fn = new AsyncFunction('args', 'agent', 'phase', 'log', 'parallel', body)
 await fn(
   '412',
   async (prompt, opts = {}) => `[stub ${opts.label}]`,
   (title) => phases.push(title),
   () => {},
+  (thunks) => Promise.all(thunks.map((t) => t().catch(() => null))),
 )
 console.log(phases)   // assert the order, including conditional branches
 ```

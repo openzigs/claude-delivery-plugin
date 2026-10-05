@@ -17,22 +17,59 @@ If you want a phase to definitely happen, run the workflow.
 
 ## Workflows
 
-### `/delivery:orchestrate` — an issue to a reviewed PR
+### `/delivery:orchestrate` — issues to reviewed PRs
 
 ```
 /delivery:orchestrate <issue number>
+/delivery:orchestrate <issue> <issue> <issue>          (one batch: one implementer, one PR per issue)
+/delivery:orchestrate <issues> ; <issues>              (independent batches, run concurrently)
+/delivery:orchestrate <issue...> --points N | --small  (size hint for that batch's implementation)
 /delivery:orchestrate <a description of what you want done>
-/delivery:orchestrate                       (uses what you described in conversation)
+/delivery:orchestrate                                  (uses what you described in conversation)
 ```
 
-**Phases:** Implement → Review → *(Fix → Re-review, conditionally)*
+**Phases:** Implement → Review → *(Fix → Re-review, conditionally)* — per PR
 
 | Phase | Agent | Notes |
 |---|---|---|
-| Implement | `delivery:code-issue` | TDD, coverage, branch, PR, CI watch |
-| Review | `delivery:code-review` | Independent read of the PR; publishes inline comments, and returns its findings as structured output with a `blocking` flag |
+| Implement | `delivery:code-issue` | TDD, coverage, branch, PR, CI watch — for each issue in the batch, in order. Also reports each issue's story points and labels and each PR's diff size as structured output |
+| Review | `delivery:code-review` | Independent read of each PR; publishes inline comments, and returns its findings as structured output with a `blocking` flag. **Light** or **full** scope depending on the change's risk (below) |
 | Fix | `delivery:code-issue` | Only if the review flagged a blocking finding |
 | Re-review | `delivery:code-review` | Cycle 2 of a maximum 2 |
+
+**Every PR is reviewed, and nothing merges.** A batch shares one implementer, never one
+review: each PR gets its own review, its own fix and its own re-review, capped at two
+cycles. An issue the implementer did not finish, or that has no PR, is named in the log and
+the result reports `reviewCompleted: false`.
+
+**How each step picks its model.** There is no separate sizing agent; the implementer reads
+the issue anyway and reports what the later steps route on.
+
+- *Implement* runs on Sonnet only if you said the batch is small (`--small`, or
+  `--points N` with N ≤ 2). With no hint it runs on the session model: an unknown size is
+  never a reason to use a cheaper model.
+- *Review* is **light, on Sonnet** only when the issue's own `Story Points` line is ≤ 2,
+  none of its labels look risky (`security`, `auth`, `migration`, `breaking`, `payment`,
+  `billing`, `privacy`, `infra`, `data-loss`), **and** the PR changes at most 5 files and 150
+  lines (additions + deletions). A light review covers requirements, correctness, tests and
+  security of the changed lines, and skips the design, performance and documentation
+  passes. Anything else — or anything unknown — gets the full review on the session model.
+- *Fix* runs on Sonnet, or on the session model if Sonnet did the implementing.
+- *Re-review* runs on Sonnet, or on the session model, at full scope, if the first review
+  was a light one that still found something blocking.
+
+Every decision is logged with its reason, and each PR's result records the scope and the
+models used. The thresholds are constants at the top of `workflows/orchestrate.js` — see
+[customising](customising.md#choosing-models-in-the-script-not-in-frontmatter).
+
+**Batches and concurrency.** Space-separated issues are one batch, worked in order by one
+implementer — a good fit for related issues that touch the same code. Each still gets its
+own branch from the default branch and its own PR (or, if it genuinely depends on an earlier
+issue in the batch, a branch stacked on that one, said in the PR body). Separate batches
+with `;` and they run **concurrently**, and then every agent in every batch runs in its own
+git worktree, so no two of them ever share a checkout. A single batch runs in your current
+checkout as before. Size hints belong to the batch they are written in:
+`/delivery:orchestrate 412 413 --small ; 500 501` hints only the first batch.
 
 **It never merges.** Merging is your decision, and an automated merge on a branch nobody
 looked at is unreviewable after the fact.
@@ -57,6 +94,17 @@ instructed to **file the issue first**, then open a PR that closes it — work w
 leaves no record of why it was done. (This branch exists because naively interpolating
 `issue #${args}` produces `issue #make the audit filter…`, which reads like a real reference
 and is not one.)
+
+**Worked example — related issues, then two lanes at once:**
+
+```
+/delivery:orchestrate 412 413 415
+/delivery:orchestrate 412 413 ; 500 501
+```
+
+The first is one implementer working #412, #413 and #415 in turn, three PRs and three
+reviews. The second runs two such lanes concurrently, each in its own worktrees. A
+description is never split into batches, even if it contains a `;`.
 
 **Worked example — the `#` prefix:**
 
@@ -93,7 +141,8 @@ than being treated as clean.
 | Plan | `delivery:code-planner` | Runs `gh label list` first so it does not invent parallel labels, then files the epic and sub-issues with Mermaid diagrams, acceptance criteria, story points, phase order |
 
 **It writes no code and opens no pull request.** It ends at filed issues. To take one
-forward: `/delivery:orchestrate <that issue number>`.
+forward: `/delivery:orchestrate <that issue number>`, or several related sub-issues as one
+batch: `/delivery:orchestrate <n> <n> <n>`.
 
 **Worked examples:**
 
