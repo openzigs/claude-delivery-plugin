@@ -6,6 +6,11 @@
   here correctly. Pipeline-specific instructions belong in `.claude/delivery.md`
   instead, which is read only when a delivery agent runs.
 
+  It is also injected into every agent a workflow dispatches, so a large one is
+  paid again per agent. Keep it an index: commands, hard rules, and one line per
+  topic pointing at a file (e.g. docs/agents/testing.md) that agents read only
+  when the task touches that topic.
+
   `AGENTS.md` is the equivalent filename read by some other tools; the delivery
   plugin reads whichever it finds, preferring CLAUDE.md.
 
