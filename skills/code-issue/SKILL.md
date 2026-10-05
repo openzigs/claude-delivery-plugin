@@ -397,6 +397,13 @@ Pick up where we left off on epic #42, starting from sub-issue #45
    a bare tool name can resolve to a system install that lacks the project's dependencies and fails
    in a way that reads like the tool is missing.
 
+7. **Keep command output small.** Every line a command prints stays in your context and is re-sent
+   on every later turn, so one noisy test run can cost more than the rest of the task put
+   together. Run tests with a quiet or summary reporter (`--reporter=dot`, `-q`, `--silent`,
+   `--quiet`), and pipe long output through `tail -n 60` or a `grep` for failures — then re-run only
+   the failing test, verbosely, if you need its detail. Never print a whole build log, coverage
+   table or lockfile diff to read one line of it.
+
 ## Prerequisites
 
 - Git configured with push access to the repository

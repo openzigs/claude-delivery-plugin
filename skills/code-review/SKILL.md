@@ -43,6 +43,11 @@ GitHub work is done with the **`gh` CLI**. It is always available and authentica
 **MCP servers are optional and may be absent — never make a step depend on one.** Every command in
 Step 9 is `gh`, deliberately.
 
+The reviewer has **no web tools**: everything a review needs is in the repository, the PR and
+GitHub. For a dependency the PR added or bumped, read its advisories with the ecosystem's audit
+command (`npm audit --json`, `pip-audit`, `cargo audit`, `govulncheck`) or GitHub's database
+(`gh api "/advisories?affects=<package>@<version>"`), not a web search.
+
 ## Workflow Overview
 
 ```
@@ -448,6 +453,13 @@ Check if PR #31 is ready to merge
 
    One detail decides whether a gate is authoritative: a build script may also *be* the typecheck,
    in which case a PR that skipped the build skipped type checking entirely.
+
+7. **Keep command output small.** Every line a command prints stays in your context and is re-sent
+   on every later turn, so one noisy test run can cost more than the rest of the review put
+   together. Run tests with a quiet or summary reporter (`--reporter=dot`, `-q`, `--silent`,
+   `--quiet`), and pipe long output through `tail -n 60` or a `grep` for failures — then re-run only
+   the failing test, verbosely, if you need its detail. Never print a whole build log, coverage
+   table or lockfile diff to read one line of it.
 
 ## Prerequisites
 
