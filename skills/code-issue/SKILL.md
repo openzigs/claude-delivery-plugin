@@ -47,7 +47,7 @@ installed it is a convenience, not the path; the `gh` command is.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  0. RULES — The project's rules come first       │
+│  0. RULES — The project's rules come first        │
 ├──────────────────────────────────────────────────┤
 │  1. PLAN — Read issue, analyze codebase, plan    │
 ├──────────────────────────────────────────────────┤
