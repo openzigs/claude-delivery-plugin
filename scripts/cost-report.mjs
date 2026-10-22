@@ -6,6 +6,11 @@
 //
 //   node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...
 //     dir: every *.json and *.output directly inside it, sorted by file name
+//   node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] --discover [--last N] [--since DATE]
+//     the runs Claude Code persisted for the current directory's project:
+//     <config>/projects/<slug of cwd>/<session>/workflows/wf_<run-id>.json, where
+//     <config> is $CLAUDE_CONFIG_DIR or ~/.claude. That layout is undocumented
+//     (checked on Claude Code 2.1.308) and may change; files that do not fit are skipped.
 //
 // A file is a bare result object, or a finished workflow's task output: a
 // wrapper whose `result` is the result object or a JSON string of one. A
@@ -34,6 +39,7 @@
 // The arithmetic lives here so that no model ever sums the numbers.
 import { readFileSync, readdirSync, statSync, realpathSync } from 'node:fs'
 import { join, dirname, basename, relative, resolve, sep } from 'node:path'
+import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 export const CAVEAT =
@@ -149,6 +155,8 @@ function sumTokens(rows) {
 
 export function summarise(results, opts = {}) {
   const includeConcurrent = Boolean(opts.includeConcurrent)
+  const since = isNum(opts.since) ? opts.since : null
+  const last = Number.isInteger(opts.last) && opts.last > 0 ? opts.last : null
   const runs = [], unrecognised = [], skipped = [], times = []
   for (const { id, data, skip, fromDir, notJson, startTime } of results) {
     const workflow = skip ? null : workflowOf(data)
@@ -159,7 +167,7 @@ export function summarise(results, opts = {}) {
     }
     const rows = workflow === 'orchestrate' ? orchestrateRows(data) : planEpicRows(data)
     const concurrent = workflow === 'orchestrate' && data.batches.length > 1
-    runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows) })
+    runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows), ...(isNum(startTime) ? { startTime } : {}) })
     times.push(startTime)
   }
   // Start-time order only when every run has one; a partial order would be a guess.
@@ -168,6 +176,10 @@ export function summarise(results, opts = {}) {
     const byTime = runs.map((r, i) => [times[i], i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((e) => e[2])
     runs.splice(0, runs.length, ...byTime)
   }
+  // --since keeps runs that started at or after it (a run with no start time
+  // cannot be shown to have); --last keeps the last N in the order above.
+  if (since !== null) runs.splice(0, runs.length, ...runs.filter((r) => isNum(r.startTime) && r.startTime >= since))
+  if (last !== null) runs.splice(0, Math.max(0, runs.length - last))
 
   const zero = () => Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
   const findingCounts = { review: zero(), rereview: zero() }
@@ -319,15 +331,61 @@ function pathIds(results) {
   })
 }
 
-const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...'
-const FLAGS = new Set(['--json', '--include-concurrent', '--verbose'])
+// --------------------------------------------------------------- --discover
+
+// Claude Code names a project's directory after its path, every character other
+// than a letter or digit replaced by '-': /a/b.c_d -> -a-b-c-d.
+export const projectSlug = (dir) => dir.replace(/[^A-Za-z0-9]/g, '-')
+export const RUN_FILE = /^wf_[\w-]+\.json$/
+export const configDir = (env = process.env) => env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude')
+
+// The persisted run files for the project at cwd. Only <session>/workflows/wf_*.json
+// is read: transcripts, journals and any other file beside them are never opened.
+export function discoverFiles(config, cwd) {
+  const root = join(config, 'projects', projectSlug(cwd))
+  const files = []
+  const dirs = (d) => { try { return readdirSync(d, { withFileTypes: true }) } catch { return [] } }
+  for (const session of dirs(root).filter((e) => e.isDirectory()).map((e) => e.name).sort()) {
+    const wf = join(root, session, 'workflows')
+    for (const e of dirs(wf).filter((e) => RUN_FILE.test(e.name)).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const full = join(wf, e.name)
+      try { if (statSync(full).isFile()) files.push(full) } catch { /* vanished or dangling: not a run */ }
+    }
+  }
+  return { root, files }
+}
+
+const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...\n' +
+  '       node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] --discover [--last N] [--since DATE]'
+const FLAGS = new Set(['--json', '--include-concurrent', '--verbose', '--discover'])
+const VALUED = new Set(['--last', '--since'])
 
 function main(argv) {
-  const flags = new Set(argv.filter((a) => a.startsWith('--')))
-  const paths = argv.filter((a) => !a.startsWith('--'))
-  const unknown = [...flags].filter((f) => !FLAGS.has(f))
-  if (unknown.length || !paths.length) {
-    process.stderr.write(`${unknown.length ? `unknown option ${unknown.join(', ')}\n` : ''}${USAGE}\n`)
+  const flags = new Set(), values = {}, paths = [], errors = []
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (VALUED.has(a)) {
+      if (i + 1 >= argv.length) errors.push(`${a} needs a value`)
+      else values[a] = argv[++i]
+    } else if (a.startsWith('--')) {
+      if (FLAGS.has(a)) flags.add(a); else errors.push(`unknown option ${a}`)
+    } else paths.push(a)
+  }
+  const discover = flags.has('--discover')
+  let last, since
+  if ('--last' in values) {
+    last = /^[1-9]\d*$/.test(values['--last']) ? Number(values['--last']) : undefined
+    if (last === undefined) errors.push(`--last needs a positive whole number, not ${JSON.stringify(values['--last'])}`)
+  }
+  if ('--since' in values) {
+    since = Date.parse(values['--since'])
+    if (!Number.isFinite(since)) errors.push(`--since needs a date such as 2026-10-01, not ${JSON.stringify(values['--since'])}`)
+  }
+  if (!discover && (last !== undefined || since !== undefined)) errors.push('--last and --since go with --discover')
+  if (discover && paths.length) errors.push('--discover takes no paths')
+  if (!discover && !paths.length && !errors.length) errors.push('no paths given')
+  if (errors.length) {
+    process.stderr.write(`${errors.join('\n')}\n${USAGE}\n`)
     return 2
   }
 
@@ -345,6 +403,11 @@ function main(argv) {
     }
     // The directory, not the file, is resolved: a symlinked file keeps its own name.
     results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), fromDir, notJson, ...unwrap(parsed) })
+  }
+  let found = null
+  if (discover) {
+    found = discoverFiles(configDir(), process.cwd())
+    for (const f of found.files) load(f, true)
   }
   for (const p of paths) {
     let st
@@ -364,7 +427,15 @@ function main(argv) {
     }
   }
 
-  const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent') })
+  const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent'), last, since })
+  if (found) report.discovered = { root: found.root, files: found.files.length }
+  if (found && !report.runs.length && !flags.has('--json')) {
+    // An empty table would read as zero cost; say plainly that nothing was found.
+    const n = report.skipped.length
+    process.stdout.write(`no runs found under ${found.root}${n ? ` (skipped ${plural(n, 'file')}; --verbose lists them)` : ''}\n`)
+    if (n && flags.has('--verbose')) for (const x of report.skipped) process.stdout.write(`  skipped: ${x.id} (${x.reason})\n`)
+    return status
+  }
   process.stdout.write(flags.has('--json') ? `${JSON.stringify(report, null, 2)}\n` : render(report, { verbose: flags.has('--verbose') }))
   return status
 }

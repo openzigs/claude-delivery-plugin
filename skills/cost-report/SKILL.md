@@ -1,7 +1,7 @@
 ---
 name: cost-report
-description: Per-run, per-phase cost report over saved /delivery:orchestrate and /delivery:plan-epic result JSON. Use when the maintainer wants to see output tokens, effort, model and finding counts per phase, or compare them across runs after a routing or effort change. Takes result files or directories as arguments, runs the plugin's own report script on them, and shows its table. Read-only.
-argument-hint: "<result.json | task.output | dir>... [--include-concurrent] [--verbose] — e.g. runs/2026-10-22-orchestrate-14.json"
+description: Per-run, per-phase cost report over saved /delivery:orchestrate and /delivery:plan-epic result JSON. Use when the maintainer wants to see output tokens, effort, model and finding counts per phase, or compare them across runs after a routing or effort change. Takes result files or directories as arguments, or --discover to find the runs Claude Code persisted for this project, runs the plugin's own report script, and shows its table. Read-only.
+argument-hint: "<result.json | task.output | dir>... | --discover [--last N] [--since DATE] [--include-concurrent] [--verbose]"
 ---
 
 # Cost Report
@@ -27,9 +27,11 @@ that text. The script's output carries only metrics, so showing it as printed is
 
 If the arguments above are empty, print the usage below and stop. Do not go looking for
 results: not in the working directory, not in the session transcripts under `~/.claude/projects`,
-nowhere. Read nothing outside the paths you were given.
+nowhere. Read nothing outside the paths you were given. The one search is `--discover`, and it
+runs only when the maintainer passed `--discover`; never add it yourself.
 
 > **Usage:** `/delivery:cost-report <result.json | task.output | dir>... [--include-concurrent] [--verbose]`
+> or `/delivery:cost-report --discover [--last N] [--since DATE]`
 >
 > When a `/delivery:orchestrate` or `/delivery:plan-epic` run finishes, Claude Code writes the
 > run's task output to a `<task-id>.output` file, at the path printed in the workflow's
@@ -41,6 +43,9 @@ nowhere. Read nothing outside the paths you were given.
 > otherwise in the order given (a directory's files sorted by name), so name copied files to sort
 > in run order. Files in a directory that are not a delivery result are counted on one
 > `skipped` line; `--verbose` lists them.
+>
+> `--discover` instead reports the runs Claude Code saved for this project, oldest first;
+> `--last N` keeps the newest N and `--since DATE` those started on or after DATE.
 
 ## With arguments
 
@@ -53,10 +58,25 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs" '<path>' '<path>'
 Add `--include-concurrent` or `--verbose` only if the maintainer passed it. Do not add `--json`:
 the table is what the maintainer reads.
 
+## With --discover
+
+Only when the maintainer passed `--discover`, run the script with it and with `--last` and
+`--since` if given, each value single-quoted, and no paths:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs" --discover --last '<n>'
+```
+
+The script reads only `<config>/projects/<this project>/<session>/workflows/wf_<run-id>.json`,
+where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`; it never opens a transcript. That
+layout is undocumented and may change between Claude Code versions, so files that do not fit
+are skipped and counted. If it prints `no runs found under <dir>`, show that line: it means
+nothing was found, not that the runs cost nothing.
+
 Then show the script's standard output verbatim in one fenced code block, ending with its caveat
 line. If it wrote to standard error, show those lines too, below the block; each one names a path
-it could not read or a named file that was not valid JSON. Exit status `2` means a bad option or no
-paths: show its usage line. Exit status `1` means at least one path could not be read, and the
+it could not read or a named file that was not valid JSON. Exit status `2` means a bad option
+or no paths: show its usage lines. Exit status `1` means at least one path could not be read, and the
 rest still reported.
 
 After the block, add at most two sentences, and only from what the output itself says:
