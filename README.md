@@ -141,9 +141,11 @@ conversation.
 2. **Review** — `delivery:code-review` reads each PR independently and publishes inline
    comments. It is **light** (requirements, correctness, tests and security of the changed
    lines) only for a small, low-risk change: the issue's `Story Points` line ≤ 2, no risky
-   label (`security`, `auth`, `migration`, `breaking`, `payment`, `billing`, `privacy`,
-   `infra`, `data-loss`), and the PR at most 5 files and 150 changed lines. Anything else,
-   or anything unknown, gets the **full** review.
+   label, and the PR at most 5 files and 150 changed lines. Anything else, or anything
+   unknown, gets the **full** review. A label is risky when it *contains*, case-insensitively,
+   any of `secur`, `auth`, `migrat`, `breaking`, `payment`, `billing`, `privacy`, `infra` or
+   `data-loss`, so `Security`, `authentication`, `db-migration` and `infrastructure` all
+   count. The match errs towards a full review: `author-feedback` counts too.
 3. **Fix** — only when the review flags a blocking finding. `delivery:code-issue` fixes or
    declines each finding with a reason, re-runs the gates and pushes.
 4. **Re-review** — `delivery:code-review` checks the fix. That is cycle 2 of a **maximum
@@ -376,6 +378,11 @@ works with the built-in tools plus the `gh` CLI.
 | **Context7** (`mcp__context7__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebFetch` |
 | **GitHub** | *nobody* | No — every agent uses the `gh` CLI |
 
+**A `tools:` allowlist naming `mcp__tavily__*` is a permission, not a promise.** It cannot
+conjure a server you have not configured. The two agents that name those patterns are told
+to check rather than assume, and to treat them as faster paths rather than dependencies, so
+the plugin behaves the same whether or not you have them, only slower.
+
 Registration commands for macOS, Linux and Windows are in
 [`docs/mcp-servers.md`](docs/mcp-servers.md).
 
@@ -449,8 +456,11 @@ docs/                  # installation, usage, configuration, gotchas, customisin
    claude plugin validate . --strict           # manifest schema, warnings as errors
    claude --plugin-dir . plugin details delivery   # expect Skills (9), Agents (7)
    ```
-4. Keep it project-agnostic: no project names, organisation names, domain vocabulary,
-   toolchain assumptions, or bare issue references from some other repository.
+4. Keep it project-agnostic. This is the one rule that matters: no project names, no
+   organisation names, no domain vocabulary, no toolchain assumptions, and no bare issue
+   references, including this repository's own. Plugin text is read in other repositories,
+   where `#412` means nothing. If a war story makes the point, keep its *shape* and drop the
+   citation.
 5. Bump the version (see [Releases](#releases)) and open a PR.
 
 ## License
