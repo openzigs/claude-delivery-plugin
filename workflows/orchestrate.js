@@ -24,7 +24,9 @@ export const meta = {
 // earlier Preflight phase did) paid for the same text two or three times per
 // dispatch. Only what is NOT auto-loaded -- AGENTS.md and .claude/delivery.md --
 // has to be named. The procedure itself (mutation-tested TDD, gates, publishing
-// mechanics) lives in the skills each agent invokes, and is not repeated here.
+// mechanics) is preloaded into each agent by its `skills:` frontmatter, so the
+// prompts below refer to it as already in context and never name its slash
+// command: a slash name cues a Skill call that would load it a second time.
 const RULES = `
 Ground rules for this dispatch:
 
@@ -226,7 +228,7 @@ Step 5 (correctness and code quality) restricted to the changed lines, and Step 
 then publish (Step 9). Skip Step 3 (design), Step 6 (performance) and Step 8
 (documentation), and say in the review's "Scope of this review" section that they were
 skipped and why. If the diff touches authentication, authorisation, secrets, payments,
-data migration or anything destructive, do the full skill instead and say so.
+data migration or anything destructive, do the full review procedure instead and say so.
 `.trim()
 
 const ISOLATED = `
@@ -366,8 +368,8 @@ const implementPrompt = (lane, rules) => {
       : 'File a GitHub issue for this first, then open a PR that closes it — work without an ' +
         'issue leaves no record of why it was done. Watch CI to green.'
   return (
-    `Implement ${subject} end to end in this repository, following the ` +
-    `\`/delivery:code-issue\` skill.\n\n${rules}\n\n${order}\n\n` +
+    `Implement ${subject} end to end in this repository, following the code-issue ` +
+    `procedure (preloaded).\n\n${rules}\n\n${order}\n\n` +
     `For every issue, report as structured output, alongside your report:\n` +
     `- its labels and the number on its "Story Points" line, from ` +
     `\`gh issue view <issue> --json labels,body\` — exactly as written, null if there is no ` +
@@ -387,13 +389,13 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
       `(${route.why}).`,
   )
   const reviewed = await agent(
-    `Review pull request #${it.pr}, opened for ${subject}, following the ` +
-      `\`/delivery:code-review\` skill.\n\n` +
+    `Review pull request #${it.pr}, opened for ${subject}, following the code-review ` +
+      `procedure (preloaded).\n\n` +
       (route.light ? `${LIGHT_SCOPE}\n\n` : '') +
       `The implementer's summary, defects found and deferred work are in the PR body ` +
       `(\`gh pr view ${it.pr} --json body\`); read the change itself, not only that account.` +
       `\n\n${rules}\n\n` +
-      `Publish the review to GitHub as the skill describes, then return your ` +
+      `Publish the review to GitHub as the procedure describes, then return your ` +
       `recommendation and every finding with severity, file:line and whether it is blocking.`,
     {
       label: `review:${tag}`,
@@ -460,13 +462,13 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
     )
 
     rereviewed = await agent(
-      `Re-review PR #${it.pr} for ${subject}, following the \`/delivery:code-review\` skill. ` +
+      `Re-review PR #${it.pr} for ${subject}, following the code-review procedure (preloaded). ` +
         `This is cycle 2 of a maximum 2 — be decisive and do not open new lines of inquiry ` +
         `that do not affect merge.` +
         (route.light
           ? ` The first review was a LIGHT one (no design, performance or documentation ` +
             `pass) and still found blocking problems, so this cycle is the change's first ` +
-            `full-scope review: run every step of the skill on the diff.`
+            `full-scope review: run every step of the procedure on the diff.`
           : '') +
         `\n\nOrient with one batched call (PR, diff, checks and .claude/delivery.md together), ` +
         (route.light
@@ -475,7 +477,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         `\n\nThe original review:\n${reviewText}\n\nWhat the author then did:\n${formatFix(fixed)}\n\n` +
         `${rules}\n\n` +
         `Verify each blocking finding was ACTUALLY fixed, by running it rather than by ` +
-        `reading the response. Publish as the skill describes, then return what is still ` +
+        `reading the response. Publish as the procedure describes, then return what is still ` +
         `blocking, if anything.`,
       {
         label: `rereview:${tag}`,
