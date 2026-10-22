@@ -529,6 +529,9 @@ gh issue edit {master_epic_number} --repo <owner>/<repo> --body-file ./epic-mast
 
 ### Step 7: Handoff
 
+If a workflow or another agent dispatched you, skip this step: your report or structured output
+is the handoff.
+
 Present to the user:
 
 ```markdown

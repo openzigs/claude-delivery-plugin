@@ -172,6 +172,28 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'code-issue Step 0 folds the .claude/delivery.md read into the Step 1 batch')
   checkSkill(/echo '=== AGENTS'; \\\n\s*\[ -f CLAUDE\.md \] \|\| cat AGENTS\.md/.test(iblocks[0] || ''),
     'code-issue Step 1 labels the AGENTS.md fallback so it is not read as delivery rules')
+  // The CI wait must say what to do with each outcome, not only a timeout.
+  const ci = sectionOf(issue, '### Step 5: CI Validation')
+  checkSkill(/`fail`/.test(ci) && /gh run view [^`\n]*--log-failed/.test(ci) && /push, and wait again/.test(ci),
+    'code-issue Step 5 says a fail bucket means read the failed log, fix, push, and wait again')
+  checkSkill(ci.includes('no checks reported') && /not configured/.test(ci),
+    'code-issue Step 5 says "no checks reported" is CI not configured, not passed')
+  // `--no-watch` is not a universal run-once flag; some runners reject it.
+  const shell = sectionOf(issue, '## Shell Execution Rules')
+  checkSkill(!shell.includes('--no-watch') && shell.includes('--watch=false'),
+    'code-issue shell rule 2 gives --watch=false, not --no-watch, as a run-once form')
+
+  // Only the plan-epic workflow reaches these two, and it is not a user.
+  const planner = readFileSync(join(ROOT, 'skills/epic-planner/SKILL.md'), 'utf8')
+  const gather = readFileSync(join(ROOT, 'skills/research-gather/SKILL.md'), 'utf8')
+  const DISPATCH_SKIP = /If a workflow or another agent dispatched you, skip/
+  checkSkill(DISPATCH_SKIP.test(sectionOf(planner, '### Step 7: Handoff')),
+    'epic-planner Step 7 skips the user handoff when dispatched')
+  // Step 7 embeds a markdown template with its own ### headings, so bound it by Step 8.
+  const gatherStep7 = gather.slice(gather.indexOf('### Step 7: Compile'), gather.indexOf('### Step 8'))
+  checkSkill(DISPATCH_SKIP.test(gatherStep7),
+    'research-gather Step 7 skips the user question when dispatched')
+
   for (const [name, src] of [['code-review', review], ['code-issue', issue]]) {
     checkSkill(!/0\. RULES[^\n]*delivery\.md/.test(src), `${name} overview box no longer lists a separate .claude/delivery.md read`)
     checkSkill(!/using `&&`\. Never open/.test(src) && /not `&&`|never `&&`|`;`/.test(sectionOf(src, '## Shell Execution Rules')),
@@ -324,6 +346,12 @@ for (const file of workflowFiles) {
           : bad('orchestrate.js: description became a fake issue reference')
       }
       if (argv === '' && logs.length === 0) bad(`${file}: no usage hint logged for empty args`)
+      if (file === 'plan-epic.js' && label === 'with an issue number') {
+        dispatches.length === 2 && dispatches.every((d) => d.prompt.includes('cat .claude/delivery.md 2>/dev/null')
+          && !/If \.claude\/delivery\.md exists, read it/.test(d.prompt))
+          ? ok('plan-epic.js: every dispatch reads .claude/delivery.md inside its first batched call, not separately')
+          : bad('plan-epic.js: a dispatch still reads .claude/delivery.md as a separate step')
+      }
     } catch (e) { bad(`${file} ${label}: threw — ${e.message}`) }
   }
 
@@ -436,10 +464,33 @@ for (const file of workflowFiles) {
   check(['changed', 'declined', 'gates'].every((k) => fixProps[k]), 'the fix dispatch carries the changed/declined/gates schema')
   check(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('SENTINEL-DECLINED-REASON'),
     'a declined finding\'s reason reaches the re-review prompt')
+  const rrPrompt = (x) => x.dispatches.find((d) => d.label === 'rereview:412')?.prompt || ''
+  check(rrPrompt(r).includes('- fixed: missing scope column — filter on tenant_id (test: db.test.ts scoped read)'),
+    'a changed finding\'s fix and test reach the re-review prompt')
+  check(rrPrompt(r).includes('Gates passed: true; pushed: true (suite green)'),
+    'the gates line, with its detail, reaches the re-review prompt')
   check(JSON.stringify(pr0(r).fix) === JSON.stringify(FIX_RESULT), 'the structured fix result is returned')
   r = await run({ review: BLOCKING_REVIEW, fix: { ...FIX_RESULT, gates: { passed: false, pushed: false } } })
   check(r.dispatches.some((d) => d.label === 'rereview:412') && r.phases.includes('Re-review'),
     'a fix that did not push still gets its re-review')
+  check(/Gates passed: false; pushed: false(\n|$)/.test(rrPrompt(r)),
+    'a gates line with no detail reaches the re-review prompt with no empty detail')
+
+  // A malformed fix result must not throw between the push and the re-review:
+  // that is exactly the skipped-review failure this workflow exists to prevent.
+  for (const [name, fix, want] of [
+    ['changed missing', { declined: FIX_RESULT.declined, gates: FIX_RESULT.gates }, '- fixed: (not reported)'],
+    ['declined missing', { changed: FIX_RESULT.changed, gates: FIX_RESULT.gates }, '- declined: (not reported)'],
+    ['gates missing', { changed: FIX_RESULT.changed, declined: FIX_RESULT.declined }, 'Gates passed: (not reported); pushed: (not reported)'],
+    ['gates null', { ...FIX_RESULT, gates: null }, 'Gates passed: (not reported); pushed: (not reported)'],
+    ['gates empty', { ...FIX_RESULT, gates: {} }, 'Gates passed: (not reported); pushed: (not reported)'],
+  ]) {
+    const msg = `a fix result with ${name} still gets its re-review, which is told what was not reported`
+    try {
+      r = await run({ review: BLOCKING_REVIEW, fix })
+      check(r.phases.includes('Re-review') && rrPrompt(r).includes(want), msg)
+    } catch (e) { check(false, msg, `${msg} — threw: ${e.message}`) }
+  }
   r = await run({ review: BLOCKING_REVIEW, fix: null })
   check(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('did not return'),
     'a fix that never returned is named as such to the re-reviewer')

@@ -135,14 +135,19 @@ const FIX_SCHEMA = {
   required: ['changed', 'declined', 'gates'],
 }
 
-const formatFix = (f) =>
-  f
-    ? [
-        ...f.changed.map((c) => `- fixed: ${c.finding} — ${c.fix} (test: ${c.test})`),
-        ...f.declined.map((d) => `- declined: ${d.finding} — ${d.reason}`),
-        `Gates passed: ${f.gates.passed}; pushed: ${f.gates.pushed}` + (f.gates.detail ? ` (${f.gates.detail})` : ''),
-      ].join('\n')
-    : 'The fix agent did not return a result. Check the PR branch for what, if anything, was pushed.'
+// Runs after the fix is pushed and before the re-review, so it must not throw on
+// a partial result: a TypeError here would skip the re-review entirely. A missing
+// field is named as "(not reported)" so the re-reviewer checks the branch itself.
+const NR = '(not reported)'
+const formatFix = (f) => {
+  if (!f) return 'The fix agent did not return a result. Check the PR branch for what, if anything, was pushed.'
+  const g = f.gates ?? {}
+  return [
+    ...(Array.isArray(f.changed) ? f.changed.map((c) => `- fixed: ${c.finding} — ${c.fix} (test: ${c.test})`) : [`- fixed: ${NR}`]),
+    ...(Array.isArray(f.declined) ? f.declined.map((d) => `- declined: ${d.finding} — ${d.reason}`) : [`- declined: ${NR}`]),
+    `Gates passed: ${g.passed ?? NR}; pushed: ${g.pushed ?? NR}` + (g.detail ? ` (${g.detail})` : ''),
+  ].join('\n')
+}
 
 // Treat the review as blocking if EITHER the top-level flag or any single
 // finding says so. Disagreement between the two should err towards a fix pass.

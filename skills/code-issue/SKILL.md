@@ -254,6 +254,11 @@ Before creating the PR, perform a security review of your own change:
    so any wait longer than that makes the next turn re-write the cache.
    **If the timeout fires with checks still pending**, run `gh pr checks {number} --json name,bucket`
    once more. If any `bucket` is still `pending`, report CI as **not verified**, never as passed.
+   **If any `bucket` is `fail`** (the usual result of `--fail-fast`), read the failing job's log
+   with `gh run view <run-id> --log-failed`, fix the cause, push, and wait again with the same
+   bounded call. **If `gh pr checks` says `no checks reported`**, the repository runs no CI on
+   pull requests: report CI as **not configured / not verified**, never as passed, and rely on
+   the local gate from item 2.
 5. **A job stuck in `queued` is ambiguous.** It is either a deep queue on healthy runners or a
    runner outage, and the two look identical from `gh pr checks`. Do not guess — check runner health
    (`gh api repos/<owner>/<repo>/actions/runners`) or ask. Never report CI as verified when it never
@@ -408,7 +413,8 @@ Pick up where we left off on epic #42, starting from sub-issue #45
 
 2. **No watch mode** — never run watch or interactive commands. Always force one-shot execution.
    Test runners default to watch mode in several ecosystems; use the run-once form (`--run`,
-   `--no-watch`, `CI=1`) and check what the project's script actually does before trusting it.
+   `--watch=false`, `CI=1`; the exact flag depends on the runner) and check what the project's
+   script actually does before trusting it.
    **The only exception** is the bounded `gh pr checks` wait in Step 5 item 4: streamed output
    discarded, an explicit Bash `timeout` of at most `600000` ms, then one compact JSON read.
 

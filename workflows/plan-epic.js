@@ -28,7 +28,10 @@ Ground rules for this dispatch:
    authority on architecture, commands, label and milestone conventions, protected paths
    and data handling, and it wins over anything in this prompt. If the repository has an
    AGENTS.md and no CLAUDE.md, read AGENTS.md instead.
-2. If .claude/delivery.md exists, read it. Its absence is normal.
+2. Orient in one batched Bash call, joined with \`;\` so a missing file does not abort it, and
+   include \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file
+   separately: it holds constraints this project wants every dispatched agent to carry. Its
+   absence is normal. Then read every file you need in one response of parallel reads.
 3. Where the project states no rule, infer from the repository and say in your report
    what you inferred.
 4. This workflow writes NO code and opens NO pull request. It ends at filed issues.
