@@ -228,7 +228,8 @@ node scripts/verify-plugin.mjs
 ```
 
 It also checks agent frontmatter, `name`-to-filename matching, namespaced `Agent(...)`
-references, skill directory layout, and `meta` purity — every one of which fails silently at
+references, that each `skills:` preload is namespaced and names a real skill (and that
+code-issue and code-review declare theirs), skill directory layout, and `meta` purity — every one of which fails silently at
 runtime. Stdlib only, no dependencies, no tokens.
 
 ---

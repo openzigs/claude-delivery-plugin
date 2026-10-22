@@ -29,13 +29,7 @@ the project wins.**
 
 ## Workflow
 
-The `delivery:code-issue` skill is preloaded into your context by this agent's `skills:`
-frontmatter. It holds every rule for this job: reading the project's rules,
-mutation-verified TDD, coverage, linting, security, CI, changelog, working-tree safety and
-delivery. Follow it; do not invoke it again. **Fallback, only if its body is not in your
-context:** invoke `/delivery:code-issue` through `Skill`, and if that errors, read
-`${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SKILL.md` and say so in your report: a skipped
-procedure costs more than an eager read.
+**First check your context for a heading `# Code Issue Resolver`.** If it is there, the `delivery:code-issue` skill was preloaded by this agent's `skills:` frontmatter; follow it and do not invoke it again. If it is not there, invoke `/delivery:code-issue` through `Skill` now, and if that errors, read `${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SKILL.md` and say so in your report: a skipped procedure costs more than an eager read. The skill holds every rule for this job.
 
 ## Tool guidance
 
