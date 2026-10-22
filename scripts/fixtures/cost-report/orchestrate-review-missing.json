@@ -1,0 +1,33 @@
+{
+  "batches": [
+    {
+      "issues": [620],
+      "description": null,
+      "implementModel": "session model",
+      "outputTokens": { "implement": 30000 },
+      "implemented": [
+        { "issue": 620, "pr": 1620, "storyPoints": 5, "labels": ["enhancement"], "filesChanged": 6, "linesChanged": 210, "report": "Synthetic fixture." }
+      ],
+      "notImplemented": [],
+      "noPr": [],
+      "prs": [
+        {
+          "issue": 620,
+          "pr": 1620,
+          "implemented": "Synthetic fixture.",
+          "reviewScope": "full",
+          "reviewRouting": "5 story points",
+          "review": null,
+          "reviewCompleted": false,
+          "effort": { "implement": "inherit", "review": "inherit" },
+          "outputTokens": { "review": 6100 },
+          "note": "The review phase did not return. Re-run the review before treating this PR as reviewed."
+        }
+      ],
+      "reviewCompleted": false
+    }
+  ],
+  "reviewCompleted": false,
+  "merged": false,
+  "note": "Nothing was merged."
+}
