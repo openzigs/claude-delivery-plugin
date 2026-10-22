@@ -190,8 +190,10 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(DISPATCH_SKIP.test(sectionOf(planner, '### Step 7: Handoff')),
     'epic-planner Step 7 skips the user handoff when dispatched')
   // Step 7 embeds a markdown template with its own ### headings, so bound it by Step 8.
-  const gatherStep7 = gather.slice(gather.indexOf('### Step 7: Compile'), gather.indexOf('### Step 8'))
-  checkSkill(DISPATCH_SKIP.test(gatherStep7),
+  // Both headings must exist: indexOf -1 would make the slice cover most of the file.
+  const g7 = gather.indexOf('### Step 7: Compile'), g8 = gather.indexOf('### Step 8')
+  checkSkill(g7 > 0 && g8 > g7, 'research-gather has its Step 7 and Step 8 headings, in order, to bound Step 7')
+  checkSkill(g7 > 0 && g8 > g7 && DISPATCH_SKIP.test(gather.slice(g7, g8)),
     'research-gather Step 7 skips the user question when dispatched')
 
   for (const [name, src] of [['code-review', review], ['code-issue', issue]]) {
@@ -271,17 +273,28 @@ const workflowFiles = readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsW
 const stubParallel = (thunks) => Promise.all(thunks.map((t) => t().catch(() => null)))
 
 // Consecutive-distinct phases, whether set by phase() or by an agent's opts.phase.
+// A stub `budget` whose spent() grows by a fixed, distinct amount per dispatch
+// kind, so a per-phase delta can only be right if it is taken around the right call.
+// Without `budget`, the runner leaves it undefined, as a runtime without it would.
+const TOKENS = { implement: 1000, review: 200, fix: 30, rereview: 4, research: 500, plan: 60 }
+const meteredBudget = () => {
+  let n = 0
+  return { budget: { total: null, spent: () => n, remaining: () => Infinity }, charge: (label) => { n += TOKENS[label.split(':')[0]] ?? 0 } }
+}
+
 function runner(body) {
-  return async ({ argv = '412', review = CLEAN_REVIEW, facts = {}, implement, fix = FIX_RESULT } = {}) => {
+  return async ({ argv = '412', review = CLEAN_REVIEW, facts = {}, implement, fix = FIX_RESULT, budget } = {}) => {
     const dispatches = [], logs = [], seq = []
     let current = null
-    const fn = new AsyncFunction('args', 'agent', 'phase', 'log', 'parallel', body)
+    const meter = budget === 'metered' ? meteredBudget() : null
+    const fn = new AsyncFunction('args', 'agent', 'phase', 'log', 'parallel', 'budget', body)
     const result = await fn(
       argv,
       async (prompt, o = {}) => {
         const p = o.phase || current
         if (seq[seq.length - 1] !== p) seq.push(p)
         dispatches.push({ ...o, prompt })
+        meter?.charge(o.label || '')
         if (o.schema?.properties?.issues) {
           if (implement !== undefined) return typeof implement === 'function' ? implement(o) : implement
           const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
@@ -296,6 +309,7 @@ function runner(body) {
       (t) => { current = t },
       (m) => logs.push(m),
       stubParallel,
+      meter ? meter.budget : budget,
     )
     return { phases: seq, dispatches, logs, result }
   }
@@ -351,8 +365,21 @@ for (const file of workflowFiles) {
           && !/If \.claude\/delivery\.md exists, read it/.test(d.prompt))
           ? ok('plan-epic.js: every dispatch reads .claude/delivery.md inside its first batched call, not separately')
           : bad('plan-epic.js: a dispatch still reads .claude/delivery.md as a separate step')
+        dispatches.every((d) => !('effort' in d))
+          ? ok('plan-epic.js: no dispatch sets effort')
+          : bad('plan-epic.js: a dispatch sets effort')
+        result.outputTokens && result.outputTokens.research === null && result.outputTokens.plan === null
+          ? ok('plan-epic.js: with no budget, output tokens are null and nothing throws')
+          : bad(`plan-epic.js: output tokens without budget = ${JSON.stringify(result.outputTokens)}`)
       }
     } catch (e) { bad(`${file} ${label}: threw — ${e.message}`) }
+  }
+
+  if (file === 'plan-epic.js') {
+    const { result } = await run({ budget: 'metered' })
+    JSON.stringify(result.outputTokens) === JSON.stringify({ research: 500, plan: 60 })
+      ? ok('plan-epic.js: output tokens per phase are budget.spent() deltas')
+      : bad(`plan-epic.js: output tokens = ${JSON.stringify(result.outputTokens)}`)
   }
 
   if (file !== 'orchestrate.js') continue
@@ -517,6 +544,59 @@ for (const file of workflowFiles) {
   r = await run({ implement: null })
   check(r.result.reviewCompleted === false && !r.dispatches.some((d) => d.label?.startsWith('review:')),
     'an implementer that never returned marks the run unreviewed')
+
+  // --- effort per stage: medium only on the fix and the non-escalated re-review
+  const optsOf = (x, label) => x.dispatches.find((d) => d.label === label) || {}
+  r = await run({ review: BLOCKING_REVIEW })
+  check(optsOf(r, 'fix:412').effort === 'medium', 'the fix runs at medium effort', `fix effort = ${optsOf(r, 'fix:412').effort}`)
+  check(optsOf(r, 'rereview:412').effort === 'medium', 'a non-escalated re-review runs at medium effort',
+    `rereview effort = ${optsOf(r, 'rereview:412').effort}`)
+  check(!('effort' in optsOf(r, 'review:412')) && !('effort' in optsOf(r, 'implement:412')),
+    'the first review and the implementer pass no effort (they inherit)')
+  check(JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'inherit', review: 'inherit', fix: 'medium', rereview: 'medium' }),
+    'the effort of every phase is reported, inherited ones as "inherit"', `effort = ${JSON.stringify(pr0(r).effort)}`)
+  r = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+  check(optsOf(r, 'rereview:412').label && !('effort' in optsOf(r, 'rereview:412')),
+    'a re-review escalated from a light review passes no effort (it is the first full-scope review)',
+    `escalated rereview effort = ${optsOf(r, 'rereview:412').effort}`)
+  check(optsOf(r, 'fix:412').effort === 'medium' && pr0(r).effort?.rereview === 'inherit',
+    'after a light review the fix is still medium and the escalated re-review reports "inherit"')
+  r = await run()
+  check(r.dispatches.every((d) => !('effort' in d)) && JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'inherit', review: 'inherit' }),
+    'a clean run sets no effort anywhere and reports both phases as "inherit"')
+
+  // --- output tokens per phase, as budget.spent() deltas
+  r = await run({ review: BLOCKING_REVIEW, budget: 'metered' })
+  check(JSON.stringify(pr0(r).outputTokens) === JSON.stringify({ review: 200, fix: 30, rereview: 4 })
+    && r.result.batches[0].outputTokens?.implement === 1000,
+  'output tokens per phase are budget.spent() deltas around each call',
+  `pr=${JSON.stringify(pr0(r).outputTokens)} lane=${JSON.stringify(r.result.batches[0].outputTokens)}`)
+  for (const [name, budget] of [['undefined', undefined], ['null', null], ['without spent()', { total: null }],
+    ['whose spent() throws', { total: null, spent: () => { throw new Error('no') } }]]) {
+    const msg = `with budget ${name}, output tokens are null and the run completes`
+    try {
+      r = await run({ review: BLOCKING_REVIEW, budget })
+      check(r.phases.includes('Re-review') && r.result.batches[0].outputTokens?.implement === null
+        && JSON.stringify(pr0(r).outputTokens) === JSON.stringify({ review: null, fix: null, rereview: null }), msg,
+      `${msg} — got ${JSON.stringify(pr0(r).outputTokens)}`)
+    } catch (e) { check(false, msg, `${msg} — threw: ${e.message}`) }
+  }
+
+  // --- finding counts by severity, from the structured output
+  const ZERO = { critical: 0, high: 0, medium: 0, low: 0, nit: 0 }
+  r = await run({ review: (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW : BLOCKING_REVIEW) })
+  check(JSON.stringify(pr0(r).findingCounts) === JSON.stringify({ review: { ...ZERO, high: 1 }, rereview: { ...ZERO, nit: 1 } }),
+    'finding counts by severity are reported for the review and the re-review',
+    `findingCounts = ${JSON.stringify(pr0(r).findingCounts)}`)
+  r = await run()
+  check(JSON.stringify(pr0(r).findingCounts) === JSON.stringify({ review: { ...ZERO, nit: 1 }, rereview: null }),
+    'with no re-review, its finding counts are null')
+
+  // --- a partial fix entry names what is missing rather than printing undefined
+  r = await run({ review: BLOCKING_REVIEW, fix: { changed: [{ finding: 'x' }], declined: [{}], gates: FIX_RESULT.gates } })
+  check(rrPrompt(r).includes('- fixed: x — (not reported) (test: (not reported))')
+    && rrPrompt(r).includes('- declined: (not reported) — (not reported)') && !rrPrompt(r).includes('undefined'),
+  'a partial fix entry reaches the re-review as "(not reported)", never "undefined"')
 
   // --- batches
   r = await run({ argv: '412 413 415' })

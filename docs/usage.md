@@ -58,9 +58,29 @@ the issue anyway and reports what the later steps route on.
 - *Re-review* runs on Sonnet, or on the session model, at full scope, if the first review
   was a light one that still found something blocking.
 
+**Effort per step.** The implementer and the first review inherit the session's reasoning
+effort. The fix and the re-review run at `medium`, except a re-review escalated from a light
+review: that is the change's first full-scope review, so it inherits too. Medium effort is
+known to lose real findings for quality and performance reviewers, which is why the first
+review never drops.
+
 Every decision is logged with its reason, and each PR's result records the scope and the
 models used. The thresholds are constants at the top of `workflows/orchestrate.js` — see
 [customising](customising.md#choosing-models-in-the-script-not-in-frontmatter).
+
+**What the result measures**, so the effect of a routing or effort change can be judged
+rather than assumed:
+
+| Field | Where | What it holds |
+|---|---|---|
+| `models` | each PR | The model of each phase that ran (`session model` when inherited) |
+| `effort` | each PR | The effort of each phase that ran: `implement`, `review`, and `fix` / `rereview` when they ran. `inherit` when no effort was set |
+| `outputTokens` | each PR: `review`, `fix`, `rereview`; each batch: `implement` | Output tokens per phase, as the difference in `budget.spent()` around that agent call. `null` when the runtime provides no `budget` |
+| `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output. `rereview` is `null` when no re-review ran |
+
+`budget.spent()` counts the whole turn, so when batches run concurrently a phase's delta
+also includes what the other batches spent in the same window. Read token figures from a
+single-batch run when you are comparing them.
 
 **Batches and concurrency.** Space-separated issues are one batch, worked in order by one
 implementer — a good fit for related issues that touch the same code. Each still gets its
@@ -139,6 +159,10 @@ than being treated as clean.
 |---|---|---|
 | Research | `delivery:research` | Local files, web, library docs, **and this repository** — including the open backlog, so the plan does not duplicate filed work |
 | Plan | `delivery:code-planner` | Runs `gh label list` first so it does not invent parallel labels, then files the epic and sub-issues with Mermaid diagrams, acceptance criteria, story points, phase order |
+
+Both stages inherit the session's model and effort. The result's `outputTokens`
+(`{ research, plan }`) holds the output tokens of each, as `budget.spent()` deltas, or
+`null` when the runtime provides no `budget`.
 
 **It writes no code and opens no pull request.** It ends at filed issues. To take one
 forward: `/delivery:orchestrate <that issue number>`, or several related sub-issues as one

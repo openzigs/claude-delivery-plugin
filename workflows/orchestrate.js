@@ -143,8 +143,12 @@ const formatFix = (f) => {
   if (!f) return 'The fix agent did not return a result. Check the PR branch for what, if anything, was pushed.'
   const g = f.gates ?? {}
   return [
-    ...(Array.isArray(f.changed) ? f.changed.map((c) => `- fixed: ${c.finding} — ${c.fix} (test: ${c.test})`) : [`- fixed: ${NR}`]),
-    ...(Array.isArray(f.declined) ? f.declined.map((d) => `- declined: ${d.finding} — ${d.reason}`) : [`- declined: ${NR}`]),
+    ...(Array.isArray(f.changed)
+      ? f.changed.map((c) => `- fixed: ${c?.finding ?? NR} — ${c?.fix ?? NR} (test: ${c?.test ?? NR})`)
+      : [`- fixed: ${NR}`]),
+    ...(Array.isArray(f.declined)
+      ? f.declined.map((d) => `- declined: ${d?.finding ?? NR} — ${d?.reason ?? NR}`)
+      : [`- declined: ${NR}`]),
     `Gates passed: ${g.passed ?? NR}; pushed: ${g.pushed ?? NR}` + (g.detail ? ` (${g.detail})` : ''),
   ].join('\n')
 }
@@ -152,6 +156,32 @@ const formatFix = (f) => {
 // Treat the review as blocking if EITHER the top-level flag or any single
 // finding says so. Disagreement between the two should err towards a fix pass.
 const isBlocking = (r) => Boolean(r.blocking || r.findings.some((f) => f.blocking))
+
+// Finding counts by severity, read from the structured output rather than the prose,
+// so the effect of a cheaper re-review on what it finds can be measured.
+const SEVERITIES = REVIEW_SCHEMA.properties.findings.items.properties.severity.enum
+const countBySeverity = (r) =>
+  r && Array.isArray(r.findings)
+    ? Object.fromEntries(SEVERITIES.map((s) => [s, r.findings.filter((f) => f?.severity === s).length]))
+    : null
+
+// Output tokens per phase, as budget.spent() deltas around each agent() call. The
+// budget pool is shared by the whole turn, so when batches run concurrently a delta
+// also counts the other batches' agents. A runtime without `budget` (or one whose
+// spent() fails) reports null rather than throwing: measurement must never cost a review.
+const spentNow = () => {
+  try {
+    return typeof budget !== 'undefined' && budget && typeof budget.spent === 'function' ? budget.spent() : null
+  } catch {
+    return null
+  }
+}
+const metered = async (call) => {
+  const before = spentNow()
+  const out = await call()
+  const after = spentNow()
+  return [out, before == null || after == null ? null : after - before]
+}
 
 // Model tiering lives here, in the script, and NOT in agent frontmatter. Every
 // agent stays `model: inherit`: a frontmatter pin applies however the agent is
@@ -165,6 +195,10 @@ const INHERIT = null
 const SONNET = 'sonnet'
 const modelOpt = (m) => (m ? { model: m } : {})
 const modelName = (m) => m || 'session model'
+// Effort follows the same rule: INHERIT omits `effort`, and the result says "inherit".
+const MEDIUM = 'medium'
+const effortOpt = (e) => (e ? { effort: e } : {})
+const effortName = (e) => e || 'inherit'
 
 // Cost model. On a repository with a large CLAUDE.md, every dispatched agent pays
 // for it before doing any work, so the number of agents per issue -- and the tier
@@ -225,6 +259,13 @@ const fixModel = (implementedOn) => (implementedOn === SONNET ? INHERIT : SONNET
 // light review still blocked was misjudged as low-risk, and cycle 2 is its first
 // full-scope look, so that re-review escalates to the session model.
 const rereviewModel = (route) => (route.light ? INHERIT : SONNET)
+// Effort. Medium effort was measured (by Cloudflare) to lose real findings for
+// quality and performance reviewers, so the implementer and the first full review
+// inherit the session's effort. Only the fix, whose findings spell out the work, and
+// the confirming re-review drop to medium. A re-review escalated from a light review
+// is that change's first full-scope look, so it inherits too.
+const FIX_EFFORT = MEDIUM
+const rereviewEffort = (route) => (route.light ? INHERIT : MEDIUM)
 
 const LIGHT_SCOPE = `
 Review scope: LIGHT. This change was routed to a light review because it is small and
@@ -389,11 +430,13 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
   const subject = it.issue ? `issue #${it.issue}` : subjectOf(lane)
   const route = routeReview(it)
   const models = { implement: implementModel, review: route.model }
+  const effort = { implement: INHERIT, review: INHERIT }
+  const outputTokens = { review: null }
   log(
     `#${tag}: ${route.light ? 'light review' : 'full review'} on ${modelName(route.model)} ` +
       `(${route.why}).`,
   )
-  const reviewed = await agent(
+  const [reviewed, reviewTokens] = await metered(() => agent(
     `Review pull request #${it.pr}, opened for ${subject}, following the code-review ` +
       `procedure (preloaded).\n\n` +
       (route.light ? `${LIGHT_SCOPE}\n\n` : '') +
@@ -410,7 +453,9 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
       ...modelOpt(route.model),
       ...iso,
     },
-  )
+  ))
+  outputTokens.review = reviewTokens
+  const effortNames = () => Object.fromEntries(Object.entries(effort).map(([k, e]) => [k, effortName(e)]))
   const base = {
     issue: it.issue,
     pr: it.pr,
@@ -428,6 +473,8 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
       ...base,
       review: null,
       reviewCompleted: false,
+      effort: effortNames(),
+      outputTokens,
       note: 'The review phase did not return. Re-run the review before treating this PR as reviewed.',
     }
   }
@@ -440,6 +487,8 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
   if (blocking) {
     models.fix = fixModel(implementModel)
     models.rereview = rereviewModel(route)
+    effort.fix = FIX_EFFORT
+    effort.rereview = rereviewEffort(route)
     log(
       `#${tag}: blocking findings — fix on ${modelName(models.fix)}` +
         (models.fix === INHERIT && implementModel === SONNET
@@ -448,7 +497,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         `, re-review on ${modelName(models.rereview)}` +
         (route.light ? ' (escalated: a light review found blocking findings, so cycle 2 is full scope).' : '.'),
     )
-    fixed = await agent(
+    ;[fixed, outputTokens.fix] = await metered(() => agent(
       `Fix the blocking findings from this code review of PR #${it.pr} for ${subject}.\n\n` +
         `${reviewText}\n\n${rules}\n\n` +
         `Address every BLOCKING finding, and prove each fix with a test you have seen fail ` +
@@ -462,11 +511,12 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         agentType: 'delivery:code-issue',
         schema: FIX_SCHEMA,
         ...modelOpt(models.fix),
+        ...effortOpt(effort.fix),
         ...iso,
       },
-    )
+    ))
 
-    rereviewed = await agent(
+    ;[rereviewed, outputTokens.rereview] = await metered(() => agent(
       `Re-review PR #${it.pr} for ${subject}, following the code-review procedure (preloaded). ` +
         `This is cycle 2 of a maximum 2 — be decisive and do not open new lines of inquiry ` +
         `that do not affect merge.` +
@@ -490,9 +540,10 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         agentType: 'delivery:code-review',
         schema: REVIEW_SCHEMA,
         ...modelOpt(models.rereview),
+        ...effortOpt(effort.rereview),
         ...iso,
       },
-    )
+    ))
   } else {
     log(`#${tag}: no blocking findings — skipping fix and re-review.`)
   }
@@ -506,6 +557,9 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
     reReview: rereviewed,
     stillBlocking: rereviewed ? isBlocking(rereviewed) : null,
     models: Object.fromEntries(Object.entries(models).map(([k, m]) => [k, modelName(m)])),
+    effort: effortNames(),
+    outputTokens,
+    findingCounts: { review: countBySeverity(reviewed), rereview: countBySeverity(rereviewed) },
   }
 }
 
@@ -519,15 +573,20 @@ async function runLane(lane, isolated) {
   const route = routeImplement(lane.hint)
   log(`Implement ${subjectOf(lane)} on ${modelName(route.model)} (${route.why}).`)
 
-  const built = await agent(implementPrompt(lane, rules), {
+  const [built, implementTokens] = await metered(() => agent(implementPrompt(lane, rules), {
     label: `implement:${name}`,
     phase: 'Implement',
     agentType: 'delivery:code-issue',
     schema: IMPLEMENT_SCHEMA,
     ...modelOpt(route.model),
     ...iso,
-  })
-  const laneResult = { issues: lane.issues, description: lane.description || null, implementModel: modelName(route.model) }
+  }))
+  const laneResult = {
+    issues: lane.issues,
+    description: lane.description || null,
+    implementModel: modelName(route.model),
+    outputTokens: { implement: implementTokens },
+  }
 
   if (!built) {
     log(`Implementation of ${subjectOf(lane)} did not return — nothing to review.`)
