@@ -26,9 +26,9 @@ Inspired by [Google's Engineering Practices](https://google.github.io/eng-practi
 
 The project's `CLAUDE.md` is already in your context — do not re-read it. Review against it:
 reviewing against invented standards produces confident findings that are wrong, which is worse
-than no review. If the repository has an `AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`. **If
-`.claude/delivery.md` exists, read it** — it is often where the blocking-versus-advisory line is
-drawn.
+than no review. If the repository has an `AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`.
+**`.claude/delivery.md`**, if it exists, is often where the blocking-versus-advisory line is drawn.
+Step 1's batched call reads it, along with `AGENTS.md`, so do not spend a separate turn on either.
 
 If the project states no commands or conventions, infer them from the repository — package
 manifests, `Makefile`, the CI workflow — and **say in the review what you inferred**. A finding
@@ -80,25 +80,34 @@ command (`npm audit --json`, `pip-audit`, `cargo audit`, `govulncheck`) or GitHu
 
 ### Step 1: Orient
 
-**Goal:** Build a complete mental model before reviewing any code.
+**Goal:** Build a complete mental model before reviewing any code. Orientation takes **two
+turns**: every separate fetch is a full model turn over a growing context.
 
-1. **Read the PR:**
+1. **One batched Bash call** fetches the PR, its changed files, the diff, CI and the project's
+   delivery rules together:
    ```bash
-   gh pr view {PR_NUMBER} --json title,body,author,baseRefName,headRefName,reviews,files
+   gh pr view {PR_NUMBER} --json title,body,author,baseRefName,headRefName,reviews,files; \
+   echo '=== DIFF'; gh pr diff {PR_NUMBER}; \
+   echo '=== CHECKS'; gh pr checks {PR_NUMBER} 2>&1; \
+   echo '=== DELIVERY'; cat .claude/delivery.md 2>/dev/null; \
+   [ -f CLAUDE.md ] || cat AGENTS.md 2>/dev/null
    ```
-   Extract `Closes #N` / `Fixes #N` references, note the author, and note any previous reviews.
-2. **Read the linked issue(s)/epic:** `gh issue view {N} --json title,body,labels,comments` —
-   acceptance criteria, definition of done, sub-issue scope and boundaries, labels.
-3. **Read the project's own documentation** — architecture notes, specs, user guides. Wherever they
-   live in this repository; do not assume a `docs/` directory exists.
-4. **Fetch the diff:** `gh pr diff {PR_NUMBER}`
-5. **List changed files:** `gh pr view {PR_NUMBER} --json files --jq '.files[].path'`
-6. **Read each changed file in full** — not just the diff hunks. Context matters, and the defects
-   that matter most are usually visible only in the part the diff did not touch.
-7. **Check CI:** `gh pr checks {PR_NUMBER}`. Failing CI is blocking. A job stuck in `queued` is
-   not the PR's fault — a deep queue and a runner outage look identical from `gh pr checks`, so say
-   which it is (or that you could not tell) rather than reporting a red check. Do **not** report
-   pre-existing lint or type findings as PR findings.
+   The parts are joined with `;`, not `&&`, so one failing part does not abort the rest: a
+   missing `.claude/delivery.md` prints nothing, and a PR with no checks prints a message and a
+   non-zero exit that you ignore. From the output, extract `Closes #N` / `Fixes #N` references, the
+   author, previous reviews and the list of changed files.
+2. **One response of parallel reads.** In a single response, issue every remaining read as a
+   parallel tool call:
+   - the linked issue(s)/epic, `gh issue view {N} --json title,body,labels,comments`: acceptance
+     criteria, definition of done, sub-issue scope and boundaries, labels;
+   - **every changed file, in full**, not just the diff hunks. Context matters, and the defects
+     that matter most are usually visible only in the part the diff did not touch;
+   - the project's own documentation that bears on the change: architecture notes, specs, user
+     guides. Wherever they live in this repository; do not assume a `docs/` directory exists.
+3. **Read CI from the batch.** Failing CI is blocking. A job stuck in `queued` is not the PR's
+   fault — a deep queue and a runner outage look identical from `gh pr checks`, so say which it is
+   (or that you could not tell) rather than reporting a red check. Do **not** report pre-existing
+   lint or type findings as PR findings.
 
 ### Step 2: Requirements Validation
 

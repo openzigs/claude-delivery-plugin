@@ -25,9 +25,9 @@ The project's `CLAUDE.md` is already in your context — do not re-read it. It i
 on the exact build / test / lint commands, coverage floors, the changelog convention, protected
 paths and data-handling rules; where it and this document disagree, the project wins, and the
 numbers here are defaults for a repository that names none. If the repository has an
-`AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`. **If `.claude/delivery.md` exists, read it** —
-it holds delivery-pipeline constraints such as branch naming, PR body shape and which gates
-block a merge.
+`AGENTS.md` and no `CLAUDE.md`, read `AGENTS.md`. **`.claude/delivery.md`**, if it exists, holds
+delivery-pipeline constraints such as branch naming, PR body shape and which gates block a merge.
+Step 1's batched call reads both, so do not spend a separate turn on either.
 
 If the project states no commands, infer them from the repository — `package.json` scripts,
 `Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, and above all the CI workflow under
@@ -77,8 +77,20 @@ installed it is a convenience, not the path; the `gh` command is.
 
 ### Step 1: Planning
 
-1. Read the epic/issue: `gh issue view {number} --json title,body,labels,comments`
-2. If it has sub-issues, read each one to understand the full scope and the boundaries between them
+Orientation takes **two turns**: every separate fetch is a full model turn over a growing context.
+
+1. **One batched Bash call** reads the issue(s), the project's delivery rules and the CI layout:
+   ```bash
+   for n in {numbers}; do gh issue view $n --json title,body,labels,comments; done; \
+   echo '=== DELIVERY'; cat .claude/delivery.md 2>/dev/null; \
+   [ -f CLAUDE.md ] || cat AGENTS.md 2>/dev/null; \
+   echo '=== CI'; ls .github/workflows 2>/dev/null; \
+   gh repo view --json defaultBranchRef
+   ```
+   The parts are joined with `;`, not `&&`, so a missing file does not abort the rest.
+2. **One response of parallel reads.** In a single response, read every sub-issue (to learn the
+   full scope and the boundaries between them), the CI workflow and the source files the issue
+   names, as parallel tool calls.
 3. Look up library and API documentation you are unsure about — web search, the vendor's docs, or a
    documentation MCP server if one happens to be present. Do not guess an API signature you can check.
 4. Analyze the codebase — identify affected files, the patterns already in use, and the conventions
