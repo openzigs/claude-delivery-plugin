@@ -40,6 +40,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 let fails = 0
 const ok = (m) => console.log(`  PASS  ${m}`)
 const bad = (m) => { fails++; console.log(`  FAIL  ${m}`) }
+const skip = (m) => console.log(`  SKIP  ${m}`)
 
 // The skills under `root`: directories holding a SKILL.md, by name. A stray file
 // such as a gitignored skills/.DS_Store is not a skill and is not counted.
@@ -259,6 +260,8 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(/print the usage[^.]*and stop/i.test(noArgs) && /Read nothing outside the paths you were given/.test(noArgs)
     && /save|copy the result/i.test(noArgs),
     'cost-report: with no arguments it prints how to save a result, stops, and reads nothing else')
+  checkSkill(/task output/i.test(noArgs) && /`\*\.output`/.test(noArgs) && /completion notice/i.test(noArgs),
+    'cost-report: the usage text says a finished run\'s task output can be passed directly, and where it is written')
 }
 
 // The skill count stated in each manifest and the README must be the real one.
@@ -293,6 +296,8 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(cost.includes('(#what-the-result-measures)') && usage.includes('<a name="what-the-result-measures"></a>')
     && /concurrent/i.test(cost) && /proxy/i.test(cost),
     'docs/usage.md: "Reading the cost of a run" links "What the result measures" and repeats the concurrent and proxy caveats')
+  checkSkill(/task output/i.test(cost) && /`\*\.output`/.test(cost) && /completion notice/i.test(cost),
+    'docs/usage.md: "Reading the cost of a run" says a finished run\'s task output can be passed directly, and where it is written')
 }
 
 // ----------------------------------------------------------------- workflows
@@ -894,7 +899,7 @@ console.log('\n== scripts/cost-report.mjs ==')
       const f = (parse(cli('--json', join(IDS, 'a', 'result.json'), join(far, 'result.json')))?.runs || []).map((r) => r.id)
       c(JSON.stringify(f) === JSON.stringify(['a/result.json', `${basename(far)}/result.json`]),
         `inputs under different top-level directories get their shortest unique suffix as id (got ${JSON.stringify(f)})`)
-    } else c(false, `test setup: ${far} and ${IDS} share a top-level directory`)
+    } else skip(`cost-report: shortest-unique-suffix ids: ${far} and ${IDS} share a top-level directory, so this checkout cannot exercise it`)
 
     // Two spellings of one directory are one id: a symlink, and on macOS the
     // unresolved tmpdir (/var/... or /tmp/...) beside its /private realpath.
@@ -906,6 +911,30 @@ console.log('\n== scripts/cost-report.mjs ==')
     c(s.length === spellings.length && s.every((id) => id === 'result.json'),
       `${spellings.length} spellings of the same file get the same id (got ${JSON.stringify(s)})`)
     rmSync(alias, { force: true }); rmSync(far, { recursive: true, force: true })
+  }
+
+  // A finished workflow's task output wraps the result: `result` is the object, or
+  // a JSON string of it. The wrapper's own id names the run; a wrapper around
+  // anything else is still unrecognised. A directory contributes *.output files too.
+  {
+    const WRAP = join(ROOT, 'scripts/fixtures/cost-report-wrapped')
+    const snap = () => readdirSync(WRAP).sort().map((f) => `${f}:${statSync(join(WRAP, f)).mtimeMs}`).join('\n')
+    const pre = snap()
+    const o = cli('--json', WRAP)
+    const w = parse(o) || { runs: [], unrecognised: [] }
+    const t = cli(WRAP).stdout
+    c(snap() === pre, 'read-only: the wrapped fixture directory\'s file list and every mtime are unchanged by a run')
+    const byId = Object.fromEntries(w.runs.map((r) => [r.id, r]))
+    c(o.status === 0 && byId['wf-object-0001']?.workflow === 'orchestrate' && byId['wf-object-0001'].total.outputTokens === 41000 + 9000 + 3200 + 1800,
+      `a wrapper whose result is an object reports that result, named by the wrapper's taskId (got ${JSON.stringify(w.runs.map((r) => [r.id, r.workflow]))})`)
+    c(byId['02-string.output']?.workflow === 'plan-epic' && byId['02-string.output'].rows.find((r) => r.phase === 'Research')?.outputTokens === 23000,
+      'a wrapper whose result is a JSON string reports the parsed result, named by its file when it carries no id')
+    c(JSON.stringify(w.unrecognised) === JSON.stringify(['03-not-a-result.output']) && /^unrecognised: 03-not-a-result\.output$/m.test(t),
+      `a wrapper whose result is not a workflow result is still unrecognised (got ${JSON.stringify(w.unrecognised)})`)
+    c(/^== wf-object-0001 \(orchestrate\) ==$/m.test(t) && (w.trend?.phases?.Implement || []).some((e) => e.run === 'wf-object-0001'),
+      'the trend reads by the wrapper\'s run id, not its file name')
+    const bare = parse(cli('--json', join(FIX, 'plan-epic.json')))
+    c(bare?.runs?.[0]?.id === 'plan-epic.json' && bare.runs[0].workflow === 'plan-epic', 'a bare result still reports exactly as before')
   }
 }
 
