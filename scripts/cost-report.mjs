@@ -4,8 +4,12 @@
 // /delivery:plan-epic results. Stdlib only, read-only: it opens its inputs for
 // reading and writes only to stdout and stderr.
 //
-//   node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | dir>...
-//     dir: every *.json directly inside it, sorted by file name (= run order)
+//   node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | task.output | dir>...
+//     dir: every *.json and *.output directly inside it, sorted by file name (= run order)
+//
+// A file is a bare result object, or a finished workflow's task output: a
+// wrapper whose `result` is the result object or a JSON string of one. A
+// wrapper's own runId / run_id / taskId / task_id, when present, is the run id.
 //
 // A run's id is its path relative to the deepest directory holding every input
 // file, so a/result.json and b/result.json stay distinct; files that share one
@@ -46,6 +50,21 @@ function workflowOf(data) {
   if (Array.isArray(data.batches)) return 'orchestrate'
   if (data.outputTokens && typeof data.outputTokens === 'object' && 'research' in data.outputTokens) return 'plan-epic'
   return null
+}
+
+const WRAPPER_IDS = ['runId', 'run_id', 'taskId', 'task_id']
+
+// A bare result is returned as is; a wrapper around one yields the inner result
+// and the wrapper's id. Anything else is returned unchanged, to be unrecognised.
+export function unwrap(data) {
+  if (workflowOf(data) || data === null || typeof data !== 'object' || !('result' in data)) return { data }
+  let inner = data.result
+  if (typeof inner === 'string') {
+    try { inner = JSON.parse(inner) } catch { return { data } }
+  }
+  if (!workflowOf(inner)) return { data }
+  const runId = WRAPPER_IDS.map((k) => data[k]).find((v) => typeof v === 'string' && v !== '')
+  return runId === undefined ? { data: inner } : { data: inner, runId }
 }
 
 function orchestrateRows(data) {
@@ -214,8 +233,13 @@ export function render(report) {
 
 // ------------------------------------------------------------------------ CLI
 
-// The id of each run: its path relative to the inputs' common directory.
+// The id of each run: the wrapper's own id when it has one, otherwise its path
+// relative to the inputs' common directory.
 export function runIds(results) {
+  return pathIds(results).map((r, i) => (results[i].runId === undefined ? r : { id: results[i].runId, data: r.data }))
+}
+
+function pathIds(results) {
   if (!results.length) return []
   const dirs = results.map((r) => dirname(r.file).split(sep))
   let n = dirs[0].length
@@ -236,7 +260,7 @@ export function runIds(results) {
   })
 }
 
-const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | dir>...'
+const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | task.output | dir>...'
 
 function main(argv) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')))
@@ -254,17 +278,17 @@ function main(argv) {
     try { text = readFileSync(file, 'utf8') } catch (e) {
       process.stderr.write(`cannot read ${file}: ${e.message}\n`); status = 1; return
     }
-    let data = null
-    try { data = JSON.parse(text) } catch { process.stderr.write(`${file}: not valid JSON\n`) }
+    let parsed = null
+    try { parsed = JSON.parse(text) } catch { process.stderr.write(`${file}: not valid JSON\n`) }
     // The directory, not the file, is resolved: a symlinked file keeps its own name.
-    results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), data })
+    results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), ...unwrap(parsed) })
   }
   for (const p of paths) {
     let st
     try { st = statSync(p) } catch (e) { process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue }
     if (!st.isDirectory()) { load(p); continue }
     let names
-    try { names = readdirSync(p).filter((f) => f.endsWith('.json')).sort() } catch (e) {
+    try { names = readdirSync(p).filter((f) => f.endsWith('.json') || f.endsWith('.output')).sort() } catch (e) {
       process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue
     }
     for (const f of names) {

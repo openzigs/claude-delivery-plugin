@@ -276,18 +276,24 @@ fields described in [What the result measures](#what-the-result-measures): outpu
 effort, model and finding counts, then totals and a per-phase trend across runs.
 
 It reads only the paths you give it. When a `/delivery:orchestrate` or `/delivery:plan-epic`
-run finishes, copy the result object it returned into a file of its own, named so the files
-sort in run order, and pass the files or their directory:
+run finishes, Claude Code writes the run's task output to a `<task-id>.output` file; the path is
+printed in the workflow's completion notice. You can point the report straight at that file:
+it is a wrapper whose `result` holds the result object (or a JSON string of it), and the report
+reads the result inside. Alternatively, copy the result object into a file of its own. Either
+way, name the files so they sort in run order, and pass the files or their directory:
 
 ```
+/delivery:cost-report <path from the completion notice>/tasks/<task-id>.output
 /delivery:cost-report runs/2026-10-22-orchestrate-14.json
 /delivery:cost-report runs/
 /delivery:cost-report runs/ --include-concurrent
 ```
 
-A directory contributes every `*.json` directly inside it, sorted by file name. A run is named
-by its path relative to the deepest directory holding every input, so `a/result.json` and
-`b/result.json` stay two runs. With no arguments the skill prints how to save a result and
+A directory contributes every `*.json` and `*.output` directly inside it, sorted by file name.
+A wrapped run is named by the wrapper's own `runId`, `run_id`, `taskId` or `task_id` when it
+has one. Any other run is named by its path relative to the deepest directory holding every
+input, so `a/result.json` and `b/result.json` stay two runs. A wrapper whose `result` is not a
+workflow result is reported as `unrecognised`, like any other file. With no arguments the skill prints how to save a result and
 stops; it does not search for results. The skill runs `scripts/cost-report.mjs`, which does
 every sum, and shows only the metrics: never a result's `research`, `plan`, `review` or
 `implemented` text.

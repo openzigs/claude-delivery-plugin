@@ -1,7 +1,7 @@
 ---
 name: cost-report
 description: Per-run, per-phase cost report over saved /delivery:orchestrate and /delivery:plan-epic result JSON. Use when the maintainer wants to see output tokens, effort, model and finding counts per phase, or compare them across runs after a routing or effort change. Takes result files or directories as arguments, runs the plugin's own report script on them, and shows its table. Read-only.
-argument-hint: "<result.json | dir>... [--include-concurrent] — e.g. runs/2026-10-22-orchestrate-14.json"
+argument-hint: "<result.json | task.output | dir>... [--include-concurrent] — e.g. runs/2026-10-22-orchestrate-14.json"
 ---
 
 # Cost Report
@@ -29,13 +29,15 @@ If the arguments above are empty, print the usage below and stop. Do not go look
 results: not in the working directory, not in the session transcripts under `~/.claude/projects`,
 nowhere. Read nothing outside the paths you were given.
 
-> **Usage:** `/delivery:cost-report <result.json | dir>... [--include-concurrent]`
+> **Usage:** `/delivery:cost-report <result.json | task.output | dir>... [--include-concurrent]`
 >
-> When a `/delivery:orchestrate` or `/delivery:plan-epic` run finishes, copy the result object it
-> returned into a `.json` file of its own, one file per run, for example
-> `runs/2026-10-22-orchestrate-14.json`. Name the files so they sort in run order: a directory
-> argument reports every `*.json` directly inside it, sorted by file name, and that order is the
-> order of the trend.
+> When a `/delivery:orchestrate` or `/delivery:plan-epic` run finishes, Claude Code writes the
+> run's task output to a `<task-id>.output` file, at the path printed in the workflow's
+> completion notice. Pass that file straight in; the report reads the result inside it and names the run by
+> the wrapper's own run or task id. Or copy the result object the run returned into a `.json`
+> file of its own, one file per run, for example `runs/2026-10-22-orchestrate-14.json`. A
+> directory argument reports every `*.json` and `*.output` directly inside it, sorted by file
+> name, and that order is the order of the trend, so name the files to sort in run order.
 
 ## With arguments
 

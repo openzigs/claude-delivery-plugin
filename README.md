@@ -120,7 +120,7 @@ to reach for them: editing the code under review stops being the near-at-hand mo
 
 | Skill | What it does |
 |---|---|
-| `/delivery:cost-report <result.json \| dir>...` | Per-run, per-phase output tokens, effort, model and finding counts from saved workflow results, read-only. See [reading the cost of a run](docs/usage.md#reading-the-cost-of-a-run) |
+| `/delivery:cost-report <result.json \| task.output \| dir>...` | Per-run, per-phase output tokens, effort, model and finding counts from saved workflow results or a finished run's task output, read-only. See [reading the cost of a run](docs/usage.md#reading-the-cost-of-a-run) |
 
 Each is invoked namespaced — `/delivery:code-review` — and each is also reachable through
 the `Skill` tool by an agent that has it in `tools:`. See

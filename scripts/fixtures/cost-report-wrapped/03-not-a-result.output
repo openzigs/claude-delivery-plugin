@@ -1,0 +1,7 @@
+{
+  "taskId": "wf-other-0003",
+  "status": "completed",
+  "result": {
+    "summary": "A synthetic task whose result is not a workflow result."
+  }
+}
