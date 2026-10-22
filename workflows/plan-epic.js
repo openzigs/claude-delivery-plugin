@@ -46,6 +46,8 @@ if (!topic) {
 }
 const subject = topic || 'the work the caller described in conversation'
 
+// Kept in step by hand: this helper is duplicated on purpose in orchestrate.js and plan-epic.js,
+// because workflow scripts cannot import each other. Change both copies together.
 // Output tokens per phase, as budget.spent() deltas. No effort is set here: both
 // stages inherit the session's effort. Null, never a throw, if `budget` is absent.
 const spentNow = () => {
