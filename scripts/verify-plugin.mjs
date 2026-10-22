@@ -9,6 +9,8 @@
 //   2. every agent's frontmatter parses, has name + description, uses only
 //      supported fields, and has a `name` matching its filename stem
 //   3. every Agent(...) reference is namespaced and resolves to a real agent
+//      and every `skills:` entry is namespaced, names a real skill directory,
+//      and code-issue / code-review declare their own
 //   4. every skill lives in its own directory with a SKILL.md whose `name`
 //      matches that directory
 //   5. every workflow parses as JavaScript
@@ -93,6 +95,29 @@ for (const file of agentFiles) {
     if (!ref.startsWith('delivery:')) bad(`${file}: Agent ref "${ref}" not namespaced`)
     else if (!agentNames.has(ref.slice('delivery:'.length))) bad(`${file}: Agent ref "${ref}" has no such agent`)
     else ok(`${file}: Agent(${ref}) resolves`)
+  }
+}
+
+// every preloaded `skills:` entry must be namespaced and name a real skill
+// directory (matched against the directory names, so `../` tricks fail). Claude
+// Code skips a missing one with only a debug-log warning, so a typo leaves the
+// agent with no procedure at all. A bare name is rejected because it can match
+// a same-named skill from elsewhere (the built-in `code-review`, for one).
+// The two procedure agents must also declare theirs: their fallback text says
+// the body is preloaded, so a silent removal would leave them with none.
+const skillDirs = new Set(readdirSync(join(ROOT, 'skills')))
+const MUST_PRELOAD = { 'code-issue': 'delivery:code-issue', 'code-review': 'delivery:code-review' }
+for (const file of agentFiles) {
+  const stem = basename(file, '.md')
+  const fm = frontmatter(readFileSync(join(ROOT, 'agents', file), 'utf8'), file)
+  const refs = (fm?.skills || '').split(',').map((s) => s.trim()).filter(Boolean)
+  if (MUST_PRELOAD[stem] && !refs.includes(MUST_PRELOAD[stem])) {
+    bad(`${file}: must declare skills: ${MUST_PRELOAD[stem]}`)
+  }
+  for (const ref of refs) {
+    if (!ref.startsWith('delivery:')) bad(`${file}: skills entry "${ref}" not namespaced`)
+    else if (!skillDirs.has(ref.slice('delivery:'.length))) bad(`${file}: skills entry "${ref}" has no such skill`)
+    else ok(`${file}: skills ${ref} resolves`)
   }
 }
 

@@ -74,6 +74,8 @@ Changing the plugin name changes every namespaced reference, so update:
 
 - every `Agent(delivery:...)` in `agents/*.md` → `Agent(acme-delivery:...)`
 - every `agentType: 'delivery:...'` in `workflows/*.js`
+- every `skills: delivery:...` in `agents/*.md` frontmatter. Keep it namespaced: a bare
+  name is ambiguous when another skill shares it, as the built-in `code-review` does
 - every `/delivery:<skill>` mention in agents, skills and docs
 
 ```bash
@@ -226,7 +228,8 @@ node scripts/verify-plugin.mjs
 ```
 
 It also checks agent frontmatter, `name`-to-filename matching, namespaced `Agent(...)`
-references, skill directory layout, and `meta` purity — every one of which fails silently at
+references, that each `skills:` preload is namespaced and names a real skill (and that
+code-issue and code-review declare theirs), skill directory layout, and `meta` purity — every one of which fails silently at
 runtime. Stdlib only, no dependencies, no tokens.
 
 ---

@@ -2,6 +2,7 @@
 name: code-issue
 description: "Autonomous senior developer. Use to implement ONE GitHub issue end to end: TDD, coverage gate, branch, PR, CI watch. Dispatch one per issue — the caller sequences an epic's waves."
 tools: Read, Write, Edit, Bash, Skill, WebFetch, WebSearch, Agent(delivery:e2e-test)
+skills: delivery:code-issue
 model: inherit
 color: green
 ---
@@ -28,13 +29,7 @@ the project wins.**
 
 ## Workflow
 
-Invoke the `/delivery:code-issue` skill for the full workflow — that resolves because
-`Skill` is in this agent's `tools:`. It holds every rule for this job: reading the project's
-rules, mutation-verified TDD, coverage, linting, security, CI, changelog, working-tree
-safety and delivery. Do **not** `Read` the SKILL.md, which loads the whole body eagerly. If
-the invocation errors, read the skill file under the plugin root
-(`${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SKILL.md`) and say so in your report: a skipped
-procedure costs more than an eager read.
+**First check your context for a heading `# Code Issue Resolver`.** If it is there, the `delivery:code-issue` skill was preloaded by this agent's `skills:` frontmatter; follow it and do not invoke it again. If it is not there, invoke `/delivery:code-issue` through `Skill` now, and if that errors, read `${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SKILL.md` and say so in your report: a skipped procedure costs more than an eager read. The skill holds every rule for this job.
 
 ## Tool guidance
 
