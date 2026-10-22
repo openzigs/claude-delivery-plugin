@@ -360,6 +360,9 @@ gh pr review {PR_NUMBER} --comment --body-file "${PAYLOAD%.json}.md"
 
 ### Step 10: Handoff (Optional)
 
+If a workflow or another agent dispatched you, skip this step: your report or structured output
+is the handoff.
+
 After publishing, offer:
 
 > **Review published. Would you like me to hand the findings to `delivery:code-issue` for fixes?**
