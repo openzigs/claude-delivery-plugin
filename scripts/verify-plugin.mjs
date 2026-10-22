@@ -22,12 +22,14 @@
 //      which are driven by the review's structured output
 //   8. scripts/cost-report.mjs reports the synthetic result fixtures by its rules,
 //      read-only and with node: builtins only, and --discover finds exactly the runs
-//      in a synthetic Claude Code config tree
+//      in a synthetic Claude Code config tree, keeps the newest with --last when a run
+//      has no start time, and says what --since dropped
 //   9. the cost-report skill only runs that script -- each command line is exactly the
 //      call plus quoted paths and flags, nothing chained, piped or redirected -- and shows
 //      metrics only; the skill count stated in plugin.json, marketplace.json, README.md and
 //      docs/installation.md is the number of skills/ directories holding a SKILL.md; the
-//      README's Skills section names every skill; and docs/usage.md's "Reading the cost
+//      README's Skills section names every skill; the README names every /delivery:*
+//      command and every flag cost-report.mjs accepts; and docs/usage.md's "Reading the cost
 //      of a run" links "What the result measures" and repeats its caveats
 //
 // It exists because every one of those failures is silent at runtime.
@@ -298,6 +300,14 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
   const missing = SKILLS.filter((d) => !sectionOf(readme, '### Skills').includes(`\`${d}\``))
   checkSkill(missing.length === 0, `README.md: the Skills section names every skill${missing.length ? ` (missing ${missing.join(', ')})` : ''}`)
+  {
+    const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
+    const names = [...readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsWith('.js')).map((f) => `/delivery:${f.slice(0, -3)}`),
+      '/delivery:cost-report', ...cr.FLAGS, ...cr.VALUED]
+    const absent = names.filter((n) => !new RegExp(`${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![\\w-])`).test(readme))
+    checkSkill(cr.FLAGS.size > 0 && cr.VALUED.size > 0 && absent.length === 0,
+      `README.md: names every /delivery:* command and every cost-report flag the script accepts${absent.length ? ` (missing ${absent.join(', ')})` : ''}`)
+  }
   const usage = readFileSync(join(ROOT, 'docs/usage.md'), 'utf8')
   const cost = sectionOf(usage, '### Reading the cost of a run')
   checkSkill(cost.includes('(#what-the-result-measures)') && usage.includes('<a name="what-the-result-measures"></a>')
@@ -1086,6 +1096,36 @@ console.log('\n== cost-report --discover ==')
   c(plain.status === 0 && /^== plan-epic\.json \(plan-epic\) ==$/m.test(plain.stdout) && !/wf_/.test(plain.stdout),
     'without --discover only the given paths are read, even with a config tree present')
   rmSync(conf, { recursive: true, force: true }); rmSync(empty, { recursive: true, force: true })
+
+  // A run with no start time, in the session directory that sorts last: --last
+  // must still keep the newest timed runs, and the filters must say what they dropped.
+  const UNTIMED = join(ROOT, 'scripts/fixtures/cost-report-untimed')
+  const uconf = join(tmp, `cr-discover-untimed-${process.pid}`)
+  rmSync(uconf, { recursive: true, force: true }); mkdirSync(join(uconf, 'projects'), { recursive: true })
+  symlinkSync(UNTIMED, join(uconf, 'projects', slug))
+  const uenv = { ...process.env, CLAUDE_CONFIG_DIR: uconf }
+  const uroot = join(uconf, 'projects', slug)
+  const all = parse(cli(uenv, '--json', '--discover'))
+  c(JSON.stringify((all?.runs || []).map((x) => x.id))
+    === JSON.stringify(['wf_untimed-none', 'wf_untimed-oldest', 'wf_untimed-middle', 'wf_untimed-newest'])
+    && all?.trend?.order === 'start time' && all?.trend?.untimed === 1,
+    `a run with no start time is placed first and the rest by start time (got ${JSON.stringify((all?.runs || []).map((x) => x.id))}, order ${all?.trend?.order})`)
+  c(/^Per-phase trend \(by start time; 1 run without a start time placed first\)$/m.test(cli(uenv, '--discover').stdout),
+    'the trend header says a run without a start time was placed first')
+  const ulast = (parse(cli(uenv, '--json', '--discover', '--last', '2'))?.runs || []).map((x) => x.id)
+  c(JSON.stringify(ulast) === JSON.stringify(['wf_untimed-middle', 'wf_untimed-newest']),
+    `--last 2 keeps the two newest timed runs even when an untimed run's directory sorts last (got ${JSON.stringify(ulast)})`)
+  const us = cli(uenv, '--discover', '--since', '2026-10-11')
+  const usj = parse(cli(uenv, '--json', '--discover', '--since', '2026-10-11'))
+  c(/^skipped 1 file \(1 without a start time\); --verbose lists them$/m.test(us.stdout)
+    && JSON.stringify(usj?.skipped) === JSON.stringify([{ id: 'wf_untimed-none', reason: 'without a start time' }])
+    && JSON.stringify((usj?.runs || []).map((x) => x.id)) === JSON.stringify(['wf_untimed-middle', 'wf_untimed-newest']),
+    `--since counts the run it dropped for having no start time on the skipped line (got ${JSON.stringify(usj?.skipped)})`)
+  const none = cli(uenv, '--discover', '--since', '2027-01-01')
+  c(none.status === 0 && none.stdout
+    === `no runs match --since 2027-01-01 (4 found under ${uroot}; skipped 1 file, --verbose lists them)\n`,
+    `when --since excludes every run found, it says so rather than "no runs found" (got ${JSON.stringify(none.stdout)})`)
+  rmSync(uconf, { recursive: true, force: true })
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)

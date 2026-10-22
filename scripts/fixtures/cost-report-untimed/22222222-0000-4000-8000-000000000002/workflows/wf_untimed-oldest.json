@@ -1,0 +1,12 @@
+{
+  "runId": "wf_untimed-oldest",
+  "timestamp": "2026-10-10T10:00:00.000Z",
+  "startTime": 1791626400000,
+  "workflowName": "plan-epic",
+  "status": "completed",
+  "result": {
+    "topic": "synthetic topic",
+    "implemented": false,
+    "outputTokens": { "research": 1000, "plan": 100 }
+  }
+}

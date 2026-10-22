@@ -54,6 +54,11 @@ own failure message is less specific.
 
 ## Tavily and Context7 — optional accelerators, API key each
 
+**A `tools:` allowlist naming `mcp__tavily__*` is a permission, not a promise.** It cannot
+conjure a server you have not configured. `delivery:research` and `delivery:code-planner` are
+told to check rather than assume, and to treat these servers as faster paths over `WebSearch`
+and `WebFetch`, not as dependencies.
+
 Both need a key. **This document deliberately does not reproduce their signup flows**: they
 are third-party interfaces that change, and a stale copy of someone else's instructions is
 worse than a link, because it looks authoritative while being wrong. What is stable, and

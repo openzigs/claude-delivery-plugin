@@ -71,7 +71,8 @@ The script reads only `<config>/projects/<this project>/<session>/workflows/wf_<
 where `<config>` is `$CLAUDE_CONFIG_DIR` or `~/.claude`; it never opens a transcript. That
 layout is undocumented and may change between Claude Code versions, so files that do not fit
 are skipped and counted. If it prints `no runs found under <dir>`, show that line: it means
-nothing was found, not that the runs cost nothing.
+nothing was found, not that the runs cost nothing. If it prints `no runs match --since <date>`,
+show that line too: runs were found, but none started on or after that date.
 
 Then show the script's standard output verbatim in one fenced code block, ending with its caveat
 line. If it wrote to standard error, show those lines too, below the block; each one names a path

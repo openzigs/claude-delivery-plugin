@@ -19,7 +19,11 @@
 // path ids. A wrapper whose workflowName is not a delivery workflow is skipped.
 //
 // Runs are ordered by their startTime / timestamp (the wrapper's, else the
-// result's) when every run has one, and otherwise kept in input order.
+// result's) when every run has one, and otherwise kept in input order. Under
+// --discover, input order is session-directory order, which says nothing about
+// age, so runs with no start time are placed first (the oldest end) and the rest
+// by start time: --last N then keeps the N newest timed runs. --since drops a run
+// with no start time and counts it on the skipped line.
 //
 // Files found in a directory that are not JSON or not a delivery result are
 // skipped and counted on one line; --verbose lists them. A file named on the
@@ -74,6 +78,7 @@ export const SAFE_ID = /^[\w.:-]{1,128}$/
 export const DELIVERY_WORKFLOWS = new Set(['orchestrate', 'plan-epic', 'delivery:orchestrate', 'delivery:plan-epic'])
 export const NOT_JSON = 'not JSON'
 export const NOT_DELIVERY = 'not a delivery result'
+export const NO_TIME = 'without a start time'
 
 // startTime is epoch milliseconds in a persisted run; timestamp is an ISO string.
 function timeOf(o) {
@@ -157,6 +162,7 @@ export function summarise(results, opts = {}) {
   const includeConcurrent = Boolean(opts.includeConcurrent)
   const since = isNum(opts.since) ? opts.since : null
   const last = Number.isInteger(opts.last) && opts.last > 0 ? opts.last : null
+  const untimedFirst = Boolean(opts.untimedFirst)
   const runs = [], unrecognised = [], skipped = [], times = []
   for (const { id, data, skip, fromDir, notJson, startTime } of results) {
     const workflow = skip ? null : workflowOf(data)
@@ -170,15 +176,22 @@ export function summarise(results, opts = {}) {
     runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows), ...(isNum(startTime) ? { startTime } : {}) })
     times.push(startTime)
   }
-  // Start-time order only when every run has one; a partial order would be a guess.
-  const order = runs.length && times.every(isNum) ? 'start time' : 'input'
+  // Start-time order only when every run has one; a partial order would be a
+  // guess, unless untimedFirst puts the runs with none at the oldest end.
+  const order = runs.length && (untimedFirst || times.every(isNum)) ? 'start time' : 'input'
   if (order === 'start time') {
-    const byTime = runs.map((r, i) => [times[i], i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((e) => e[2])
+    const key = (t) => (isNum(t) ? t : -Infinity)
+    const byTime = runs.map((r, i) => [key(times[i]), i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((e) => e[2])
     runs.splice(0, runs.length, ...byTime)
   }
-  // --since keeps runs that started at or after it (a run with no start time
-  // cannot be shown to have); --last keeps the last N in the order above.
-  if (since !== null) runs.splice(0, runs.length, ...runs.filter((r) => isNum(r.startTime) && r.startTime >= since))
+  // --since keeps runs that started at or after it; a run with no start time
+  // cannot be shown to have, and is counted as skipped. --last keeps the last N
+  // in the order above.
+  const found = runs.length
+  if (since !== null) {
+    for (const r of runs) if (!isNum(r.startTime)) skipped.push({ id: r.id, reason: NO_TIME })
+    runs.splice(0, runs.length, ...runs.filter((r) => isNum(r.startTime) && r.startTime >= since))
+  }
   if (last !== null) runs.splice(0, Math.max(0, runs.length - last))
 
   const zero = () => Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
@@ -221,7 +234,8 @@ export function summarise(results, opts = {}) {
       reviewsCounted,
       reviewsNotReturned,
     },
-    trend: { order, includeConcurrent, excluded, phases },
+    trend: { order, untimed: runs.filter((r) => !isNum(r.startTime)).length, includeConcurrent, excluded, phases },
+    ...(since !== null || last !== null ? { filter: { found } } : {}),
     caveat: CAVEAT,
   }
 }
@@ -264,7 +278,7 @@ export function render(report, opts = {}) {
   for (const id of report.unrecognised) out.push(`unrecognised: ${id}`)
   const sk = report.skipped || []
   if (sk.length) {
-    const by = [NOT_JSON, NOT_DELIVERY].map((why) => [why, sk.filter((s) => s.reason === why).length]).filter(([, n]) => n)
+    const by = [NOT_JSON, NOT_DELIVERY, NO_TIME].map((why) => [why, sk.filter((s) => s.reason === why).length]).filter(([, n]) => n)
     out.push(`skipped ${plural(sk.length, 'file')} (${by.map(([why, n]) => `${n} ${why}`).join(', ')})` +
       (opts.verbose ? '' : '; --verbose lists them'))
     if (opts.verbose) for (const s of sk) out.push(`  skipped: ${s.id} (${s.reason})`)
@@ -281,6 +295,7 @@ export function render(report, opts = {}) {
 
   const tr = report.trend
   out.push(`Per-phase trend (${tr.order === 'start time' ? 'by start time' : 'in input order'}` +
+    (tr.order === 'start time' && tr.untimed ? `; ${plural(tr.untimed, 'run')} without a start time placed first` : '') +
     (tr.excluded.length ? `; ${plural(tr.excluded.length, 'concurrent run')} excluded, --include-concurrent to add` : '') +
     (tr.includeConcurrent ? '; concurrent runs included' : '') + ')')
   const entries = Object.entries(tr.phases)
@@ -357,8 +372,8 @@ export function discoverFiles(config, cwd) {
 
 const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...\n' +
   '       node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] --discover [--last N] [--since DATE]'
-const FLAGS = new Set(['--json', '--include-concurrent', '--verbose', '--discover'])
-const VALUED = new Set(['--last', '--since'])
+export const FLAGS = new Set(['--json', '--include-concurrent', '--verbose', '--discover'])
+export const VALUED = new Set(['--last', '--since'])
 
 function main(argv) {
   const flags = new Set(), values = {}, paths = [], errors = []
@@ -427,12 +442,18 @@ function main(argv) {
     }
   }
 
-  const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent'), last, since })
+  const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent'), last, since, untimedFirst: discover })
   if (found) report.discovered = { root: found.root, files: found.files.length }
   if (found && !report.runs.length && !flags.has('--json')) {
-    // An empty table would read as zero cost; say plainly that nothing was found.
+    // An empty table would read as zero cost; say plainly that nothing was found,
+    // or, when runs were found, that --since excluded them all. (--last N >= 1
+    // keeps at least one run, so it never empties a non-empty list.)
     const n = report.skipped.length
-    process.stdout.write(`no runs found under ${found.root}${n ? ` (skipped ${plural(n, 'file')}; --verbose lists them)` : ''}\n`)
+    const matched = report.filter?.found
+      ? `no runs match --since ${values['--since']} (${report.filter.found} found under ${found.root}` +
+        `${n ? `; skipped ${plural(n, 'file')}, --verbose lists them` : ''})`
+      : `no runs found under ${found.root}${n ? ` (skipped ${plural(n, 'file')}; --verbose lists them)` : ''}`
+    process.stdout.write(`${matched}\n`)
     if (n && flags.has('--verbose')) for (const x of report.skipped) process.stdout.write(`  skipped: ${x.id} (${x.reason})\n`)
     return status
   }
