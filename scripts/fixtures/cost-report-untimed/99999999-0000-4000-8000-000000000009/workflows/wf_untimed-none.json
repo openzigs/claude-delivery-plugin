@@ -1,0 +1,10 @@
+{
+  "runId": "wf_untimed-none",
+  "workflowName": "plan-epic",
+  "status": "completed",
+  "result": {
+    "topic": "synthetic topic",
+    "implemented": false,
+    "outputTokens": { "research": 1000, "plan": 100 }
+  }
+}

@@ -309,9 +309,12 @@ Code saved for the current directory's project, oldest first:
 `$CLAUDE_CONFIG_DIR` or `~/.claude` and `<project>` is the directory's path with every
 character other than a letter or digit replaced by `-`. Only files with that name pattern are
 opened; session transcripts beside them are not. Runs of other workflows and unparseable files
-are counted on the `skipped` line. `--last N` keeps the newest N runs and `--since DATE` those
-started on or after DATE. When nothing is found it prints `no runs found under <dir>` rather
-than an empty table. That layout is undocumented (checked on Claude Code 2.1.308) and may change
+are counted on the `skipped` line. A run with no start time is placed first (the oldest end),
+and the trend header says so, so `--last N` always keeps the newest N timed runs. `--since DATE`
+keeps those started on or after DATE, and counts a run it dropped for having no start time on
+the `skipped` line (`without a start time`). When nothing is found it prints
+`no runs found under <dir>` rather than an empty table; when runs were found but `--since`
+excluded them all, it prints `no runs match --since <date> (N found under <dir>)`. That layout is undocumented (checked on Claude Code 2.1.308) and may change
 between versions.
 
 The skill runs `scripts/cost-report.mjs`,

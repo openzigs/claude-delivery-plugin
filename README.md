@@ -2,18 +2,28 @@
 
 A project-agnostic delivery pipeline for Claude Code: two workflows, seven agents and
 nine skills that take a GitHub issue from implementation through **independent review**,
-fix and re-review — or turn a topic into a filed epic with sub-issues.
+fix and re-review — or turn a topic into a filed epic with sub-issues — plus a read-only
+report of what each run cost.
 
 It hardcodes nothing about any project. Every dispatched prompt reads the repository's own
 `CLAUDE.md` for its hard rules, so the same plugin works in a Go service, a React app, a
 Rust CLI or a polyglot monorepo.
 
+This README is the user guide: you can install, run and read the results of every command
+from it alone. [`docs/`](docs/) holds the detailed reference, linked from each section.
+
+**Contents:** [Why this exists](#why-this-exists-claude-code-cannot-invoke-an-agent-directly) ·
+[Install and update](#install-and-update) · [The commands](#the-commands) ·
+[A typical loop](#a-typical-loop) · [What a result contains](#what-a-result-contains) ·
+[Agents and skills](#agents-and-skills) · [Verifying it loaded](#verifying-it-loaded) ·
+[MCP servers](#mcp-servers-what-this-plugin-needs-and-what-it-merely-uses) ·
+[Per-project configuration](#per-project-configuration) ·
+[Precedence and gotchas](#precedence-and-gotchas) · [Releases](#releases) ·
+[Contributing](#contributing)
+
 ---
 
 ## Why this exists: Claude Code cannot invoke an agent directly
-
-This is the finding the whole plugin is built on, and it is worth stating before anything
-else.
 
 **There is no `/agent-name` syntax.** You cannot type a subagent's name to run it. No
 setting, no hook, no convention, no line in a `CLAUDE.md` influences which agent gets
@@ -30,11 +40,6 @@ that go missing are systematically the ones that produce no artifact anyone is w
 **review** and **security audit**. A phase nobody remembers to invoke is indistinguishable
 from a phase that passed. The build is green either way.
 
-That is not a hypothetical. It is what happens in practice: a reviewer agent can sit in a
-repository, fully working, through dozens of merges without being run once, because nothing
-the executing model read told it when to use it. An agent nobody is told to dispatch is
-indistinguishable from one that does not exist.
-
 **A workflow is different. A workflow is a command.** You type `/delivery:orchestrate 412`
 and a JavaScript file runs. Its phase sequence is code, not intention:
 
@@ -45,86 +50,297 @@ for (const it of built.issues.filter((i) => i.pr))
 ```
 
 The review phase cannot be skipped, because skipping it would require the script not to
-execute a line. That single property — *the sequence is code* — is the reason this plugin
-is packaged as workflows that dispatch agents, rather than as a set of agents and a written
-convention asking you to use them in order.
-
-Everything else here is in service of that: the agents are the workers the workflows
-dispatch, and the skills are the procedures those workers follow.
+execute a line. That is why this plugin is packaged as workflows that dispatch agents: the
+agents are the workers the workflows dispatch, and the skills are the procedures those
+workers follow.
 
 ---
 
-## Quick start
+## Install and update
 
-```bash
-# Try it without installing anything (per-session, from a checkout):
-claude --plugin-dir /path/to/claude-delivery-plugin
+### Install from the marketplace
 
-# Then, inside that session:
-/delivery:orchestrate 412
-```
-
-Or install it permanently:
+This repository is both the plugin and a single-plugin marketplace that serves it. From a
+terminal:
 
 ```bash
 claude plugin marketplace add openzigs/claude-delivery-plugin
 claude plugin install delivery@claude-delivery-plugin
 ```
 
-Full instructions, including the IDE extensions and private-repository access, are in
+or, inside an interactive session:
+
+```
+/plugin marketplace add openzigs/claude-delivery-plugin
+/plugin install delivery@claude-delivery-plugin
+```
+
+Add `--scope project` to the CLI install to declare it in the repository's committed
+settings, so everyone working in that repository gets it.
+
+### Update
+
+Inside a session, run these two commands, each at the very start of the line — a slash
+command with a space before the `/` is sent as an ordinary message and does nothing:
+
+```
+/plugin marketplace update claude-delivery-plugin
+/reload-plugins
+```
+
+**A session that is already open keeps the copy it loaded until you reload it.** Updating
+from a terminal (`claude plugin marketplace update claude-delivery-plugin`, then
+`claude plugin update delivery`) changes what the *next* session loads; any session already
+running still behaves like the old version until you run `/reload-plugins` in it or restart it.
+
+### Try it without installing
+
+```bash
+claude --plugin-dir /path/to/claude-delivery-plugin
+```
+
+That loads the plugin from a checkout for that one session. The directory is read at session
+start, so restart after editing anything in it.
+
+IDE extensions, private-repository access and scopes are covered in
 [`docs/installation.md`](docs/installation.md).
 
 ---
 
-## What is in the box
+## The commands
 
-### Workflows — typed slash commands, sequence guaranteed
+Three commands are typed: two workflows and one reporting skill. Arguments go after the
+command on the same line.
 
 | Command | What it does | Ends at |
 |---|---|---|
-| `/delivery:orchestrate <issue \| issues \| issues ; issues \| description> [--points N \| --small]` | Implement → Review → *(Fix → Re-review, only if review found something blocking)*, per PR. Several issues are one batch for one implementer; `;`-separated batches run concurrently in separate git worktrees | One open PR per issue, each reviewed, **never merged** |
-| `/delivery:plan-epic <topic \| path \| URL>` | Research → Plan | Filed GitHub issues, **no code written** |
+| `/delivery:orchestrate` | Implement → Review → *(Fix → Re-review, only on a blocking finding)*, per PR | One open, reviewed PR per issue, **never merged** |
+| `/delivery:plan-epic` | Research → Plan | A filed epic with sub-issues, **no code written** |
+| `/delivery:cost-report` | Reads saved run results and tabulates tokens, effort, model and findings per phase | A table on screen; reads files only |
 
-Every dispatched agent starts with the project's `CLAUDE.md` already in context, and is
-told to read `.claude/delivery.md` if it exists. That is how a generic pipeline obeys a
-specific project — see [Per-project configuration](#per-project-configuration).
+### `/delivery:orchestrate` — issues to reviewed pull requests
 
-**Cost.** Every dispatched agent pays for the project's `CLAUDE.md` before it starts, so the
-pipeline keeps the agent count low: no separate sizing agent, one implementer per batch, and
-a review that is light and on Sonnet only for a small, low-risk change (≤ 2 story points, no
-risk label, ≤ 5 files and ≤ 150 lines) and full on the session model otherwise. A clean
-issue costs two agents. The biggest lever is yours, though: keep `CLAUDE.md` a small index
-and move detail into topic files read on demand — see
-[per-project configuration](docs/per-project-configuration.md#keep-claudemd-small--it-is-the-biggest-cost-lever).
+```
+/delivery:orchestrate 412                     one issue
+/delivery:orchestrate 412 413 415             one batch: one implementer, one PR per issue
+/delivery:orchestrate 412 413 ; 500 501       two batches, run concurrently in separate worktrees
+/delivery:orchestrate 412 --points 2          size hint for that batch (or --small)
+/delivery:orchestrate make the audit filter honour a date range
+                                              a description: the implementer files the issue first
+```
+
+`#412` is the same as `412`. With no argument it uses what you described in the
+conversation.
+
+**Phases, per pull request:**
+
+1. **Implement** — `delivery:code-issue` works each issue in the batch in turn: TDD with
+   tests shown to fail, the project's coverage and lint gates, a branch, a PR with
+   `Closes #N`, and CI watched to green. It reports each issue's story points and labels and
+   each PR's size, which the later phases route on.
+2. **Review** — `delivery:code-review` reads each PR independently and publishes inline
+   comments. It is **light** (requirements, correctness, tests and security of the changed
+   lines) only for a small, low-risk change: the issue's `Story Points` line ≤ 2, no risky
+   label (`security`, `auth`, `migration`, `breaking`, `payment`, `billing`, `privacy`,
+   `infra`, `data-loss`), and the PR at most 5 files and 150 changed lines. Anything else,
+   or anything unknown, gets the **full** review.
+3. **Fix** — only when the review flags a blocking finding. `delivery:code-issue` fixes or
+   declines each finding with a reason, re-runs the gates and pushes.
+4. **Re-review** — `delivery:code-review` checks the fix. That is cycle 2 of a **maximum
+   of 2**; anything still blocking after it is left for you, not a third automated pass.
+
+**Model and effort per phase:**
+
+| Phase | Model | Effort |
+|---|---|---|
+| Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | inherits the session's |
+| Review | Sonnet when light; the session model when full | inherits the session's |
+| Fix | Sonnet (the session model if Sonnet did the implementing) | `medium` |
+| Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked | `medium`, or inherits when escalated |
+
+**Batches.** Space-separated issues are one batch for one implementer — use it for related
+issues that touch the same code. Each issue still gets its own branch and PR, and its own
+review. Separate batches with `;` and they run **concurrently**, every agent in its own git
+worktree. A size hint belongs to the batch it is written in.
+
+**Stacked PRs and merge order.** When an issue in a batch depends on an earlier one that is
+not merged yet, its branch is stacked on that issue's branch instead of the default branch,
+and the PR body says so. Merge in dependency order: the base PR first, then the stacked one,
+once GitHub has retargeted it (or you have rebased it) onto the default branch.
+
+**It stops before merging.** Merging is your decision. The run ends with a result object
+(see [What a result contains](#what-a-result-contains)) and a note that nothing was merged.
+
+Details: [`docs/usage.md`](docs/usage.md#deliveryorchestrate--issues-to-reviewed-prs).
+
+### `/delivery:plan-epic` — a topic to filed issues
+
+```
+/delivery:plan-epic add SSO with SAML and SCIM provisioning
+/delivery:plan-epic ~/Documents/product-requirements/q3-retention
+/delivery:plan-epic https://example.com/rfc/audit-retention
+```
+
+The argument is a topic, a path to documents, or a URL. **Research**
+(`delivery:research`) gathers the local files, web pages, library docs and the repository
+itself, including its open backlog so the plan does not duplicate filed work. **Plan**
+(`delivery:code-planner`) reads the existing labels, then files an epic and sub-issues with
+acceptance criteria, story points, Mermaid diagrams and a phase order.
+
+It **writes no code and opens no pull request**. It returns the research summary, the plan
+(with the issue numbers it filed) and the output tokens of each phase. Take the sub-issues
+forward with `/delivery:orchestrate`.
+
+### `/delivery:cost-report` — what each run cost
+
+```
+/delivery:cost-report <path from the completion notice>/tasks/<task-id>.output
+/delivery:cost-report runs/2026-10-22-orchestrate.json
+/delivery:cost-report runs/
+/delivery:cost-report --discover --last 5
+/delivery:cost-report --discover --since 2026-10-01 --include-concurrent
+```
+
+It reads finished `/delivery:orchestrate` and `/delivery:plan-epic` runs and prints, per run
+and per phase, output tokens, effort, model and finding counts, then totals across runs and a
+per-phase trend. It is read-only and does every sum in a script, so no model adds the numbers.
+
+**Inputs:**
+
+- a saved result object (`.json`);
+- a finished run's task output, `<task-id>.output` — its path is in the workflow's
+  completion notice, and the report reads the result inside the wrapper;
+- a directory: every `*.json` and `*.output` directly inside it.
+
+**Flags:**
+
+| Flag | Effect |
+|---|---|
+| `--discover` | Instead of paths, read the runs Claude Code saved for the current directory's project (under `$CLAUDE_CONFIG_DIR` or `~/.claude`). That layout is undocumented and may change |
+| `--last N` | With `--discover`: keep the newest N runs |
+| `--since DATE` | With `--discover`: keep runs started on or after DATE, such as `2026-10-01` |
+| `--include-concurrent` | Put concurrent runs into the per-phase trend (they are left out by default) |
+| `--verbose` | List every skipped file rather than only counting them |
+| `--json` | Print the report as JSON instead of tables |
+
+**Reading the output:**
+
+- a number is measured output tokens;
+- `not measured` — the runtime gave no budget for that phase. It is not zero;
+- `n/a` — the workflow never records that field for that phase;
+- `CONCURRENT` — the run had batches running at once, so its token figures include the other
+  batches' spend. It is excluded from the trend unless you pass `--include-concurrent`;
+- `REVIEW DID NOT RETURN` — that PR was not reviewed, and its findings are not counted;
+- the `skipped` line counts files that were not JSON, were not a delivery result (another
+  workflow's run, for example), or — with `--since` — a run with no start time, which cannot be
+  shown to have started after the date. `--verbose` lists them;
+- runs are ordered by start time when every run has one. Under `--discover`, a run with no start
+  time is placed first, and the trend header says so, so `--last N` always keeps the newest
+  timed runs;
+- `no runs found under <dir>` means nothing was found there; `no runs match --since <date>`
+  means runs were found but none started on or after that date.
+
+**The proxy caveat**, printed under every report: severity counts are a proxy. A drop in
+findings after a routing or effort change does not show whether findings were lost; read the
+reviews before concluding a cheaper review is as good.
+
+Details: [`docs/usage.md`](docs/usage.md#reading-the-cost-of-a-run).
+
+---
+
+## A typical loop
+
+```
+> /delivery:plan-epic add audit-log retention with a configurable window
+  ... Research -> Plan ...   Filed an epic with three sub-issues: 531, 532, 533.
+
+> /delivery:orchestrate 531 532 ; 533
+  ... two batches at once; 531 and 532 share an implementer ...
+  Three PRs opened and reviewed; one review found a blocking finding, fixed and re-reviewed.
+  Nothing was merged.
+```
+
+1. **Plan** with `/delivery:plan-epic`.
+2. **Orchestrate** the sub-issues. Batch related ones (space-separated) so one implementer
+   carries the context; split independent ones with `;` to run them concurrently.
+3. **Review and merge** the PRs yourself, base PRs before stacked ones.
+   `/delivery:resolve-pr-comments <pr>` works through review threads you or a teammate left.
+4. **Update and reload** when the plugin itself changed: `/plugin marketplace update
+   claude-delivery-plugin`, then `/reload-plugins`.
+5. **Check the cost** with `/delivery:cost-report --discover --last 5`: tokens and findings per
+   phase, to judge a routing or effort change by measurement rather than impression.
+
+---
+
+## What a result contains
+
+`/delivery:orchestrate` returns `{ batches, reviewCompleted, merged: false, note }`. Each batch
+records its `issues`, `implementModel` and `outputTokens.implement`, and a `prs` list. Each PR
+entry records:
+
+| Field | What it holds |
+|---|---|
+| `models` | The model of each phase that ran (`session model` when inherited) |
+| `effort` | The effort of each phase that ran (`inherit` when none was set) |
+| `outputTokens` | Output tokens of `review`, and of `fix` / `rereview` when they ran; `null` when the runtime gave no budget |
+| `findingCounts` | `{ review, rereview }`, each a count per severity: `critical`, `high`, `medium`, `low`, `nit` |
+| `stillBlocking` | After a re-review: `true` if blocking findings remain, `false` if not; `null` when no re-review ran |
+
+Also present: `reviewScope` (`light` or `full`) with its `reviewRouting` reason, the review,
+fix and re-review outputs, and `reviewCompleted: false` with a note when a review never
+returned. `/delivery:plan-epic` returns its `research`, its `plan` and
+`outputTokens: { research, plan }`.
+
+The full field table, and why concurrent runs overlap, are in
+[What the result measures](docs/usage.md#what-the-result-measures).
+
+---
+
+## Agents and skills
 
 ### Agents — the workers
 
-| Agent | Role | Write tools? |
+You cannot type an agent. The workflows dispatch them; you can also ask for one in plain
+words ("review PR 88"), but then the main model decides whether to use it.
+
+| Agent | What it does | Used |
 |---|---|---|
-| `delivery:orchestrator` | Runs the whole pipeline, dispatching the others. Use when the user says "work on issue N" without naming agents | No |
-| `delivery:code-issue` | Implements one issue end to end: TDD, coverage, branch, PR, CI watch | Yes |
-| `delivery:code-review` | Reviews a PR against requirements, OWASP, design, performance, tests; publishes inline GitHub comments | No — deliberately |
-| `delivery:code-planner` | Files a structured epic with sub-issues, Mermaid diagrams, story points, phase order | Yes |
-| `delivery:research` | Synthesizes local files, web pages and library docs into a research summary | No |
-| `delivery:e2e-test` | Writes Playwright specs mapped to acceptance criteria | Yes |
-| `delivery:ui-vision` | Drives a real headed browser through a running app and files what it finds | No |
+| `delivery:orchestrator` | Runs implement → review → fix → re-review, dispatching the others | Directly, when you say "work on issue N" without naming agents |
+| `delivery:code-issue` | Implements one issue end to end: TDD, coverage, branch, PR, CI watch | By `/delivery:orchestrate` (Implement, Fix); or directly for a one-off |
+| `delivery:code-review` | Reviews a PR against its requirements, OWASP, design, performance and tests; publishes inline comments. No write tools | By `/delivery:orchestrate` (Review, Re-review); or directly before a merge |
+| `delivery:code-planner` | Files an epic and sub-issues with diagrams, story points and phase order | By `/delivery:plan-epic` (Plan) |
+| `delivery:research` | Turns local files, web pages and library docs into a research summary. Read-only | By `/delivery:plan-epic` (Research) |
+| `delivery:e2e-test` | Writes Playwright specs mapped to acceptance criteria | Directly, or by `delivery:code-issue` for UI work |
+| `delivery:ui-vision` | Drives a real headed browser through a running app and files what it finds. Writes no tests | Directly ("walk through the settings page") |
 
-The reviewer and the QA agent hold `disallowedTools: Write, Edit` on purpose. Removing the
-write tools from a reviewer's schema is a materially stronger guarantee than trusting it not
-to reach for them: editing the code under review stops being the near-at-hand move.
-
-### Skills — the procedures
+### Skills
 
 `code-issue`, `code-review`, `cost-report`, `e2e-test`, `epic-planner`, `repo-scaffold`,
 `research-gather`, `resolve-pr-comments`, `ui-vision`.
 
-| Skill | What it does |
-|---|---|
-| `/delivery:cost-report <result.json \| task.output \| dir>...` or `--discover` | Per-run, per-phase output tokens, effort, model and finding counts from saved workflow results, a finished run's task output, or (with `--discover`) the runs Claude Code persisted for this project, read-only. See [reading the cost of a run](docs/usage.md#reading-the-cost-of-a-run) |
+Each is typed namespaced, as `/delivery:<name>`, to run its procedure in the current session,
+and is also loaded by the agents that follow it.
 
-Each is invoked namespaced — `/delivery:code-review` — and each is also reachable through
-the `Skill` tool by an agent that has it in `tools:`. See
-[`docs/usage.md`](docs/usage.md) for what each one does and when to reach for it.
+| Skill | What it does | Used |
+|---|---|---|
+| `/delivery:code-issue` | The implement-an-issue procedure: plan, branch, TDD, security scan, CI, PR | Preloaded by `delivery:code-issue`; type it to run the procedure in your session |
+| `/delivery:code-review` | The review procedure: requirements, design, OWASP, quality, performance, tests, publish | Preloaded by `delivery:code-review`; type it as `/delivery:code-review 88` |
+| `/delivery:cost-report` | The per-run, per-phase cost report above | Typed only |
+| `/delivery:e2e-test` | Acceptance criteria to Playwright specs, Page Object Model, accessible locators | By `delivery:e2e-test`; or typed as `/delivery:e2e-test 412` |
+| `/delivery:epic-planner` | Epic and sub-issue structure, Mermaid diagrams, story points, phase order | By `delivery:code-planner` in `/delivery:plan-epic` |
+| `/delivery:repo-scaffold` | A new repository from nothing: stack, scaffolding, CI, and the `CLAUDE.md` this pipeline reads | Typed on an empty repository, or by `delivery:code-planner` |
+| `/delivery:research-gather` | Collects and converts research material from files, the web and library docs | By `delivery:research` in `/delivery:plan-epic` |
+| `/delivery:resolve-pr-comments` | Triages unresolved review threads, fixes the valid ones, replies and resolves them | Typed after a review: `/delivery:resolve-pr-comments 88` |
+| `/delivery:ui-vision` | A structured browser walkthrough with screenshots, console capture and bug filing | By `delivery:ui-vision`; or typed with the app running |
+
+The reviewer and the QA agent hold `disallowedTools: Write, Edit` on purpose: removing the
+write tools from a reviewer's schema is a stronger guarantee than trusting it not to reach
+for them. More in [`docs/usage.md`](docs/usage.md#agents).
+
+**Cost.** Every dispatched agent pays for the project's `CLAUDE.md` before it starts, so the
+pipeline keeps the agent count low: no sizing agent, one implementer per batch, and a clean
+issue costs two agents. The biggest lever is yours: keep `CLAUDE.md` a small index — see
+[per-project configuration](docs/per-project-configuration.md#keep-claudemd-small--it-is-the-biggest-cost-lever).
 
 ---
 
@@ -134,114 +350,73 @@ the `Skill` tool by an agent that has it in `tools:`. See
 misnamed agent simply never appears. Check, do not assume:
 
 ```bash
-# Component inventory and token cost, from a directory:
-claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery
-
-# Or, once installed:
 claude plugin list
 claude plugin details delivery
+# or, from a checkout:
+claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery
 ```
 
 You should see `Skills (9)` and `Agents (7)`.
 
-> **Note:** `claude plugin details` does **not** list workflows — that is true of every
-> plugin, not a defect in this one. To confirm the workflows registered, type `/` in an
-> interactive session and look for `/delivery:orchestrate` and `/delivery:plan-epic`, or
-> ask a headless session:
->
-> ```bash
-> claude --plugin-dir /path/to/claude-delivery-plugin \
->   -p "Without using any tools, list every slash command available to you that starts with 'delivery'."
-> ```
-
-More checks, including what each failure looks like, are in
-[`docs/installation.md`](docs/installation.md#verifying-it-loaded).
+`claude plugin details` does **not** list workflows — true of every plugin. To confirm them,
+type `/` in a session and look for `/delivery:orchestrate` and `/delivery:plan-epic`. More
+checks in [`docs/installation.md`](docs/installation.md#verifying-it-loaded).
 
 ---
 
 ## MCP servers: what this plugin needs, and what it merely uses
 
-**Nothing here requires an MCP server.** Every step works with the built-in tools plus the
-`gh` CLI, and that is deliberate: an agent whose procedure depends on a server the user has
-not configured fails by quietly skipping a step, which is the failure mode this plugin
-exists to remove.
+**Nothing here requires an MCP server** except for the two browser agents. Every other step
+works with the built-in tools plus the `gh` CLI.
 
 | Server | Used by | Required? |
 |---|---|---|
-| **Playwright** (`mcp__playwright__*`) | `delivery:e2e-test`, `delivery:ui-vision` | **Yes, for those two.** Driving a real browser is what they do; without it they cannot work and will say so |
+| **Playwright** (`mcp__playwright__*`) | `delivery:e2e-test`, `delivery:ui-vision` | **Yes, for those two** |
 | **Tavily** (`mcp__tavily__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebSearch` |
-| **Context7** (`mcp__context7__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebFetch` on official docs |
-| **GitHub** | *nobody* | No — every agent uses the `gh` CLI instead |
+| **Context7** (`mcp__context7__*`) | `delivery:research`, `delivery:code-planner` | No — an accelerator over `WebFetch` |
+| **GitHub** | *nobody* | No — every agent uses the `gh` CLI |
 
-GitHub is deliberately absent. The `gh` CLI authenticates separately, works in every
-environment these agents run in, and does not silently stop working when an MCP server's
-credentials go stale — which is a real failure mode, and one that presents as an agent
-inexplicably unable to read a pull request.
+Registration commands for macOS, Linux and Windows are in
+[`docs/mcp-servers.md`](docs/mcp-servers.md).
 
-**A `tools:` allowlist naming `mcp__tavily__*` is a permission, not a promise.** It cannot
-conjure a server you have not configured. The two agents that name those patterns are told
-to check rather than assume, and to treat them as faster paths rather than dependencies —
-so the plugin behaves identically whether or not you have them, only slower.
-
-**[docs/mcp-servers.md](docs/mcp-servers.md) has the registration commands** for macOS,
-Linux and Windows, including the Windows `npx.cmd` and quoting traps that make a server
-register successfully and then silently fail to start. It names the environment variable
-each key goes in and links to the vendor for the key itself, rather than reproducing signup
-flows that go stale. If you want to *remove* Playwright's requirement, the two browser
-agents are the ones to fork — see [docs/customising.md](docs/customising.md).
-
+---
 
 ## Per-project configuration
-
-The generic agents cannot hardcode your project's rules, but they still need them. The
-convention is one sentence:
 
 > **Every dispatched agent obeys the project's `CLAUDE.md` (or `AGENTS.md`) exactly**,
 > because that is where a project states its own hard rules.
 
-Claude Code injects `CLAUDE.md` into every subagent automatically, so the workflows do not
-re-quote it — that would pay for the same text two or three times per dispatch. They name
-only what is *not* auto-loaded: `.claude/delivery.md`, and `AGENTS.md` for repositories
-that use it instead of `CLAUDE.md`.
-
-Two files participate, both optional:
-
 | File | Purpose | If missing |
 |---|---|---|
-| `CLAUDE.md` or `AGENTS.md` (repo root) | The project's own instructions — commands, coverage floors, protected paths, conventions | Gates are inferred from CI config and manifests, and the report says so |
-| `.claude/delivery.md` | **Opt-in.** Delivery-pipeline constraints you want carried into every dispatched prompt, kept out of the always-loaded `CLAUDE.md` | Nothing happens. Its absence is normal and harmless |
+| `CLAUDE.md` or `AGENTS.md` (repo root) | Commands, coverage floors, protected paths, conventions | Gates are inferred from CI config and manifests, and the report says so |
+| `.claude/delivery.md` | **Opt-in.** Delivery constraints carried into every dispatched prompt, kept out of the always-loaded `CLAUDE.md` | Nothing happens |
 
-A copy-and-edit template lives at
-[`docs/templates/delivery.md`](docs/templates/delivery.md), and the full explanation —
-including what to put where, and why the split exists — is in
+Template: [`docs/templates/delivery.md`](docs/templates/delivery.md). Full explanation:
 [`docs/per-project-configuration.md`](docs/per-project-configuration.md).
 
 ---
 
 ## Precedence and gotchas
 
-Every item in this list fails **silently**. Read
-[`docs/precedence-and-gotchas.md`](docs/precedence-and-gotchas.md) before debugging
-anything; the short version:
+Every item here fails **silently**. Read
+[`docs/precedence-and-gotchas.md`](docs/precedence-and-gotchas.md) before debugging:
 
-- A project's `.claude/agents/<name>.md` **silently overrides** a plugin agent of the same
-  name. Useful for customising; invisible when accidental.
-- **Workflows cannot be symlinked.** Claude Code refuses to write through a symlink, so a
-  symlinked workflow file breaks in ways that do not name the symlink. Copy it.
-- An agent's `name:` must be lowercase-with-hyphens and **match its filename stem**, or the
-  agent does not load and nothing says so.
-- An orchestrator whose `tools:` omits `Agent` runs happily, narrates a plausible pipeline,
-  and **delegates nothing** — with no error anywhere.
-- Agent-to-agent references must be namespaced: `Agent(delivery:code-issue)`, not
-  `Agent(code-issue)`.
+- A project's `.claude/agents/<name>.md` **silently overrides** a plugin agent of the same name.
+- **Workflows cannot be symlinked.** Copy them.
+- An agent's `name:` must be lowercase-with-hyphens and **match its filename stem**.
+- An orchestrator whose `tools:` omits `Agent` narrates a pipeline and **delegates nothing**.
+- Agent references must be namespaced: `Agent(delivery:code-issue)`.
+
+To fork an agent, override one for a single project or add your own workflow, see
+[`docs/customising.md`](docs/customising.md).
 
 ---
 
-## Customising
+## Releases
 
-Fork an agent, override one for a single project, or add your own workflow —
-[`docs/customising.md`](docs/customising.md) covers all three, including the precedence
-rules that decide which copy wins.
+**Bump `version` in `.claude-plugin/plugin.json` for any change in behaviour.** An update can
+refresh the same version in place, so without a bump two machines can report one version
+while running different code, and nobody can tell which copy produced a result.
 
 ---
 
@@ -251,59 +426,32 @@ rules that decide which copy wins.
 .claude-plugin/
   plugin.json          # the plugin manifest (name, version, description, author)
   marketplace.json     # makes this repo a single-plugin marketplace of itself
-agents/
-  code-issue.md        # flat files, YAML frontmatter, name == filename stem
-  code-planner.md
-  code-review.md
-  e2e-test.md
-  orchestrator.md
-  research.md
-  ui-vision.md
-skills/
-  <name>/SKILL.md      # directories, one SKILL.md each
-  repo-scaffold/       # ... plus ARCHITECTURE_TEMPLATE.md and USER_GUIDE_TEMPLATE.md
+agents/                # flat files, YAML frontmatter, name == filename stem
+skills/<name>/SKILL.md # one directory per skill
 workflows/
-  orchestrate.js       # flat files; each exports `meta` as a PURE literal
+  orchestrate.js       # each exports `meta` as a PURE literal
   plan-epic.js
 scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
-  cost-report.mjs      # the per-phase cost report /delivery:cost-report runs
-docs/
-  installation.md
-  usage.md
-  per-project-configuration.md
-  precedence-and-gotchas.md
-  customising.md
-  templates/
-    delivery.md        # copy to <your project>/.claude/delivery.md
-    CLAUDE.md          # a starting point if your project has none
-LICENSE
-README.md
+  cost-report.mjs      # the report /delivery:cost-report runs
+  fixtures/            # synthetic inputs for the verifier
+docs/                  # installation, usage, configuration, gotchas, customising, templates
 ```
 
 ## Contributing
 
 1. Branch from `main`.
-2. Make the change. If you touch an agent, keep `name:` equal to the filename stem. If you
-   touch a workflow, keep `meta` a **pure literal** — no variables, no calls, no template
-   interpolation. The runtime parses `meta` without executing the module and rejects
-   anything else.
-3. Validate. All three, in this order:
+2. Make the change. Keep an agent's `name:` equal to its filename stem, and a workflow's
+   `meta` a **pure literal** — no variables, calls or template interpolation.
+3. Validate:
    ```bash
    node scripts/verify-plugin.mjs              # structure, frontmatter, meta purity, phase order
    claude plugin validate . --strict           # manifest schema, warnings as errors
    claude --plugin-dir . plugin details delivery   # expect Skills (9), Agents (7)
    ```
-   `verify-plugin.mjs` executes each workflow body against stubbed `agent`/`phase`/`log`/`parallel`
-   functions and asserts the phase order, the conditional fix/re-review branch, every model
-   routing case, batching and worktree isolation. It
-   costs no tokens and catches the failures that are otherwise silent.
-4. Keep it project-agnostic. This is the one rule that matters: no project names, no
-   organisation names, no domain vocabulary, no toolchain assumptions, and no bare issue
-   references — `#412` means nothing outside the repository it came from. If a war story
-   makes the point, keep the *shape* of it and drop the citation: "a write that reports
-   success while the read cannot see it", not the incident number.
-5. Open a PR.
+4. Keep it project-agnostic: no project names, organisation names, domain vocabulary,
+   toolchain assumptions, or bare issue references from some other repository.
+5. Bump the version (see [Releases](#releases)) and open a PR.
 
 ## License
 
