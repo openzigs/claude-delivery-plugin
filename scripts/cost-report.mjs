@@ -9,7 +9,9 @@
 //
 // A run's id is its path relative to the deepest directory holding every input
 // file, so a/result.json and b/result.json stay distinct; files that share one
-// directory keep their bare file name.
+// directory keep their bare file name. Inputs are resolved through symlinks
+// first, so two spellings of one directory are one id. When the only common
+// directory is /, each id is the shortest path suffix no other input shares.
 //
 // Cell values, in the table and in --json:
 //   a number  measured output tokens
@@ -18,7 +20,7 @@
 //
 // The arithmetic lives here so that no model ever sums the numbers.
 import { readFileSync, readdirSync, statSync, realpathSync } from 'node:fs'
-import { join, dirname, relative, resolve, sep } from 'node:path'
+import { join, dirname, basename, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const CAVEAT =
@@ -222,8 +224,16 @@ export function runIds(results) {
     while (i < n && i < d.length && d[i] === dirs[0][i]) i++
     n = i
   }
-  const root = dirs[0].slice(0, n).join(sep) || sep
-  return results.map(({ file, data }) => ({ id: relative(root, file), data }))
+  const root = dirs[0].slice(0, n).join(sep)
+  if (root) return results.map(({ file, data }) => ({ id: relative(root, file), data }))
+  const parts = results.map((r) => r.file.split(sep).filter(Boolean))
+  const tail = (p, k) => p.slice(-k).join(sep)
+  return results.map(({ data }, i) => {
+    const p = parts[i]
+    let k = 1
+    while (k < p.length && parts.some((q, j) => j !== i && tail(q, k) === tail(p, k))) k++
+    return { id: tail(p, k), data }
+  })
 }
 
 const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | dir>...'
@@ -246,7 +256,8 @@ function main(argv) {
     }
     let data = null
     try { data = JSON.parse(text) } catch { process.stderr.write(`${file}: not valid JSON\n`) }
-    results.push({ file: resolve(file), data })
+    // The directory, not the file, is resolved: a symlinked file keeps its own name.
+    results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), data })
   }
   for (const p of paths) {
     let st
