@@ -275,9 +275,10 @@ that has `Skill` in its `tools:` invoke it.
 fields described in [What the result measures](#what-the-result-measures): output tokens,
 effort, model and finding counts, then totals and a per-phase trend across runs.
 
-It reads only the paths you give it. When a `/delivery:orchestrate` or `/delivery:plan-epic`
-run finishes, Claude Code writes the run's task output to a `<task-id>.output` file; the path is
-printed in the workflow's completion notice. You can point the report straight at that file:
+It reads only the paths you give it, unless you pass `--discover` (below). When a
+`/delivery:orchestrate` or `/delivery:plan-epic` run finishes, Claude Code writes the run's
+task output to a `<task-id>.output` file; the path is printed in the workflow's completion
+notice. You can point the report straight at that file:
 it is a wrapper whose `result` holds the result object (or a JSON string of it), and the report
 reads the result inside. Alternatively, copy the result object into a file of its own. Either
 way, pass the files or their directory:
@@ -287,6 +288,7 @@ way, pass the files or their directory:
 /delivery:cost-report runs/2026-10-22-orchestrate-14.json
 /delivery:cost-report runs/
 /delivery:cost-report runs/ --include-concurrent
+/delivery:cost-report --discover --last 5
 ```
 
 A directory contributes every `*.json` and `*.output` directly inside it, sorted by file name.
@@ -299,7 +301,20 @@ Any other run is named by its path relative to the deepest directory holding eve
 not a delivery result (including a wrapper whose `workflowName` is another workflow) is
 counted on one `skipped` line; `--verbose` lists them. A file you name that is not a result
 is reported as `unrecognised` on its own line. With no arguments the skill prints how to save
-a result and stops; it does not search for results. The skill runs `scripts/cost-report.mjs`,
+a result and stops; it does not search for results.
+
+`--discover` is the one search, and it runs only when you pass it. It reports the runs Claude
+Code saved for the current directory's project, oldest first:
+`<config>/projects/<project>/<session>/workflows/wf_<run-id>.json`, where `<config>` is
+`$CLAUDE_CONFIG_DIR` or `~/.claude` and `<project>` is the directory's path with every
+character other than a letter or digit replaced by `-`. Only files with that name pattern are
+opened; session transcripts beside them are not. Runs of other workflows and unparseable files
+are counted on the `skipped` line. `--last N` keeps the newest N runs and `--since DATE` those
+started on or after DATE. When nothing is found it prints `no runs found under <dir>` rather
+than an empty table. That layout is undocumented (checked on Claude Code 2.1.308) and may change
+between versions.
+
+The skill runs `scripts/cost-report.mjs`,
 which does every sum, and shows only the metrics: never a result's `research`, `plan`,
 `review` or `implemented` text.
 

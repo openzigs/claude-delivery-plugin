@@ -21,7 +21,8 @@
 //      produces the intended phase order -- including the conditional branches,
 //      which are driven by the review's structured output
 //   8. scripts/cost-report.mjs reports the synthetic result fixtures by its rules,
-//      read-only and with node: builtins only
+//      read-only and with node: builtins only, and --discover finds exactly the runs
+//      in a synthetic Claude Code config tree
 //   9. the cost-report skill only runs that script -- each command line is exactly the
 //      call plus quoted paths and flags, nothing chained, piped or redirected -- and shows
 //      metrics only; the skill count stated in plugin.json, marketplace.json, README.md and
@@ -237,7 +238,7 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   const SCRIPT_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs"'
   // The whole line must be the call plus single-quoted paths and the script's own
   // flags. A prefix match would pass `<call> '<path>'; rm -rf ~/x`.
-  const ONLY_CALL = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/cost-report\.mjs"(?: +(?:'[^']*'|--include-concurrent|--verbose|--json))*$/
+  const ONLY_CALL = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/cost-report\.mjs"(?: +(?:'[^']*'|--include-concurrent|--verbose|--json|--discover|--last|--since))*$/
   const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
   checkSkill(cmds.length > 0 && cmds.every((l) => ONLY_CALL.test(l)),
     `cost-report: every command in the body is exactly ${SCRIPT_CALL} plus quoted paths and flags (found ${JSON.stringify(cmds)})`)
@@ -258,8 +259,14 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'cost-report: shows only metrics fields, never the research/plan/review/implemented text')
   const noArgs = sectionOf(body, '## With no arguments')
   checkSkill(/print the usage[^.]*and stop/i.test(noArgs) && /Read nothing outside the paths you were given/.test(noArgs)
-    && /save|copy the result/i.test(noArgs),
-    'cost-report: with no arguments it prints how to save a result, stops, and reads nothing else')
+    && /save|copy the result/i.test(noArgs) && /The one search is `--discover`, and it\s+runs only when the maintainer passed `--discover`/.test(noArgs),
+    'cost-report: with no arguments it prints how to save a result, stops, and reads nothing else; --discover is the one search, only when passed')
+  const disc = sectionOf(body, '## With --discover')
+  const discCmds = bashBlocks(disc).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
+  checkSkill(/^Only when the maintainer passed `--discover`/.test(disc.split('\n').slice(1).join('\n').trim())
+    && /undocumented and may change between Claude Code versions/.test(disc) && /no runs found under/.test(disc)
+    && discCmds.length > 0 && discCmds.every((l) => l.includes(' --discover')),
+    'cost-report: the --discover section runs only when passed, says the layout is undocumented and may change, and explains "no runs found"')
   checkSkill(/task output/i.test(noArgs) && /`\*\.output`/.test(noArgs) && /completion notice/i.test(noArgs),
     'cost-report: the usage text says a finished run\'s task output can be passed directly, and where it is written')
 }
@@ -773,6 +780,8 @@ console.log('\n== scripts/cost-report.mjs ==')
   const specifiers = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1] || m[2])
   c(specifiers.length > 0 && specifiers.every((s) => s.startsWith('node:')), `imports only node: builtins (${specifiers.join(', ')})`)
   c(!existsSync(join(ROOT, 'package.json')), 'no package.json is added')
+  const writes = [...src.matchAll(/\b(writeFile|appendFile|mkdir|mkdtemp|rm|rmdir|unlink|rename|copyFile|symlink|link|truncate|chmod|chown|utimes|createWriteStream|open)(Sync)?\s*\(/g)].map((m) => m[0])
+  c(src && writes.length === 0, `calls no filesystem write API, so nothing is written under ~/.claude or anywhere else${writes.length ? ` (found ${writes.join(', ')})` : ''}`)
 
   const block = (id) => {
     const i = text.stdout.indexOf(`== ${id} `)
@@ -802,7 +811,7 @@ console.log('\n== scripts/cost-report.mjs ==')
   c(/REVIEW DID NOT RETURN/.test(block('orchestrate-review-missing.json')), 'the unreturned review prints REVIEW DID NOT RETURN')
   const SEV = ['critical', 'high', 'medium', 'low', 'nit']
   const want = { review: Object.fromEntries(SEV.map((s) => [s, 0])), reviews: 0 }
-  for (const f of readdirSync(FIX).filter((f) => f !== 'orchestrate-review-missing.json')) {
+  for (const f of readdirSync(FIX).filter((f) => f.endsWith('.json') && f !== 'orchestrate-review-missing.json')) {
     for (const b of JSON.parse(readFileSync(join(FIX, f), 'utf8')).batches || []) {
       for (const p of b.prs || []) {
         if (!p.findingCounts?.review) continue
@@ -1005,6 +1014,78 @@ console.log('\n== scripts/cost-report.mjs ==')
     c(JSON.stringify((both?.runs || []).map((r) => r.id)) === JSON.stringify(['wf_dup-0001', 'wf_order-later', 'wf_order-earlier']),
       `a wrapper id no other input shares is kept (got ${JSON.stringify((both?.runs || []).map((r) => r.id))})`)
   }
+}
+
+// --discover: the persisted runs of the cwd's project, from a synthetic config tree.
+// The tree mirrors Claude Code 2.1.308's layout; every file in it is hand-built.
+console.log('\n== cost-report --discover ==')
+{
+  const SCRIPT = join(ROOT, 'scripts/cost-report.mjs')
+  const CONF = join(ROOT, 'scripts/fixtures/cost-report')
+  const PROJ = join(CONF, 'projects', '-fixture-project')
+  const c = (cond, msg) => (cond ? ok(`cost-report --discover: ${msg}`) : bad(`cost-report --discover: ${msg}`))
+  const parse = (r) => { try { return JSON.parse(r.stdout) } catch { return null } }
+  const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]))
+  const snap = (d) => walk(d).sort().map((f) => `${f}:${statSync(f).mtimeMs}`).join('\n')
+  const RUNS = ['wf_bbbb2222-001', 'wf_aaaa1111-002', 'wf_bbbb2222-003']
+  try {
+    const m = await import(SCRIPT)
+    c(m.projectSlug('/Users/me/dev/claude-delivery-plugin/.claude/worktrees/wf_81999d78-199-1')
+      === '-Users-me-dev-claude-delivery-plugin--claude-worktrees-wf-81999d78-199-1',
+      'the project slug replaces every character other than a letter or digit with -, as Claude Code names its directories')
+    const { root, files } = m.discoverFiles(CONF, '/fixture/project')
+    c(root === PROJ && JSON.stringify(files.map((f) => basename(f)).sort())
+      === JSON.stringify(['wf_aaaa1111-002.json', 'wf_aaaa1111-004.json', 'wf_aaaa1111-005.json', 'wf_bbbb2222-001.json', 'wf_bbbb2222-003.json']),
+      `only <session>/workflows/wf_*.json of the cwd's project is read: not notes.json, a transcript, a journal, a nested or another project's run (got ${JSON.stringify(files.map((f) => basename(f)))})`)
+  } catch (e) { c(false, `discoverFiles() import threw — ${e.message}`) }
+
+  const tmp = realpathSync(tmpdir())
+  const cwd = realpathSync(ROOT)
+  const slug = cwd.replace(/[^A-Za-z0-9]/g, '-')
+  const conf = join(tmp, `cr-discover-${process.pid}`)
+  rmSync(conf, { recursive: true, force: true }); mkdirSync(join(conf, 'projects'), { recursive: true })
+  symlinkSync(PROJ, join(conf, 'projects', slug))
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: conf }
+  const cli = (e, ...a) => spawnSync(process.execPath, [SCRIPT, ...a], { encoding: 'utf8', cwd, env: e })
+  const before = snap(PROJ)
+  const o = cli(env, '--json', '--discover')
+  const r = parse(o)
+  const ids = (r?.runs || []).map((x) => x.id)
+  c(o.status === 0 && JSON.stringify(ids) === JSON.stringify(RUNS) && r.trend.order === 'start time',
+    `finds exactly the three delivery runs, oldest first, named by runId (exit ${o.status}, got ${JSON.stringify(ids)})`)
+  c(JSON.stringify((r?.skipped || []).map((x) => x.reason).sort()) === JSON.stringify(['not JSON', 'not a delivery result'])
+    && o.stderr === '', `the non-delivery run and the unparseable file are skipped and counted, with nothing on stderr (got ${JSON.stringify(r?.skipped)})`)
+  const t = cli(env, '--discover')
+  c(/^skipped 2 files \(1 not JSON, 1 not a delivery result\)/m.test(t.stdout) && /^Per-phase trend \(by start time\)$/m.test(t.stdout)
+    && /^== wf_bbbb2222-001 \(plan-epic\) ==$/m.test(t.stdout), 'the table reports the discovered runs and one skipped line')
+  const lastIds = (parse(cli(env, '--json', '--discover', '--last', '1'))?.runs || []).map((x) => x.id)
+  c(JSON.stringify(lastIds) === JSON.stringify(['wf_bbbb2222-003']), `--last 1 keeps only the newest run (got ${JSON.stringify(lastIds)})`)
+  const sinceIds = (parse(cli(env, '--json', '--discover', '--since', '2026-10-21'))?.runs || []).map((x) => x.id)
+  c(JSON.stringify(sinceIds) === JSON.stringify(['wf_aaaa1111-002', 'wf_bbbb2222-003']),
+    `--since keeps the runs started on or after the date (got ${JSON.stringify(sinceIds)})`)
+  c(snap(PROJ) === before && JSON.stringify(walk(conf).map((f) => basename(f))) === JSON.stringify([slug]),
+    'read-only: the fixture tree is unchanged and nothing is added to the config directory')
+
+  // No runs: a plain message, never an empty table that reads as zero cost.
+  const empty = join(tmp, `cr-discover-empty-${process.pid}`)
+  rmSync(empty, { recursive: true, force: true }); mkdirSync(empty)
+  const n = cli({ ...process.env, CLAUDE_CONFIG_DIR: empty }, '--discover')
+  c(n.status === 0 && n.stdout === `no runs found under ${join(empty, 'projects', slug)}\n`,
+    `a root with no runs prints "no runs found under <root>" and exits 0 (exit ${n.status}, got ${JSON.stringify(n.stdout)})`)
+  const home = { ...process.env, HOME: empty }
+  delete home.CLAUDE_CONFIG_DIR
+  const h = cli(home, '--discover')
+  c(h.status === 0 && h.stdout === `no runs found under ${join(empty, '.claude', 'projects', slug)}\n`,
+    `without CLAUDE_CONFIG_DIR the root is ~/.claude (got ${JSON.stringify(h.stdout)})`)
+  c(readdirSync(empty).length === 0, 'nothing is created under the config root, even when it has no projects directory')
+  const bads = [['--discover', join(ROOT, 'README.md')], ['--discover', '--last', '0'], ['--discover', '--since', 'yesterday'],
+    ['--last', '2', join(CONF, 'plan-epic.json')], ['--discover', '--last']]
+  const codes = bads.map((a) => cli(env, ...a).status)
+  c(codes.every((s) => s === 2), `a path with --discover, a bad --last or --since, or either without --discover is a usage error (got ${JSON.stringify(codes)})`)
+  const plain = cli(env, join(CONF, 'plan-epic.json'))
+  c(plain.status === 0 && /^== plan-epic\.json \(plan-epic\) ==$/m.test(plain.stdout) && !/wf_/.test(plain.stdout),
+    'without --discover only the given paths are read, even with a config tree present')
+  rmSync(conf, { recursive: true, force: true }); rmSync(empty, { recursive: true, force: true })
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)

@@ -1,0 +1,109 @@
+{
+  "runId": "wf_decoy-0001",
+  "timestamp": "2026-10-22T12:00:00.000Z",
+  "taskId": "tdecoy-00",
+  "workflowName": "orchestrate",
+  "status": "completed",
+  "startTime": 1792670340000,
+  "durationMs": 60000,
+  "result": {
+    "batches": [
+      {
+        "issues": [
+          412
+        ],
+        "description": null,
+        "implementModel": "session model",
+        "outputTokens": {
+          "implement": 41000
+        },
+        "implemented": [
+          {
+            "issue": 412,
+            "pr": 1412,
+            "storyPoints": 5,
+            "labels": [
+              "enhancement"
+            ],
+            "filesChanged": 3,
+            "linesChanged": 80,
+            "report": "Synthetic fixture."
+          }
+        ],
+        "notImplemented": [],
+        "noPr": [],
+        "prs": [
+          {
+            "issue": 412,
+            "pr": 1412,
+            "implemented": "Synthetic fixture.",
+            "reviewScope": "full",
+            "reviewRouting": "5 story points",
+            "review": {
+              "pr": 1412,
+              "recommendation": "Recommendation: do not merge",
+              "blocking": true,
+              "findings": [],
+              "verification": "synthetic"
+            },
+            "reviewCompleted": true,
+            "blockingFindings": true,
+            "fix": {
+              "changed": [],
+              "declined": [],
+              "gates": {
+                "passed": true,
+                "pushed": true
+              }
+            },
+            "reReview": {
+              "pr": 1412,
+              "recommendation": "Recommendation: merge",
+              "blocking": false,
+              "findings": [],
+              "verification": "synthetic"
+            },
+            "stillBlocking": false,
+            "models": {
+              "implement": "session model",
+              "review": "session model",
+              "fix": "sonnet",
+              "rereview": "sonnet"
+            },
+            "effort": {
+              "implement": "inherit",
+              "review": "inherit",
+              "fix": "medium",
+              "rereview": "medium"
+            },
+            "outputTokens": {
+              "review": 9000,
+              "fix": 3200,
+              "rereview": 1800
+            },
+            "findingCounts": {
+              "review": {
+                "critical": 0,
+                "high": 1,
+                "medium": 2,
+                "low": 0,
+                "nit": 1
+              },
+              "rereview": {
+                "critical": 0,
+                "high": 0,
+                "medium": 0,
+                "low": 0,
+                "nit": 1
+              }
+            }
+          }
+        ],
+        "reviewCompleted": true
+      }
+    ],
+    "reviewCompleted": true,
+    "merged": false,
+    "note": "Nothing was merged."
+  }
+}
