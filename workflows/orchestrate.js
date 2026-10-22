@@ -335,7 +335,9 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
     `Review pull request #${it.pr}, opened for ${subject}, following the ` +
       `\`/delivery:code-review\` skill.\n\n` +
       (route.light ? `${LIGHT_SCOPE}\n\n` : '') +
-      `What the implementer reported:\n${it.report}\n\n${rules}\n\n` +
+      `The implementer's summary, defects found and deferred work are in the PR body ` +
+      `(\`gh pr view ${it.pr} --json body\`); read the change itself, not only that account.` +
+      `\n\n${rules}\n\n` +
       `Publish the review to GitHub as the skill describes, then return your ` +
       `recommendation and every finding with severity, file:line and whether it is blocking.`,
     {

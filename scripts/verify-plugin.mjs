@@ -186,6 +186,10 @@ const MEDIUM_ISSUE = { storyPoints: 5, labels: ['enhancement'], filesChanged: 3,
 const SMALL_ISSUE = { storyPoints: 2, labels: ['bug'], filesChanged: 2, linesChanged: 40 }
 const AT_LIMIT_ISSUE = { storyPoints: 1, labels: [], filesChanged: 5, linesChanged: 150 }
 
+// Planted in every stub implementer report, so a test can prove the report never
+// reaches a reviewer's prompt: the reviewer reads the PR, not the author's account.
+const REPORT_SENTINEL = 'SENTINEL-IMPLEMENTER-REPORT'
+
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
 const workflowFiles = readdirSync(join(ROOT, 'workflows')).filter((f) => f.endsWith('.js')).sort()
 const stubParallel = (thunks) => Promise.all(thunks.map((t) => t().catch(() => null)))
@@ -205,7 +209,7 @@ function runner(body) {
         if (o.schema?.properties?.issues) {
           if (implement !== undefined) return typeof implement === 'function' ? implement(o) : implement
           const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
-          return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `[stub report ${n}]` })) }
+          return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `${REPORT_SENTINEL} ${n}` })) }
         }
         if (o.schema) return typeof review === 'function' ? review(o) : review
         return `[stub ${o.label}]`
@@ -282,6 +286,16 @@ for (const file of workflowFiles) {
   const implSchema = r.dispatches.find((d) => d.label === 'implement:412')?.schema?.properties?.issues?.items?.properties || {}
   check(['storyPoints', 'labels', 'filesChanged', 'linesChanged', 'report'].every((k) => implSchema[k]),
     'the implementer reports points, labels and diff size as structured output')
+
+  // --- the reviewer reads the PR body, not the implementer's own report
+  r = await run({ review: BLOCKING_REVIEW })
+  const reviewPrompts = r.dispatches.filter((d) => d.agentType === 'delivery:code-review')
+  check(reviewPrompts.length === 2 && reviewPrompts.every((d) => !d.prompt.includes(REPORT_SENTINEL)),
+    'no review or re-review prompt carries the implementer\'s report')
+  check(r.dispatches.find((d) => d.label === 'review:412')?.prompt.includes('gh pr view 1412 --json body'),
+    'the review prompt points the reviewer at the PR body')
+  check(pr0(r).implemented?.includes(REPORT_SENTINEL) && r.result.batches[0].implemented?.[0]?.report?.includes(REPORT_SENTINEL),
+    'the implementer\'s report is still in the returned result')
 
   // --- implementation routing on the caller's hint
   for (const [argv, want, name] of [
