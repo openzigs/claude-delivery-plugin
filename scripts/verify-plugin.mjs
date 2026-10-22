@@ -380,6 +380,18 @@ for (const file of workflowFiles) {
     JSON.stringify(result.outputTokens) === JSON.stringify({ research: 500, plan: 60 })
       ? ok('plan-epic.js: output tokens per phase are budget.spent() deltas')
       : bad(`plan-epic.js: output tokens = ${JSON.stringify(result.outputTokens)}`)
+    // The same broken shapes orchestrate.js is checked against (its copy of the helper).
+    for (const [name, budget] of [['null', null], ['{} (no spent)', {}], ['whose spent is not a function', { spent: 42 }],
+      ['whose spent() throws', { total: null, spent: () => { throw new Error('no') } }]]) {
+      const msg = `plan-epic.js: with budget ${name}, output tokens are null and the run completes`
+      try {
+        const { result, phases } = await run({ budget })
+        JSON.stringify(phases) === '["Research","Plan"]'
+          && JSON.stringify(result.outputTokens) === JSON.stringify({ research: null, plan: null })
+          ? ok(msg)
+          : bad(`${msg} — got ${JSON.stringify(result.outputTokens)}`)
+      } catch (e) { bad(`${msg} — threw: ${e.message}`) }
+    }
   }
 
   if (file !== 'orchestrate.js') continue

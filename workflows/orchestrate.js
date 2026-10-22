@@ -165,6 +165,8 @@ const countBySeverity = (r) =>
     ? Object.fromEntries(SEVERITIES.map((s) => [s, r.findings.filter((f) => f?.severity === s).length]))
     : null
 
+// Kept in step by hand: this helper is duplicated on purpose in orchestrate.js and plan-epic.js,
+// because workflow scripts cannot import each other. Change both copies together.
 // Output tokens per phase, as budget.spent() deltas around each agent() call. The
 // budget pool is shared by the whole turn, so when batches run concurrently a delta
 // also counts the other batches' agents. A runtime without `budget` (or one whose
