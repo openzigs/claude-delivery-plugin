@@ -1,0 +1,41 @@
+{
+  "batches": [
+    {
+      "issues": [700],
+      "description": null,
+      "implementModel": "session model",
+      "outputTokens": { "implement": null },
+      "implemented": [
+        { "issue": 700, "pr": 1700, "storyPoints": 5, "labels": ["enhancement"], "filesChanged": 3, "linesChanged": 90, "report": "Synthetic fixture." }
+      ],
+      "notImplemented": [],
+      "noPr": [],
+      "prs": [
+        {
+          "issue": 700,
+          "pr": 1700,
+          "implemented": "Synthetic fixture.",
+          "reviewScope": "full",
+          "reviewRouting": "5 story points",
+          "review": { "pr": 1700, "recommendation": "Recommendation: do not merge", "blocking": true, "findings": [], "verification": "synthetic" },
+          "reviewCompleted": true,
+          "blockingFindings": true,
+          "fix": { "changed": [], "declined": [], "gates": { "passed": true, "pushed": true } },
+          "reReview": { "pr": 1700, "recommendation": "Recommendation: merge", "blocking": false, "findings": [], "verification": "synthetic" },
+          "stillBlocking": false,
+          "models": { "implement": "session model", "review": "session model", "fix": "sonnet", "rereview": "sonnet" },
+          "effort": { "implement": "inherit", "review": "inherit", "fix": "medium", "rereview": "medium" },
+          "outputTokens": { "review": null, "fix": null, "rereview": null },
+          "findingCounts": {
+            "review": { "critical": 1, "high": 0, "medium": 0, "low": 0, "nit": 0 },
+            "rereview": { "critical": 0, "high": 0, "medium": 0, "low": 0, "nit": 0 }
+          }
+        }
+      ],
+      "reviewCompleted": true
+    }
+  ],
+  "reviewCompleted": true,
+  "merged": false,
+  "note": "Nothing was merged."
+}

@@ -20,9 +20,13 @@
 //   7. every workflow body actually runs, against stubbed agent/phase/log/parallel, and
 //      produces the intended phase order -- including the conditional branches,
 //      which are driven by the review's structured output
+//   8. scripts/cost-report.mjs reports the synthetic result fixtures by its rules,
+//      read-only and with node: builtins only
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { spawnSync } from 'node:child_process'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -658,6 +662,133 @@ for (const file of workflowFiles) {
   r = await run({ argv: 'fix the export; then the filter' })
   check(r.result.batches.length === 1 && r.result.batches[0].issues.length === 0 && r.dispatches.every((d) => !d.isolation),
     'a description containing ; is one request, not batches')
+}
+
+// --------------------------------------------------------------- cost-report
+// scripts/cost-report.mjs against the synthetic fixtures. Each check guards one
+// rule of the report; the totals are recomputed here from the fixture files, so
+// the script's arithmetic is not checked against itself.
+console.log('\n== scripts/cost-report.mjs ==')
+{
+  const SCRIPT = join(ROOT, 'scripts/cost-report.mjs')
+  const FIX = join(ROOT, 'scripts/fixtures/cost-report')
+  const c = (cond, msg) => (cond ? ok(`cost-report: ${msg}`) : bad(`cost-report: ${msg}`))
+  const cli = (...a) => spawnSync(process.execPath, [SCRIPT, ...a], { encoding: 'utf8' })
+  const parse = (r) => { try { return JSON.parse(r.stdout) } catch { return null } }
+  const snapshot = () => readdirSync(FIX).sort().map((f) => `${f}:${statSync(join(FIX, f)).mtimeMs}`).join('\n')
+
+  const before = snapshot()
+  const text = cli(FIX)
+  const report = parse(cli('--json', FIX)) || { runs: [], unrecognised: [], trend: { phases: {} }, totals: {} }
+  const withConcurrent = parse(cli('--json', '--include-concurrent', FIX)) || { trend: { phases: {} } }
+  c(snapshot() === before, 'read-only: the fixture directory\'s file list and every mtime are unchanged by a run')
+
+  const src = existsSync(SCRIPT) ? readFileSync(SCRIPT, 'utf8') : ''
+  const specifiers = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]|\bimport\s*\(?\s*['"]([^'"]+)['"]/g)].map((m) => m[1] || m[2])
+  c(specifiers.length > 0 && specifiers.every((s) => s.startsWith('node:')), `imports only node: builtins (${specifiers.join(', ')})`)
+  c(!existsSync(join(ROOT, 'package.json')), 'no package.json is added')
+
+  const block = (id) => {
+    const i = text.stdout.indexOf(`== ${id} `)
+    if (i === -1) return ''
+    const rest = text.stdout.slice(i + 1)
+    const end = rest.search(/\n(== |Totals|Per-phase trend)/)
+    return end === -1 ? rest : rest.slice(0, end)
+  }
+  const run = (id) => report.runs.find((r) => r.id === id) || { rows: [], total: {} }
+  const trendRuns = (rep) => new Set(Object.values(rep.trend?.phases || {}).flat().map((e) => e.run))
+
+  // Rule 3: a run with nothing measured totals "not measured", never 0.
+  const nullRun = run('orchestrate-null-tokens.json')
+  c(nullRun.total.outputTokens === null && nullRun.total.unmeasured === 4,
+    `all-null tokens total as not measured with 4 phases excluded (got ${JSON.stringify(nullRun.total)})`)
+  c(/total not measured \(4 phases not measured\)/.test(block('orchestrate-null-tokens.json'))
+    && !/total 0\b/.test(block('orchestrate-null-tokens.json')),
+    'all-null tokens print "total not measured (4 phases not measured)", not "total 0"')
+  c(nullRun.rows.every((r) => r.outputTokens === null) && /not measured/.test(block('orchestrate-null-tokens.json')),
+    'a null token value is "not measured" in every row')
+
+  // Rule 5: a review that did not return is flagged and contributes no findings.
+  const missRun = run('orchestrate-review-missing.json')
+  const missRow = missRun.rows.find((r) => r.phase === 'Review') || {}
+  c(missRow.reviewDidNotReturn === true && missRow.findings === 'n/a' && missRow.model === 'n/a',
+    `the unreturned review row is flagged with n/a findings and model (got ${JSON.stringify(missRow)})`)
+  c(/REVIEW DID NOT RETURN/.test(block('orchestrate-review-missing.json')), 'the unreturned review prints REVIEW DID NOT RETURN')
+  const SEV = ['critical', 'high', 'medium', 'low', 'nit']
+  const want = { review: Object.fromEntries(SEV.map((s) => [s, 0])), reviews: 0 }
+  for (const f of readdirSync(FIX).filter((f) => f !== 'orchestrate-review-missing.json')) {
+    for (const b of JSON.parse(readFileSync(join(FIX, f), 'utf8')).batches || []) {
+      for (const p of b.prs || []) {
+        if (!p.findingCounts?.review) continue
+        want.reviews++
+        for (const s of SEV) want.review[s] += p.findingCounts.review[s]
+      }
+    }
+  }
+  c(JSON.stringify(report.totals.findingCounts?.review) === JSON.stringify(want.review)
+    && report.totals.reviewsCounted?.review === want.reviews && report.totals.reviewsNotReturned === 1,
+    `the findingCounts.review total is the other fixtures' sum over ${want.reviews} reviews, with 1 not returned ` +
+    `(got ${JSON.stringify(report.totals.findingCounts?.review)}, ${report.totals.reviewsCounted?.review}, ${report.totals.reviewsNotReturned})`)
+
+  // Rule 4: a concurrent run is marked and left out of the trend by default.
+  const conc = run('orchestrate-concurrent.json')
+  c(conc.concurrent === true && /CONCURRENT/.test(block('orchestrate-concurrent.json'))
+    && !/CONCURRENT/.test(block('orchestrate-single.json')), 'the two-batch run, and only it, is marked CONCURRENT')
+  c(!trendRuns(report).has('orchestrate-concurrent.json') && trendRuns(report).has('orchestrate-single.json')
+    && report.trend.excluded?.includes('orchestrate-concurrent.json'),
+    'the concurrent run\'s tokens are absent from the per-phase trend by default')
+  const concImpl = (withConcurrent.trend.phases.Implement || []).find((e) => e.run === 'orchestrate-concurrent.json')
+  c(concImpl?.outputTokens === 90000, `--include-concurrent puts the concurrent run back in the trend (Implement = ${concImpl?.outputTokens})`)
+
+  // Rule 2: plan-epic records tokens only, so the rest is n/a.
+  const plan = run('plan-epic.json')
+  const pr = (p) => plan.rows.find((r) => r.phase === p) || {}
+  c(plan.workflow === 'plan-epic' && pr('Research').outputTokens === 23000 && pr('Plan').outputTokens === 14500,
+    'plan-epic reports real Research and Plan tokens')
+  c(plan.rows.length === 2 && plan.rows.every((r) => r.effort === 'n/a' && r.model === 'n/a' && r.findings === 'n/a')
+    && /Research\s+23,000\s+n\/a\s+n\/a\s+n\/a/.test(block('plan-epic.json')),
+    'plan-epic prints n/a for effort, model and findings')
+
+  // Rule 1: an unrecognised file is named and skipped, and the rest still report.
+  c(text.status === 0 && /^unrecognised: not-a-result\.json$/m.test(text.stdout) && report.runs.length === 5,
+    `an unrecognised file prints an unrecognised line, exit 0, and the other 5 files report (exit ${text.status}, ${report.runs.length} runs)`)
+
+  // Rule 6: the fixed caveat closes the output.
+  const lines = text.stdout.trimEnd().split('\n')
+  c(/severity counts are a proxy/i.test(lines[lines.length - 1] || '') && /Obsessive inference optimization/.test(lines[lines.length - 1] || '')
+    && /severity counts are a proxy/i.test(report.caveat || ''), 'the output ends with the proxy caveat line')
+
+  // Rule 3, with measured numbers: a run's total is the sum of what was measured.
+  const single = run('orchestrate-single.json')
+  c(single.total.outputTokens === 41000 + 9000 + 3200 + 1800 && single.total.unmeasured === 0
+    && /total 55,000$/m.test(block('orchestrate-single.json')), `a fully measured run totals 55,000 (got ${single.total.outputTokens})`)
+
+  // The contract: a single file path works, and summarise() is exported.
+  const one = parse(cli('--json', join(FIX, 'plan-epic.json')))
+  c(one?.runs?.length === 1 && one.runs[0].id === 'plan-epic.json', 'a single file path is accepted')
+  try {
+    const { summarise } = await import(SCRIPT)
+    const r = summarise([{ id: 'x.json', data: { foo: 1 } }], {})
+    c(r.runs.length === 0 && r.unrecognised.includes('x.json'), 'summarise() is exported and skips an unrecognised shape')
+  } catch (e) { c(false, `summarise() import threw — ${e.message}`) }
+  try {
+    const { summarise } = await import(SCRIPT)
+    const nul = { batches: [{ issues: [1], outputTokens: { implement: 1 }, prs: [{ reviewCompleted: true,
+      outputTokens: { review: 1, rereview: 1 }, findingCounts: { review: { critical: 0, high: 1, medium: 0, low: 0, nit: 0 }, rereview: null } }] }] }
+    const r = summarise([{ id: 'n.json', data: nul }], {})
+    c(r.runs.length === 1 && r.totals.reviewsCounted.rereview === 0 && r.totals.reviewsCounted.review === 1,
+      'a ran-but-null findingCounts (re-review) does not crash and is not counted')
+  } catch (e) { c(false, `null findingCounts crashed summarise() — ${e.message}`) }
+  {
+    const d = join(tmpdir(), `cr-dangling-${process.pid}`)
+    rmSync(d, { recursive: true, force: true }); mkdirSync(d)
+    symlinkSync(join(d, 'missing.json'), join(d, 'dangling.json'))
+    copyFileSync(join(FIX, 'plan-epic.json'), join(d, 'plan-epic.json'))
+    const o = cli('--json', d)
+    c(o.status === 1 && /cannot read .*dangling\.json/.test(o.stderr || '') && parse(o)?.runs?.length === 1,
+      `a dangling symlink in a directory is reported on stderr, exit 1, and the other file still reports (exit ${o.status})`)
+    rmSync(d, { recursive: true, force: true })
+  }
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)
