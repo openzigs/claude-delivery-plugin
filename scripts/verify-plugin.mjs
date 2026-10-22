@@ -24,7 +24,8 @@
 //      read-only and with node: builtins only
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join, basename, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -770,6 +771,24 @@ console.log('\n== scripts/cost-report.mjs ==')
     const r = summarise([{ id: 'x.json', data: { foo: 1 } }], {})
     c(r.runs.length === 0 && r.unrecognised.includes('x.json'), 'summarise() is exported and skips an unrecognised shape')
   } catch (e) { c(false, `summarise() import threw — ${e.message}`) }
+  try {
+    const { summarise } = await import(SCRIPT)
+    const nul = { batches: [{ issues: [1], outputTokens: { implement: 1 }, prs: [{ reviewCompleted: true,
+      outputTokens: { review: 1, rereview: 1 }, findingCounts: { review: { critical: 0, high: 1, medium: 0, low: 0, nit: 0 }, rereview: null } }] }] }
+    const r = summarise([{ id: 'n.json', data: nul }], {})
+    c(r.runs.length === 1 && r.totals.reviewsCounted.rereview === 0 && r.totals.reviewsCounted.review === 1,
+      'a ran-but-null findingCounts (re-review) does not crash and is not counted')
+  } catch (e) { c(false, `null findingCounts crashed summarise() — ${e.message}`) }
+  {
+    const d = join(tmpdir(), `cr-dangling-${process.pid}`)
+    rmSync(d, { recursive: true, force: true }); mkdirSync(d)
+    symlinkSync(join(d, 'missing.json'), join(d, 'dangling.json'))
+    copyFileSync(join(FIX, 'plan-epic.json'), join(d, 'plan-epic.json'))
+    const o = cli('--json', d)
+    c(o.status === 1 && /cannot read .*dangling\.json/.test(o.stderr || '') && parse(o)?.runs?.length === 1,
+      `a dangling symlink in a directory is reported on stderr, exit 1, and the other file still reports (exit ${o.status})`)
+    rmSync(d, { recursive: true, force: true })
+  }
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)

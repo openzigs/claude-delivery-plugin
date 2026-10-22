@@ -33,7 +33,7 @@ const cell = (obj, key, ok) => {
 }
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v)
 const isStr = (v) => typeof v === 'string'
-const isCounts = (v) => typeof v === 'object' && SEVERITIES.every((s) => isNum(v[s]))
+const isCounts = (v) => v !== null && typeof v === 'object' && SEVERITIES.every((s) => isNum(v[s]))
 
 function workflowOf(data) {
   if (data === null || typeof data !== 'object') return null
@@ -234,9 +234,17 @@ function main(argv) {
     let st
     try { st = statSync(p) } catch (e) { process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue }
     if (!st.isDirectory()) { load(p); continue }
-    for (const f of readdirSync(p).filter((f) => f.endsWith('.json')).sort()) {
+    let names
+    try { names = readdirSync(p).filter((f) => f.endsWith('.json')).sort() } catch (e) {
+      process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue
+    }
+    for (const f of names) {
       const full = join(p, f)
-      if (statSync(full).isFile()) load(full)
+      let isFile
+      try { isFile = statSync(full).isFile() } catch (e) {
+        process.stderr.write(`cannot read ${full}: ${e.message}\n`); status = 1; continue
+      }
+      if (isFile) load(full)
     }
   }
 
