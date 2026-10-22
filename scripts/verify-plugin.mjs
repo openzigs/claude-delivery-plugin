@@ -237,7 +237,7 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   const SCRIPT_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs"'
   // The whole line must be the call plus single-quoted paths and the script's own
   // flags. A prefix match would pass `<call> '<path>'; rm -rf ~/x`.
-  const ONLY_CALL = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/cost-report\.mjs"(?: +(?:'[^']*'|--include-concurrent|--json))*$/
+  const ONLY_CALL = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/cost-report\.mjs"(?: +(?:'[^']*'|--include-concurrent|--verbose|--json))*$/
   const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
   checkSkill(cmds.length > 0 && cmds.every((l) => ONLY_CALL.test(l)),
     `cost-report: every command in the body is exactly ${SCRIPT_CALL} plus quoted paths and flags (found ${JSON.stringify(cmds)})`)
@@ -835,9 +835,16 @@ console.log('\n== scripts/cost-report.mjs ==')
     && /Research\s+23,000\s+n\/a\s+n\/a\s+n\/a/.test(block('plan-epic.json')),
     'plan-epic prints n/a for effort, model and findings')
 
-  // Rule 1: an unrecognised file is named and skipped, and the rest still report.
-  c(text.status === 0 && /^unrecognised: not-a-result\.json$/m.test(text.stdout) && report.runs.length === 5,
-    `an unrecognised file prints an unrecognised line, exit 0, and the other 5 files report (exit ${text.status}, ${report.runs.length} runs)`)
+  // Rule 1: an unrecognised file is skipped, and the rest still report. Found in a
+  // directory it is counted on one skipped line; named on its own it gets its own line.
+  c(text.status === 0 && /^skipped 1 file \(1 not a delivery result\)/m.test(text.stdout) && !/^unrecognised:/m.test(text.stdout)
+    && report.runs.length === 5 && report.skipped?.[0]?.id === 'not-a-result.json',
+    `an unrecognised file in a directory is counted as skipped, exit 0, and the other 5 files report (exit ${text.status}, ${report.runs.length} runs)`)
+  {
+    const o = cli(join(FIX, 'not-a-result.json'))
+    c(o.status === 0 && /^unrecognised: not-a-result\.json$/m.test(o.stdout) && !/^skipped/m.test(o.stdout),
+      `an unrecognised file named on its own still prints its own unrecognised line (exit ${o.status})`)
+  }
 
   // Rule 6: the fixed caveat closes the output.
   const lines = text.stdout.trimEnd().split('\n')
@@ -899,7 +906,12 @@ console.log('\n== scripts/cost-report.mjs ==')
       const f = (parse(cli('--json', join(IDS, 'a', 'result.json'), join(far, 'result.json')))?.runs || []).map((r) => r.id)
       c(JSON.stringify(f) === JSON.stringify(['a/result.json', `${basename(far)}/result.json`]),
         `inputs under different top-level directories get their shortest unique suffix as id (got ${JSON.stringify(f)})`)
-    } else skip(`cost-report: shortest-unique-suffix ids: ${far} and ${IDS} share a top-level directory, so this checkout cannot exercise it`)
+    } else {
+      // In CI the checkout and tmpdir are on different top-level directories, so a
+      // SKIP there means the check silently stopped running.
+      const msg = `cost-report: shortest-unique-suffix ids: ${far} and ${IDS} share a top-level directory, so this checkout cannot exercise it`
+      process.env.CI ? bad(`${msg} (CI is set, so a skip is a failure)`) : skip(msg)
+    }
 
     // Two spellings of one directory are one id: a symlink, and on macOS the
     // unresolved tmpdir (/var/... or /tmp/...) beside its /private realpath.
@@ -929,12 +941,69 @@ console.log('\n== scripts/cost-report.mjs ==')
       `a wrapper whose result is an object reports that result, named by the wrapper's taskId (got ${JSON.stringify(w.runs.map((r) => [r.id, r.workflow]))})`)
     c(byId['02-string.output']?.workflow === 'plan-epic' && byId['02-string.output'].rows.find((r) => r.phase === 'Research')?.outputTokens === 23000,
       'a wrapper whose result is a JSON string reports the parsed result, named by its file when it carries no id')
-    c(JSON.stringify(w.unrecognised) === JSON.stringify(['03-not-a-result.output']) && /^unrecognised: 03-not-a-result\.output$/m.test(t),
-      `a wrapper whose result is not a workflow result is still unrecognised (got ${JSON.stringify(w.unrecognised)})`)
+    c(JSON.stringify((w.skipped || []).map((x) => x.id)) === JSON.stringify(['03-not-a-result.output']) && w.unrecognised.length === 0
+      && /^skipped 1 file \(1 not a delivery result\)/m.test(t),
+      `a wrapper whose result is not a workflow result is still not reported as a run (got skipped ${JSON.stringify(w.skipped)})`)
     c(/^== wf-object-0001 \(orchestrate\) ==$/m.test(t) && (w.trend?.phases?.Implement || []).some((e) => e.run === 'wf-object-0001'),
       'the trend reads by the wrapper\'s run id, not its file name')
     const bare = parse(cli('--json', join(FIX, 'plan-epic.json')))
     c(bare?.runs?.[0]?.id === 'plan-epic.json' && bare.runs[0].workflow === 'plan-epic', 'a bare result still reports exactly as before')
+  }
+
+  // Run order: file names sort a-later before b-earlier, start times the other way.
+  {
+    const ORD = join(ROOT, 'scripts/fixtures/cost-report-order')
+    const o = parse(cli('--json', ORD))
+    const t = cli(ORD).stdout
+    c(JSON.stringify((o?.runs || []).map((r) => r.id)) === JSON.stringify(['wf_order-earlier', 'wf_order-later'])
+      && o.trend.order === 'start time' && /^Per-phase trend \(by start time\)$/m.test(t)
+      && t.indexOf('== wf_order-earlier ') < t.indexOf('== wf_order-later '),
+      `runs that all carry a start time are reported in start-time order, and the trend header says so (got ${JSON.stringify((o?.runs || []).map((r) => r.id))})`)
+    const mixed = parse(cli('--json', join(ORD, 'a-later.output'), join(FIX, 'plan-epic.json'), join(ORD, 'b-earlier.output')))
+    const mt = cli(join(ORD, 'a-later.output'), join(FIX, 'plan-epic.json'), join(ORD, 'b-earlier.output')).stdout
+    c(JSON.stringify((mixed?.runs || []).map((r) => r.id)) === JSON.stringify(['wf_order-later', 'cost-report/plan-epic.json', 'wf_order-earlier'])
+      && mixed.trend.order === 'input' && /^Per-phase trend \(in input order\)$/m.test(mt),
+      `when one run has no start time, runs keep their input order and the trend header says so (got ${JSON.stringify((mixed?.runs || []).map((r) => r.id))})`)
+  }
+
+  // A directory of unrelated files: one summary line, nothing on stderr; --verbose
+  // lists them. A named file still gets its own line, and an unreadable one exits 1.
+  {
+    const SK = join(ROOT, 'scripts/fixtures/cost-report-skipped')
+    const o = cli(SK)
+    const lines = o.stdout.split('\n').filter((l) => /not JSON|not a delivery result|unrecognised/.test(l))
+    c(o.status === 0 && o.stderr === '' && lines.length === 1
+      && /^skipped 4 files \(2 not JSON, 2 not a delivery result\); --verbose lists them$/m.test(o.stdout)
+      && /^== 01-run\.json \(plan-epic\) ==$/m.test(o.stdout),
+      `a directory's unrelated files collapse to one skipped line with nothing on stderr (exit ${o.status}, ${lines.length} lines, stderr ${JSON.stringify(o.stderr)})`)
+    const v = cli('--verbose', SK).stdout
+    c(['02-not-json.json (not JSON)', '03-transcript.output (not JSON)', '04-other-workflow.output (not a delivery result)',
+      '05-not-a-result.json (not a delivery result)'].every((x) => v.includes(`  skipped: ${x}`)),
+      '--verbose lists every skipped file with its reason')
+    const e = cli(join(SK, '02-not-json.json'))
+    c(e.status === 0 && /02-not-json\.json: not valid JSON/.test(e.stderr) && /^unrecognised: 02-not-json\.json$/m.test(e.stdout),
+      `a named file that is not JSON still gets its own stderr and unrecognised lines (exit ${e.status})`)
+    const m = cli(join(SK, 'no-such-file.json'), join(SK, '01-run.json'))
+    c(m.status === 1 && /cannot read .*no-such-file\.json/.test(m.stderr) && /== 01-run\.json/.test(m.stdout),
+      `a named file that cannot be read gets its own line and exit 1 (exit ${m.status})`)
+    const wn = parse(cli('--json', join(SK, '04-other-workflow.output')))
+    c(wn?.runs?.length === 0 && wn.unrecognised.length === 0 && wn.skipped?.[0]?.reason === 'not a delivery result',
+      `a wrapper naming a non-delivery workflow is skipped even though its result has a delivery shape (got ${JSON.stringify(wn?.skipped)})`)
+  }
+
+  // Wrapper ids: an unsafe one, or one two inputs share, falls back to the path id.
+  {
+    const WI = join(ROOT, 'scripts/fixtures/cost-report-wrapped-ids')
+    const o = parse(cli('--json', WI))
+    const t = cli(WI).stdout
+    const ids = (o?.runs || []).map((r) => r.id)
+    c(JSON.stringify(ids) === JSON.stringify(['dup-1.output', 'dup-2.output', 'forged.output']),
+      `a shared wrapper id and a wrapper id with a newline both fall back to the path id (got ${JSON.stringify(ids)})`)
+    c(!/^== forged \(/m.test(t) && !/^unrecognised: forged$/m.test(t) && /^== forged\.output \(plan-epic\) ==$/m.test(t),
+      'a taskId containing a newline forges no line of the table')
+    const both = parse(cli('--json', join(WI, 'dup-1.output'), join(ROOT, 'scripts/fixtures/cost-report-order')))
+    c(JSON.stringify((both?.runs || []).map((r) => r.id)) === JSON.stringify(['wf_dup-0001', 'wf_order-later', 'wf_order-earlier']),
+      `a wrapper id no other input shares is kept (got ${JSON.stringify((both?.runs || []).map((r) => r.id))})`)
   }
 }
 

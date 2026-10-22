@@ -4,12 +4,21 @@
 // /delivery:plan-epic results. Stdlib only, read-only: it opens its inputs for
 // reading and writes only to stdout and stderr.
 //
-//   node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | task.output | dir>...
-//     dir: every *.json and *.output directly inside it, sorted by file name (= run order)
+//   node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...
+//     dir: every *.json and *.output directly inside it, sorted by file name
 //
 // A file is a bare result object, or a finished workflow's task output: a
 // wrapper whose `result` is the result object or a JSON string of one. A
-// wrapper's own runId / run_id / taskId / task_id, when present, is the run id.
+// wrapper's own runId / run_id / taskId / task_id, when present and matching
+// SAFE_ID, is the run id; two inputs that would share one fall back to their
+// path ids. A wrapper whose workflowName is not a delivery workflow is skipped.
+//
+// Runs are ordered by their startTime / timestamp (the wrapper's, else the
+// result's) when every run has one, and otherwise kept in input order.
+//
+// Files found in a directory that are not JSON or not a delivery result are
+// skipped and counted on one line; --verbose lists them. A file named on the
+// command line that is neither is reported on a line of its own, as unrecognised.
 //
 // A run's id is its path relative to the deepest directory holding every input
 // file, so a/result.json and b/result.json stay distinct; files that share one
@@ -53,18 +62,40 @@ function workflowOf(data) {
 }
 
 const WRAPPER_IDS = ['runId', 'run_id', 'taskId', 'task_id']
+// A wrapper id is printed as a table heading, so it must not carry a newline or
+// anything else that could forge a line of the report.
+export const SAFE_ID = /^[\w.:-]{1,128}$/
+export const DELIVERY_WORKFLOWS = new Set(['orchestrate', 'plan-epic', 'delivery:orchestrate', 'delivery:plan-epic'])
+export const NOT_JSON = 'not JSON'
+export const NOT_DELIVERY = 'not a delivery result'
 
-// A bare result is returned as is; a wrapper around one yields the inner result
-// and the wrapper's id. Anything else is returned unchanged, to be unrecognised.
+// startTime is epoch milliseconds in a persisted run; timestamp is an ISO string.
+function timeOf(o) {
+  if (o === null || typeof o !== 'object') return undefined
+  for (const k of ['startTime', 'timestamp']) {
+    const v = o[k]
+    const t = typeof v === 'number' ? v : typeof v === 'string' ? Date.parse(v) : NaN
+    if (Number.isFinite(t)) return t
+  }
+  return undefined
+}
+
+const withTime = (r, t) => (t === undefined ? r : { ...r, startTime: t })
+
+// A bare result is returned as is; a wrapper around one yields the inner result,
+// the wrapper's id and its start time. A wrapper that names a workflow other than
+// a delivery one is marked skip. Anything else is returned unchanged, to be unrecognised.
 export function unwrap(data) {
-  if (workflowOf(data) || data === null || typeof data !== 'object' || !('result' in data)) return { data }
+  if (workflowOf(data)) return withTime({ data }, timeOf(data))
+  if (data === null || typeof data !== 'object' || !('result' in data)) return { data }
+  if ('workflowName' in data && !DELIVERY_WORKFLOWS.has(data.workflowName)) return { data, skip: NOT_DELIVERY }
   let inner = data.result
   if (typeof inner === 'string') {
     try { inner = JSON.parse(inner) } catch { return { data } }
   }
   if (!workflowOf(inner)) return { data }
-  const runId = WRAPPER_IDS.map((k) => data[k]).find((v) => typeof v === 'string' && v !== '')
-  return runId === undefined ? { data: inner } : { data: inner, runId }
+  const runId = WRAPPER_IDS.map((k) => data[k]).find((v) => typeof v === 'string' && SAFE_ID.test(v))
+  return withTime(runId === undefined ? { data: inner } : { data: inner, runId }, timeOf(data) ?? timeOf(inner))
 }
 
 function orchestrateRows(data) {
@@ -118,13 +149,24 @@ function sumTokens(rows) {
 
 export function summarise(results, opts = {}) {
   const includeConcurrent = Boolean(opts.includeConcurrent)
-  const runs = [], unrecognised = []
-  for (const { id, data } of results) {
-    const workflow = workflowOf(data)
-    if (!workflow) { unrecognised.push(id); continue }
+  const runs = [], unrecognised = [], skipped = [], times = []
+  for (const { id, data, skip, fromDir, notJson, startTime } of results) {
+    const workflow = skip ? null : workflowOf(data)
+    if (!workflow) {
+      if (skip || fromDir) skipped.push({ id, reason: skip || (notJson ? NOT_JSON : NOT_DELIVERY) })
+      else unrecognised.push(id)
+      continue
+    }
     const rows = workflow === 'orchestrate' ? orchestrateRows(data) : planEpicRows(data)
     const concurrent = workflow === 'orchestrate' && data.batches.length > 1
     runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows) })
+    times.push(startTime)
+  }
+  // Start-time order only when every run has one; a partial order would be a guess.
+  const order = runs.length && times.every(isNum) ? 'start time' : 'input'
+  if (order === 'start time') {
+    const byTime = runs.map((r, i) => [times[i], i, r]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((e) => e[2])
+    runs.splice(0, runs.length, ...byTime)
   }
 
   const zero = () => Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
@@ -159,6 +201,7 @@ export function summarise(results, opts = {}) {
   return {
     runs,
     unrecognised,
+    skipped,
     totals: {
       ...sumTokens(runs.flatMap((r) => r.rows)),
       concurrentRuns: runs.filter((r) => r.concurrent).length,
@@ -166,7 +209,7 @@ export function summarise(results, opts = {}) {
       reviewsCounted,
       reviewsNotReturned,
     },
-    trend: { includeConcurrent, excluded, phases },
+    trend: { order, includeConcurrent, excluded, phases },
     caveat: CAVEAT,
   }
 }
@@ -187,7 +230,7 @@ function table(head, body) {
   return [head, ...body].map((r) => r.map((c, i) => c.padEnd(widths[i])).join('  ').trimEnd()).join('\n')
 }
 
-export function render(report) {
+export function render(report, opts = {}) {
   const out = []
   for (const run of report.runs) {
     out.push(`== ${run.id} (${run.workflow}) ==`)
@@ -207,7 +250,14 @@ export function render(report) {
     out.push(`total ${fmtTotal(run.total)}`, '')
   }
   for (const id of report.unrecognised) out.push(`unrecognised: ${id}`)
-  if (report.unrecognised.length) out.push('')
+  const sk = report.skipped || []
+  if (sk.length) {
+    const by = [NOT_JSON, NOT_DELIVERY].map((why) => [why, sk.filter((s) => s.reason === why).length]).filter(([, n]) => n)
+    out.push(`skipped ${plural(sk.length, 'file')} (${by.map(([why, n]) => `${n} ${why}`).join(', ')})` +
+      (opts.verbose ? '' : '; --verbose lists them'))
+    if (opts.verbose) for (const s of sk) out.push(`  skipped: ${s.id} (${s.reason})`)
+  }
+  if (report.unrecognised.length || sk.length) out.push('')
 
   const t = report.totals
   out.push('Totals (all recognised runs)')
@@ -218,7 +268,7 @@ export function render(report) {
   out.push(`  findings rereview ${fmtCounts(t.findingCounts.rereview)} over ${plural(t.reviewsCounted.rereview, 're-review')}`, '')
 
   const tr = report.trend
-  out.push('Per-phase trend (run order' +
+  out.push(`Per-phase trend (${tr.order === 'start time' ? 'by start time' : 'in input order'}` +
     (tr.excluded.length ? `; ${plural(tr.excluded.length, 'concurrent run')} excluded, --include-concurrent to add` : '') +
     (tr.includeConcurrent ? '; concurrent runs included' : '') + ')')
   const entries = Object.entries(tr.phases)
@@ -234,9 +284,19 @@ export function render(report) {
 // ------------------------------------------------------------------------ CLI
 
 // The id of each run: the wrapper's own id when it has one, otherwise its path
-// relative to the inputs' common directory.
+// relative to the inputs' common directory. A wrapper id that another input also
+// gets falls back to the path id, which is unique, so ids stay distinct.
 export function runIds(results) {
-  return pathIds(results).map((r, i) => (results[i].runId === undefined ? r : { id: results[i].runId, data: r.data }))
+  const paths = pathIds(results)
+  const ids = results.map((r, i) => r.runId ?? paths[i])
+  for (;;) {
+    const count = new Map()
+    for (const id of ids) count.set(id, (count.get(id) || 0) + 1)
+    const clash = ids.map((id, i) => id !== paths[i] && count.get(id) > 1)
+    if (!clash.some(Boolean)) break
+    clash.forEach((c, i) => { if (c) ids[i] = paths[i] })
+  }
+  return results.map((r, i) => ({ ...r, id: ids[i] }))
 }
 
 function pathIds(results) {
@@ -249,23 +309,23 @@ function pathIds(results) {
     n = i
   }
   const root = dirs[0].slice(0, n).join(sep)
-  if (root) return results.map(({ file, data }) => ({ id: relative(root, file), data }))
+  if (root) return results.map(({ file }) => relative(root, file))
   const parts = results.map((r) => r.file.split(sep).filter(Boolean))
   const tail = (p, k) => p.slice(-k).join(sep)
-  return results.map(({ data }, i) => {
-    const p = parts[i]
+  return parts.map((p, i) => {
     let k = 1
     while (k < p.length && parts.some((q, j) => j !== i && tail(q, k) === tail(p, k))) k++
-    return { id: tail(p, k), data }
+    return tail(p, k)
   })
 }
 
-const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | task.output | dir>...'
+const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] [--verbose] <result.json | task.output | dir>...'
+const FLAGS = new Set(['--json', '--include-concurrent', '--verbose'])
 
 function main(argv) {
   const flags = new Set(argv.filter((a) => a.startsWith('--')))
   const paths = argv.filter((a) => !a.startsWith('--'))
-  const unknown = [...flags].filter((f) => f !== '--json' && f !== '--include-concurrent')
+  const unknown = [...flags].filter((f) => !FLAGS.has(f))
   if (unknown.length || !paths.length) {
     process.stderr.write(`${unknown.length ? `unknown option ${unknown.join(', ')}\n` : ''}${USAGE}\n`)
     return 2
@@ -273,20 +333,23 @@ function main(argv) {
 
   let status = 0
   const results = []
-  const load = (file) => {
+  const load = (file, fromDir) => {
     let text
     try { text = readFileSync(file, 'utf8') } catch (e) {
       process.stderr.write(`cannot read ${file}: ${e.message}\n`); status = 1; return
     }
-    let parsed = null
-    try { parsed = JSON.parse(text) } catch { process.stderr.write(`${file}: not valid JSON\n`) }
+    let parsed = null, notJson = false
+    try { parsed = JSON.parse(text) } catch {
+      notJson = true
+      if (!fromDir) process.stderr.write(`${file}: not valid JSON\n`)
+    }
     // The directory, not the file, is resolved: a symlinked file keeps its own name.
-    results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), ...unwrap(parsed) })
+    results.push({ file: join(realpathSync(dirname(resolve(file))), basename(file)), fromDir, notJson, ...unwrap(parsed) })
   }
   for (const p of paths) {
     let st
     try { st = statSync(p) } catch (e) { process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue }
-    if (!st.isDirectory()) { load(p); continue }
+    if (!st.isDirectory()) { load(p, false); continue }
     let names
     try { names = readdirSync(p).filter((f) => f.endsWith('.json') || f.endsWith('.output')).sort() } catch (e) {
       process.stderr.write(`cannot read ${p}: ${e.message}\n`); status = 1; continue
@@ -297,12 +360,12 @@ function main(argv) {
       try { isFile = statSync(full).isFile() } catch (e) {
         process.stderr.write(`cannot read ${full}: ${e.message}\n`); status = 1; continue
       }
-      if (isFile) load(full)
+      if (isFile) load(full, true)
     }
   }
 
   const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent') })
-  process.stdout.write(flags.has('--json') ? `${JSON.stringify(report, null, 2)}\n` : render(report))
+  process.stdout.write(flags.has('--json') ? `${JSON.stringify(report, null, 2)}\n` : render(report, { verbose: flags.has('--verbose') }))
   return status
 }
 

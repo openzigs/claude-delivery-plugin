@@ -1,7 +1,7 @@
 ---
 name: cost-report
 description: Per-run, per-phase cost report over saved /delivery:orchestrate and /delivery:plan-epic result JSON. Use when the maintainer wants to see output tokens, effort, model and finding counts per phase, or compare them across runs after a routing or effort change. Takes result files or directories as arguments, runs the plugin's own report script on them, and shows its table. Read-only.
-argument-hint: "<result.json | task.output | dir>... [--include-concurrent] — e.g. runs/2026-10-22-orchestrate-14.json"
+argument-hint: "<result.json | task.output | dir>... [--include-concurrent] [--verbose] — e.g. runs/2026-10-22-orchestrate-14.json"
 ---
 
 # Cost Report
@@ -29,15 +29,18 @@ If the arguments above are empty, print the usage below and stop. Do not go look
 results: not in the working directory, not in the session transcripts under `~/.claude/projects`,
 nowhere. Read nothing outside the paths you were given.
 
-> **Usage:** `/delivery:cost-report <result.json | task.output | dir>... [--include-concurrent]`
+> **Usage:** `/delivery:cost-report <result.json | task.output | dir>... [--include-concurrent] [--verbose]`
 >
 > When a `/delivery:orchestrate` or `/delivery:plan-epic` run finishes, Claude Code writes the
 > run's task output to a `<task-id>.output` file, at the path printed in the workflow's
-> completion notice. Pass that file straight in; the report reads the result inside it and names the run by
-> the wrapper's own run or task id. Or copy the result object the run returned into a `.json`
-> file of its own, one file per run, for example `runs/2026-10-22-orchestrate-14.json`. A
-> directory argument reports every `*.json` and `*.output` directly inside it, sorted by file
-> name, and that order is the order of the trend, so name the files to sort in run order.
+> completion notice. Pass that file straight in; the report reads the result inside it and
+> names the run by the wrapper's own run or task id. Or copy the result object the run returned
+> into a `.json` file of its own, one file per run, for example
+> `runs/2026-10-22-orchestrate-14.json`. A directory argument reports every `*.json` and
+> `*.output` directly inside it. Runs are ordered by start time when every one records it, and
+> otherwise in the order given (a directory's files sorted by name), so name copied files to sort
+> in run order. Files in a directory that are not a delivery result are counted on one
+> `skipped` line; `--verbose` lists them.
 
 ## With arguments
 
@@ -47,12 +50,12 @@ Pass every argument through, each path single-quoted, in the order given:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs" '<path>' '<path>'
 ```
 
-Add `--include-concurrent` only if the maintainer passed it. Do not add `--json`: the table is
-what the maintainer reads.
+Add `--include-concurrent` or `--verbose` only if the maintainer passed it. Do not add `--json`:
+the table is what the maintainer reads.
 
 Then show the script's standard output verbatim in one fenced code block, ending with its caveat
 line. If it wrote to standard error, show those lines too, below the block; each one names a path
-it could not read or a file that was not valid JSON. Exit status `2` means a bad option or no
+it could not read or a named file that was not valid JSON. Exit status `2` means a bad option or no
 paths: show its usage line. Exit status `1` means at least one path could not be read, and the
 rest still reported.
 

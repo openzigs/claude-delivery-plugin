@@ -280,7 +280,7 @@ run finishes, Claude Code writes the run's task output to a `<task-id>.output` f
 printed in the workflow's completion notice. You can point the report straight at that file:
 it is a wrapper whose `result` holds the result object (or a JSON string of it), and the report
 reads the result inside. Alternatively, copy the result object into a file of its own. Either
-way, name the files so they sort in run order, and pass the files or their directory:
+way, pass the files or their directory:
 
 ```
 /delivery:cost-report <path from the completion notice>/tasks/<task-id>.output
@@ -290,13 +290,18 @@ way, name the files so they sort in run order, and pass the files or their direc
 ```
 
 A directory contributes every `*.json` and `*.output` directly inside it, sorted by file name.
+Runs are reported, and the trend read, in start-time order when every run records a
+`startTime` or `timestamp`; otherwise in the order given, and the trend header says which.
 A wrapped run is named by the wrapper's own `runId`, `run_id`, `taskId` or `task_id` when it
-has one. Any other run is named by its path relative to the deepest directory holding every
-input, so `a/result.json` and `b/result.json` stay two runs. A wrapper whose `result` is not a
-workflow result is reported as `unrecognised`, like any other file. With no arguments the skill prints how to save a result and
-stops; it does not search for results. The skill runs `scripts/cost-report.mjs`, which does
-every sum, and shows only the metrics: never a result's `research`, `plan`, `review` or
-`implemented` text.
+has one made only of letters, digits, `_`, `.`, `:` and `-`, and no other input shares it.
+Any other run is named by its path relative to the deepest directory holding every input, so
+`a/result.json` and `b/result.json` stay two runs. In a directory, a file that is not JSON or
+not a delivery result (including a wrapper whose `workflowName` is another workflow) is
+counted on one `skipped` line; `--verbose` lists them. A file you name that is not a result
+is reported as `unrecognised` on its own line. With no arguments the skill prints how to save
+a result and stops; it does not search for results. The skill runs `scripts/cost-report.mjs`,
+which does every sum, and shows only the metrics: never a result's `research`, `plan`,
+`review` or `implemented` text.
 
 Two caveats travel with every report:
 

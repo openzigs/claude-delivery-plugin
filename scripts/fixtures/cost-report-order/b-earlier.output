@@ -1,0 +1,18 @@
+{
+  "runId": "wf_order-earlier",
+  "workflowName": "plan-epic",
+  "status": "completed",
+  "startTime": 1792659600000,
+  "timestamp": "2026-10-22T09:20:00.000Z",
+  "result": {
+    "topic": "synthetic topic",
+    "research": "Synthetic research summary.",
+    "plan": "Synthetic plan: filed #900 and #901.",
+    "implemented": false,
+    "outputTokens": {
+      "research": 23000,
+      "plan": 14500
+    },
+    "note": "Nothing was implemented and no pull request was opened."
+  }
+}

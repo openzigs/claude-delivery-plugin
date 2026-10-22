@@ -1,0 +1,16 @@
+{
+  "runId": "wf_dup-0001",
+  "workflowName": "plan-epic",
+  "status": "completed",
+  "result": {
+    "topic": "synthetic topic",
+    "research": "Synthetic research summary.",
+    "plan": "Synthetic plan: filed #900 and #901.",
+    "implemented": false,
+    "outputTokens": {
+      "research": 23000,
+      "plan": 14500
+    },
+    "note": "Nothing was implemented and no pull request was opened."
+  }
+}
