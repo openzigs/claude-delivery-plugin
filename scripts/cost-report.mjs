@@ -7,6 +7,10 @@
 //   node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | dir>...
 //     dir: every *.json directly inside it, sorted by file name (= run order)
 //
+// A run's id is its path relative to the deepest directory holding every input
+// file, so a/result.json and b/result.json stay distinct; files that share one
+// directory keep their bare file name.
+//
 // Cell values, in the table and in --json:
 //   a number  measured output tokens
 //   null      "not measured": the field is there but the runtime gave no budget
@@ -14,7 +18,7 @@
 //
 // The arithmetic lives here so that no model ever sums the numbers.
 import { readFileSync, readdirSync, statSync, realpathSync } from 'node:fs'
-import { join, basename, resolve } from 'node:path'
+import { join, dirname, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 export const CAVEAT =
@@ -208,6 +212,20 @@ export function render(report) {
 
 // ------------------------------------------------------------------------ CLI
 
+// The id of each run: its path relative to the inputs' common directory.
+export function runIds(results) {
+  if (!results.length) return []
+  const dirs = results.map((r) => dirname(r.file).split(sep))
+  let n = dirs[0].length
+  for (const d of dirs) {
+    let i = 0
+    while (i < n && i < d.length && d[i] === dirs[0][i]) i++
+    n = i
+  }
+  const root = dirs[0].slice(0, n).join(sep) || sep
+  return results.map(({ file, data }) => ({ id: relative(root, file), data }))
+}
+
 const USAGE = 'usage: node scripts/cost-report.mjs [--json] [--include-concurrent] <result.json | dir>...'
 
 function main(argv) {
@@ -228,7 +246,7 @@ function main(argv) {
     }
     let data = null
     try { data = JSON.parse(text) } catch { process.stderr.write(`${file}: not valid JSON\n`) }
-    results.push({ id: basename(file), data })
+    results.push({ file: resolve(file), data })
   }
   for (const p of paths) {
     let st
@@ -248,7 +266,7 @@ function main(argv) {
     }
   }
 
-  const report = summarise(results, { includeConcurrent: flags.has('--include-concurrent') })
+  const report = summarise(runIds(results), { includeConcurrent: flags.has('--include-concurrent') })
   process.stdout.write(flags.has('--json') ? `${JSON.stringify(report, null, 2)}\n` : render(report))
   return status
 }

@@ -22,6 +22,8 @@
 //      which are driven by the review's structured output
 //   8. scripts/cost-report.mjs reports the synthetic result fixtures by its rules,
 //      read-only and with node: builtins only
+//   9. the cost-report skill only runs that script, and shows metrics only; and the
+//      skill count stated in plugin.json, marketplace.json and README.md is the real one
 //
 // It exists because every one of those failures is silent at runtime.
 import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync } from 'node:fs'
@@ -212,6 +214,54 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     checkSkill(!/using `&&`\. Never open/.test(src) && /not `&&`|never `&&`|`;`/.test(sectionOf(src, '## Shell Execution Rules')),
       `${name} shell rule 1 allows the deliberate ; batch`)
   }
+}
+
+// The cost-report skill is read-only: its only command is the report script, it
+// names no GitHub write and no agent dispatch, and it shows metrics, never the
+// result's prose. A future edit that adds a write fails here.
+{
+  const body = readFileSync(join(ROOT, 'skills/cost-report/SKILL.md'), 'utf8')
+  const SCRIPT_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs"'
+  const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
+  checkSkill(cmds.length > 0 && cmds.every((l) => l.startsWith(SCRIPT_CALL)),
+    `cost-report: every command in the body is ${SCRIPT_CALL} (found ${JSON.stringify(cmds)})`)
+  checkSkill(!/(^|[^{])\$CLAUDE_PLUGIN_ROOT/.test(body),
+    'cost-report: uses the substituted ${CLAUDE_PLUGIN_ROOT}, not $CLAUDE_PLUGIN_ROOT (unset in the Bash tool)')
+  const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen|transfer|lock)\b/,
+    /\bgh\s+pr\s+(create|edit|close|merge|comment|review|ready|reopen|lock)\b/, /\bgh\s+api\b/,
+    /\bagent\s*\(/i, /\bAgent tool\b/, /subagent_type/]
+  const hits = writes.filter((re) => re.test(body)).map(String)
+  checkSkill(hits.length === 0, `cost-report: names no gh write and no agent dispatch${hits.length ? ` (found ${hits.join(', ')})` : ''}`)
+  checkSkill(/show only the metrics fields/i.test(body)
+    && /`research`, `plan`, `review` and\s+`implemented` text[^.]*;\s*never show/.test(body),
+    'cost-report: shows only metrics fields, never the research/plan/review/implemented text')
+  const noArgs = sectionOf(body, '## With no arguments')
+  checkSkill(/print the usage[^.]*and stop/i.test(noArgs) && /Read nothing outside the paths you were given/.test(noArgs)
+    && /save|copy the result/i.test(noArgs),
+    'cost-report: with no arguments it prints how to save a result, stops, and reads nothing else')
+}
+
+// The skill count stated in each manifest and the README must be the real one.
+{
+  const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
+    'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
+  const want = readdirSync(join(ROOT, 'skills')).length
+  for (const f of ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'README.md', 'docs/installation.md']) {
+    const t = readFileSync(join(ROOT, f), 'utf8')
+    const found = [...t.matchAll(new RegExp(`\\b(${NUM.join('|')}) skills\\b`, 'gi'))].map((m) => NUM.indexOf(m[1].toLowerCase()))
+      .concat([...t.matchAll(/\bSkills \((\d+)\)/g)].map((m) => Number(m[1])))
+      .concat([...t.matchAll(/count lower than (\d+) or/g)].map((m) => Number(m[1])))
+    checkSkill(found.length > 0 && found.every((n) => n === want),
+      `${f}: every stated skill count is ${want}, the number of skills/ directories (found ${JSON.stringify(found)})`)
+  }
+  const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  const missing = [...readdirSync(join(ROOT, 'skills'))].filter((d) => !sectionOf(readme, '### Skills').includes(`\`${d}\``))
+  checkSkill(missing.length === 0, `README.md: the Skills section names every skill${missing.length ? ` (missing ${missing.join(', ')})` : ''}`)
+  const usage = readFileSync(join(ROOT, 'docs/usage.md'), 'utf8')
+  const cost = sectionOf(usage, '### Reading the cost of a run')
+  checkSkill(cost.includes('(#what-the-result-measures)') && usage.includes('<a name="what-the-result-measures"></a>')
+    && /concurrent/i.test(cost) && /proxy/i.test(cost),
+    'docs/usage.md: "Reading the cost of a run" links "What the result measures" and repeats the concurrent and proxy caveats')
 }
 
 // ----------------------------------------------------------------- workflows
@@ -788,6 +838,20 @@ console.log('\n== scripts/cost-report.mjs ==')
     c(o.status === 1 && /cannot read .*dangling\.json/.test(o.stderr || '') && parse(o)?.runs?.length === 1,
       `a dangling symlink in a directory is reported on stderr, exit 1, and the other file still reports (exit ${o.status})`)
     rmSync(d, { recursive: true, force: true })
+  }
+
+  // Two same-named files in different directories are two runs, not one id twice.
+  {
+    const IDS = join(ROOT, 'scripts/fixtures/cost-report-ids')
+    const o = parse(cli('--json', join(IDS, 'a'), join(IDS, 'b')))
+    const ids = (o?.runs || []).map((r) => r.id)
+    const trendIds = Object.values(o?.trend?.phases || {}).flat().map((e) => e.run)
+    c(JSON.stringify(ids) === JSON.stringify(['a/result.json', 'b/result.json'])
+      && trendIds.includes('a/result.json') && trendIds.includes('b/result.json'),
+      `same-named files in two directories get distinct ids, relative to their common directory (got ${JSON.stringify(ids)})`)
+    const t = cli(join(IDS, 'a'), join(IDS, 'b')).stdout
+    c(/^== a\/result\.json \(plan-epic\) ==$/m.test(t) && /^== b\/result\.json \(orchestrate\) ==$/m.test(t),
+      'the table heads each same-named run with its distinct id')
   }
 }
 

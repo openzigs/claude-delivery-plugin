@@ -68,6 +68,7 @@ Every decision is logged with its reason, and each PR's result records the scope
 models used. The thresholds are constants at the top of `workflows/orchestrate.js` — see
 [customising](customising.md#choosing-models-in-the-script-not-in-frontmatter).
 
+<a name="what-the-result-measures"></a>
 **What the result measures**, so the effect of a routing or effort change can be judged
 rather than assumed:
 
@@ -251,6 +252,7 @@ that has `Skill` in its `tools:` invoke it.
 |---|---|
 | `/delivery:code-issue` | The full implement-an-issue procedure: plan, branch, TDD loop, security scan, CI, PR |
 | `/delivery:code-review` | The full review procedure: requirements, design, OWASP, quality, performance, tests, docs, publish |
+| `/delivery:cost-report` | Per-run, per-phase cost table from saved workflow results; read-only. See [reading the cost of a run](#reading-the-cost-of-a-run) |
 | `/delivery:e2e-test` | Map acceptance criteria to Playwright specs, Page Object Model, accessible locators |
 | `/delivery:epic-planner` | Epic and sub-issue structure, Mermaid diagrams, story points, phase ordering |
 | `/delivery:repo-scaffold` | New repository from nothing: stack selection, scaffolding, CI, and the `CLAUDE.md` this pipeline reads |
@@ -266,6 +268,42 @@ that has `Skill` in its `tools:` invoke it.
 /delivery:repo-scaffold my-new-service
 /delivery:e2e-test 412
 ```
+
+### Reading the cost of a run
+
+`/delivery:cost-report` turns saved workflow results into a per-run, per-phase table of the
+fields described in [What the result measures](#what-the-result-measures): output tokens,
+effort, model and finding counts, then totals and a per-phase trend across runs.
+
+It reads only the paths you give it. When a `/delivery:orchestrate` or `/delivery:plan-epic`
+run finishes, copy the result object it returned into a file of its own, named so the files
+sort in run order, and pass the files or their directory:
+
+```
+/delivery:cost-report runs/2026-10-22-orchestrate-14.json
+/delivery:cost-report runs/
+/delivery:cost-report runs/ --include-concurrent
+```
+
+A directory contributes every `*.json` directly inside it, sorted by file name. A run is named
+by its path relative to the deepest directory holding every input, so `a/result.json` and
+`b/result.json` stay two runs. With no arguments the skill prints how to save a result and
+stops; it does not search for results. The skill runs `scripts/cost-report.mjs`, which does
+every sum, and shows only the metrics: never a result's `research`, `plan`, `review` or
+`implemented` text.
+
+Two caveats travel with every report:
+
+- **Concurrent runs overlap.** `budget.spent()` counts the whole turn, so when batches run
+  concurrently a phase's delta also includes what the other batches spent. Such a run is
+  marked `CONCURRENT` and left out of the trend unless you pass `--include-concurrent`.
+  Compare token figures across single-batch runs.
+- **Severity counts are a proxy.** A fall in findings after a routing or effort change does
+  not show whether findings were lost; read the reviews themselves before concluding that a
+  cheaper review is as good.
+
+`not measured` means the runtime gave no `budget` for that phase, which is not zero; `n/a`
+means the workflow never records that field for that phase.
 
 ### Two skills with no agent of their own
 
