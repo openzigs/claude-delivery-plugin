@@ -46,8 +46,24 @@ if (!topic) {
 }
 const subject = topic || 'the work the caller described in conversation'
 
+// Output tokens per phase, as budget.spent() deltas. No effort is set here: both
+// stages inherit the session's effort. Null, never a throw, if `budget` is absent.
+const spentNow = () => {
+  try {
+    return typeof budget !== 'undefined' && budget && typeof budget.spent === 'function' ? budget.spent() : null
+  } catch {
+    return null
+  }
+}
+const metered = async (call) => {
+  const before = spentNow()
+  const out = await call()
+  const after = spentNow()
+  return [out, before == null || after == null ? null : after - before]
+}
+
 phase('Research')
-const research = await agent(
+const [research, researchTokens] = await metered(() => agent(
   `Gather research material for: ${subject}\n\n` +
     `Follow the \`/delivery:research-gather\` skill. If the caller gave a path or a URL, ` +
     `that is the primary source; if only a topic, keep web and library research ` +
@@ -56,10 +72,10 @@ const research = await agent(
     `Return a structured research summary: what exists today, what is missing, which ` +
     `existing issues overlap, and the constraints a plan must respect.`,
   { label: 'research', phase: 'Research', agentType: 'delivery:research' },
-)
+))
 
 phase('Plan')
-const planned = await agent(
+const [planned, planTokens] = await metered(() => agent(
   `Create a GitHub epic and its sub-issues for: ${subject}\n\n` +
     `Follow the \`/delivery:epic-planner\` skill. Run \`gh label list\` before filing so ` +
     `you use the project's existing labels rather than inventing parallel ones.\n\n` +
@@ -68,13 +84,14 @@ const planned = await agent(
     `File them, then report every number you created with its title, and say plainly ` +
     `what you deliberately did NOT file and why.`,
   { label: 'plan', phase: 'Plan', agentType: 'delivery:code-planner' },
-)
+))
 
 return {
   topic: topic || null,
   research,
   plan: planned,
   implemented: false,
+  outputTokens: { research: researchTokens, plan: planTokens },
   note:
     'Nothing was implemented and no pull request was opened. To take one of the filed ' +
     'issues forward, use /delivery:orchestrate <issue number>.',

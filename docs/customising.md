@@ -169,6 +169,13 @@ the **number** of agents per issue and the tier each runs on dominate the bill.
 | Fix | `sonnet`, or the session model if sonnet did the implementing | A sonnet implementation that failed review moves up to the stronger model rather than getting another try on sonnet |
 | Re-review | `sonnet`; the session model, at full scope, if the first review was light | A light review that still blocked means the change was misjudged as low-risk, so cycle 2 is its first full-scope look |
 
+Effort is chosen the same way, per call in the script and never in agent frontmatter. The
+implementer and the first review inherit the session's effort; the fix and the re-review
+pass `effort: 'medium'`; a re-review escalated from a light review inherits, because it is
+that change's first full-scope review. Each PR's result reports the effort, output tokens
+and finding counts per phase ([usage](usage.md)), so a change to these choices can be
+measured.
+
 A light review runs the `code-review` skill's requirements, security (changed lines),
 correctness and test steps, and skips design, performance and documentation; it is told to
 widen to the full skill if the diff touches auth, secrets, payments, migrations or anything
