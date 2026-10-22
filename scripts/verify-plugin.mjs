@@ -180,6 +180,13 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'code-issue Step 5 says "no checks reported" is CI not configured, not passed')
   // `--no-watch` is not a universal run-once flag; some runners reject it.
   const shell = sectionOf(issue, '## Shell Execution Rules')
+  // The Bash tool's foreground maximum is 600000 ms; Step 5 and Shell rule 2 must state it and agree.
+  const BASH_MAX_MS = 600000
+  const shellRule2 = shell.slice(shell.indexOf('2. **No watch mode**'))
+  const ceilings = (t) => [...t.matchAll(/`timeout` of at most `(\d+)` ms/g)].map((m) => Number(m[1]))
+  const stepMs = ceilings(ci), ruleMs = ceilings(shellRule2)
+  checkSkill(stepMs.length === 1 && ruleMs.length === 1 && stepMs[0] <= BASH_MAX_MS && stepMs[0] === ruleMs[0],
+    `code-issue Step 5 and Shell rule 2 state the same CI-wait ceiling, at most ${BASH_MAX_MS} ms (found ${stepMs} / ${ruleMs})`)
   checkSkill(!shell.includes('--no-watch') && shell.includes('--watch=false'),
     'code-issue shell rule 2 gives --watch=false, not --no-watch, as a run-once form')
 
