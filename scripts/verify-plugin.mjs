@@ -390,6 +390,16 @@ for (const file of workflowFiles) {
   check(pr0(r).models?.review === 'session model' && pr0(r).models?.fix === 'sonnet',
     'the models used are reported in the result', `models = ${JSON.stringify(pr0(r).models)}`)
 
+  // --- the procedure skills are preloaded via `skills:`, so no prompt may name one
+  // as a slash skill: that cues a Skill call that loads the procedure a second time.
+  check(r.dispatches.length === 4 && r.dispatches.every((d) => !/\/delivery:code-/.test(d.prompt)),
+    'no dispatched prompt names a /delivery:code-* slash skill')
+  check(r.dispatches.filter((d) => d.agentType !== undefined).every((d) => /\(preloaded\)/.test(d.prompt) || d.label.startsWith('fix:')),
+    'implement, review and re-review prompts refer to the preloaded procedure')
+  const header = src.slice(0, src.indexOf('const RULES'))
+  check(/preloaded/.test(header) && /skills:/.test(header) && !/skills each agent invokes/.test(header),
+    'the header comment describes skills: preload, not invocation')
+
   // --- orientation is batched in every dispatch, with no separate delivery.md read
   check(r.dispatches.every((d) => d.prompt.includes('cat .claude/delivery.md 2>/dev/null')
     && !/If \.claude\/delivery\.md exists, read it/.test(d.prompt)),
