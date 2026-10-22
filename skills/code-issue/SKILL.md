@@ -320,7 +320,10 @@ Rules:
    how quoting bugs and truncation happen:
    - Title: `feat: Resolve #{epic-number} — {description}`
    - Body: summary of changes; `Closes #N` for every resolved issue; the coverage numbers; the
-     mutations you used to prove the tests can fail; the security scan result
+     mutations you used to prove the tests can fail; the security scan result; **Defects found**
+     (bugs you found and fixed while implementing); and **Deferred** (anything in scope you left
+     undone, with the reason). The reviewer reads the PR body, not your report, so anything it
+     should know goes here.
 5. Add inline review comments on your own diff wherever a reviewer will want the reasoning. The
    publishing mechanics in `/delivery:code-review` apply identically here — including the rule that
    you cannot approve your own PR.
