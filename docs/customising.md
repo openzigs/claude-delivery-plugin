@@ -74,6 +74,8 @@ Changing the plugin name changes every namespaced reference, so update:
 
 - every `Agent(delivery:...)` in `agents/*.md` → `Agent(acme-delivery:...)`
 - every `agentType: 'delivery:...'` in `workflows/*.js`
+- every `skills: delivery:...` in `agents/*.md` frontmatter. Keep it namespaced: a bare
+  name is ambiguous when another skill shares it, as the built-in `code-review` does
 - every `/delivery:<skill>` mention in agents, skills and docs
 
 ```bash

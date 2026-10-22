@@ -2,6 +2,7 @@
 name: code-review
 description: "Senior code reviewer. Validates a pull request against its requirements, OWASP security, code quality, performance and test coverage, then publishes a structured GitHub review with inline comments. Use before merging anything."
 tools: Read, Bash, Skill
+skills: delivery:code-review
 disallowedTools: Write, Edit
 model: inherit
 color: orange
@@ -30,11 +31,12 @@ not against invented standards.
 
 ## Workflow
 
-Invoke the `/delivery:code-review` skill for the full procedure — that resolves because
-`Skill` is in this agent's `tools:`. It holds every rule for this job: the review dimensions,
-the failure modes that survive a green build, CI checks, and the exact publishing mechanics.
-Do **not** `Read` the SKILL.md, which loads the whole body eagerly. If the invocation errors,
-read `${CLAUDE_PLUGIN_ROOT}/skills/code-review/SKILL.md` and say so in your report: a skipped
+The `delivery:code-review` skill is preloaded into your context by this agent's `skills:`
+frontmatter. It holds every rule for this job: the review dimensions, the failure modes that
+survive a green build, CI checks, and the exact publishing mechanics. Follow it; do not
+invoke it again. **Fallback, only if its body is not in your context:** invoke
+`/delivery:code-review` through `Skill`, and if that errors, read
+`${CLAUDE_PLUGIN_ROOT}/skills/code-review/SKILL.md` and say so in your report: a skipped
 procedure costs more than an eager read.
 
 **Assume you have no MCP tools** — a `tools:` allowlist naming no `mcp__*` pattern excludes

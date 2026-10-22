@@ -96,6 +96,21 @@ for (const file of agentFiles) {
   }
 }
 
+// every preloaded `skills:` entry must be namespaced and name a real skill
+// directory. Claude Code skips a missing one with only a debug-log warning, so
+// a typo here leaves the agent with no procedure at all. A bare name is
+// rejected because it can match a same-named skill from elsewhere (the
+// built-in `code-review`, for one).
+for (const file of agentFiles) {
+  const fm = frontmatter(readFileSync(join(ROOT, 'agents', file), 'utf8'), file)
+  for (const ref of (fm?.skills || '').split(',').map((s) => s.trim()).filter(Boolean)) {
+    if (!ref.startsWith('delivery:')) bad(`${file}: skills entry "${ref}" not namespaced`)
+    else if (!existsSync(join(ROOT, 'skills', ref.slice('delivery:'.length), 'SKILL.md'))) {
+      bad(`${file}: skills entry "${ref}" has no such skill`)
+    } else ok(`${file}: skills ${ref} resolves`)
+  }
+}
+
 // -------------------------------------------------------------------- skills
 console.log('\n== skills/ ==')
 for (const dir of readdirSync(join(ROOT, 'skills')).sort()) {
