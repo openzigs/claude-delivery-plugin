@@ -187,11 +187,11 @@ Expect:
 
 ```
 Component inventory
-  Skills (8)  code-issue, code-review, e2e-test, epic-planner, repo-scaffold, research-gather, resolve-pr-comments, ui-vision
+  Skills (9)  code-issue, code-review, cost-report, e2e-test, epic-planner, repo-scaffold, research-gather, resolve-pr-comments, ui-vision
   Agents (7)  orchestrator, ui-vision, research, code-review, e2e-test, code-issue, code-planner
 ```
 
-**A count lower than 8 or 7 is the diagnostic.** A missing agent is almost always a
+**A count lower than 9 or 7 is the diagnostic.** A missing agent is almost always a
 frontmatter problem — see
 [precedence-and-gotchas](precedence-and-gotchas.md#an-agents-name-must-match-its-filename).
 
@@ -244,4 +244,4 @@ manifests, `claude plugin marketplace add <local path>`,
 `claude plugin install delivery@claude-delivery-plugin`, `claude plugin list`,
 `claude plugin details delivery`, `claude --plugin-dir <path> plugin details delivery`, and
 a headless `claude --plugin-dir <path> -p ...` session that listed both `/delivery:*`
-slash commands and all eight skills.
+slash commands and every skill.

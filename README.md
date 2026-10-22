@@ -1,7 +1,7 @@
 # delivery — a Claude Code plugin
 
 A project-agnostic delivery pipeline for Claude Code: two workflows, seven agents and
-eight skills that take a GitHub issue from implementation through **independent review**,
+nine skills that take a GitHub issue from implementation through **independent review**,
 fix and re-review — or turn a topic into a filed epic with sub-issues.
 
 It hardcodes nothing about any project. Every dispatched prompt reads the repository's own
@@ -115,8 +115,12 @@ to reach for them: editing the code under review stops being the near-at-hand mo
 
 ### Skills — the procedures
 
-`code-issue`, `code-review`, `e2e-test`, `epic-planner`, `repo-scaffold`,
+`code-issue`, `code-review`, `cost-report`, `e2e-test`, `epic-planner`, `repo-scaffold`,
 `research-gather`, `resolve-pr-comments`, `ui-vision`.
+
+| Skill | What it does |
+|---|---|
+| `/delivery:cost-report <result.json \| dir>...` | Per-run, per-phase output tokens, effort, model and finding counts from saved workflow results, read-only. See [reading the cost of a run](docs/usage.md#reading-the-cost-of-a-run) |
 
 Each is invoked namespaced — `/delivery:code-review` — and each is also reachable through
 the `Skill` tool by an agent that has it in `tools:`. See
@@ -138,7 +142,7 @@ claude plugin list
 claude plugin details delivery
 ```
 
-You should see `Skills (8)` and `Agents (7)`.
+You should see `Skills (9)` and `Agents (7)`.
 
 > **Note:** `claude plugin details` does **not** list workflows — that is true of every
 > plugin, not a defect in this one. To confirm the workflows registered, type `/` in an
@@ -263,6 +267,7 @@ workflows/
   plan-epic.js
 scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
+  cost-report.mjs      # the per-phase cost report /delivery:cost-report runs
 docs/
   installation.md
   usage.md
@@ -287,7 +292,7 @@ README.md
    ```bash
    node scripts/verify-plugin.mjs              # structure, frontmatter, meta purity, phase order
    claude plugin validate . --strict           # manifest schema, warnings as errors
-   claude --plugin-dir . plugin details delivery   # expect Skills (8), Agents (7)
+   claude --plugin-dir . plugin details delivery   # expect Skills (9), Agents (7)
    ```
    `verify-plugin.mjs` executes each workflow body against stubbed `agent`/`phase`/`log`/`parallel`
    functions and asserts the phase order, the conditional fix/re-review branch, every model
