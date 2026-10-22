@@ -22,20 +22,30 @@
 //      which are driven by the review's structured output
 //   8. scripts/cost-report.mjs reports the synthetic result fixtures by its rules,
 //      read-only and with node: builtins only
-//   9. the cost-report skill only runs that script, and shows metrics only; and the
-//      skill count stated in plugin.json, marketplace.json and README.md is the real one
+//   9. the cost-report skill only runs that script -- each command line is exactly the
+//      call plus quoted paths and flags, nothing chained, piped or redirected -- and shows
+//      metrics only; the skill count stated in plugin.json, marketplace.json, README.md and
+//      docs/installation.md is the number of skills/ directories holding a SKILL.md; the
+//      README's Skills section names every skill; and docs/usage.md's "Reading the cost
+//      of a run" links "What the result measures" and repeats its caveats
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
-import { join, basename, dirname } from 'node:path'
+import { join, basename, dirname, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 let fails = 0
 const ok = (m) => console.log(`  PASS  ${m}`)
 const bad = (m) => { fails++; console.log(`  FAIL  ${m}`) }
+
+// The skills under `root`: directories holding a SKILL.md, by name. A stray file
+// such as a gitignored skills/.DS_Store is not a skill and is not counted.
+const skillDirsIn = (root) => readdirSync(join(root, 'skills'), { withFileTypes: true })
+  .filter((e) => e.isDirectory() && existsSync(join(root, 'skills', e.name, 'SKILL.md'))).map((e) => e.name).sort()
+const SKILLS = skillDirsIn(ROOT)
 
 // ---------------------------------------------------------------- plugin.json
 console.log('\n== .claude-plugin/plugin.json ==')
@@ -111,7 +121,7 @@ for (const file of agentFiles) {
 // a same-named skill from elsewhere (the built-in `code-review`, for one).
 // The two procedure agents must also declare theirs: their fallback text says
 // the body is preloaded, so a silent removal would leave them with none.
-const skillDirs = new Set(readdirSync(join(ROOT, 'skills')))
+const skillDirs = new Set(SKILLS)
 const MUST_PRELOAD = { 'code-issue': 'delivery:code-issue', 'code-review': 'delivery:code-review' }
 for (const file of agentFiles) {
   const stem = basename(file, '.md')
@@ -129,9 +139,11 @@ for (const file of agentFiles) {
 
 // -------------------------------------------------------------------- skills
 console.log('\n== skills/ ==')
-for (const dir of readdirSync(join(ROOT, 'skills')).sort()) {
+for (const e of readdirSync(join(ROOT, 'skills'), { withFileTypes: true })) {
+  if (e.isDirectory() && !SKILLS.includes(e.name)) bad(`skills/${e.name}: no SKILL.md`)
+}
+for (const dir of SKILLS) {
   const p = join(ROOT, 'skills', dir, 'SKILL.md')
-  if (!existsSync(p)) { bad(`skills/${dir}: no SKILL.md`); continue }
   const fm = frontmatter(readFileSync(p, 'utf8'), `skills/${dir}/SKILL.md`)
   if (!fm) continue
   if (fm.name !== dir) bad(`skills/${dir}: name "${fm.name}" != directory`)
@@ -222,9 +234,17 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
 {
   const body = readFileSync(join(ROOT, 'skills/cost-report/SKILL.md'), 'utf8')
   const SCRIPT_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/scripts/cost-report.mjs"'
+  // The whole line must be the call plus single-quoted paths and the script's own
+  // flags. A prefix match would pass `<call> '<path>'; rm -rf ~/x`.
+  const ONLY_CALL = /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/cost-report\.mjs"(?: +(?:'[^']*'|--include-concurrent|--json))*$/
   const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
-  checkSkill(cmds.length > 0 && cmds.every((l) => l.startsWith(SCRIPT_CALL)),
-    `cost-report: every command in the body is ${SCRIPT_CALL} (found ${JSON.stringify(cmds)})`)
+  checkSkill(cmds.length > 0 && cmds.every((l) => ONLY_CALL.test(l)),
+    `cost-report: every command in the body is exactly ${SCRIPT_CALL} plus quoted paths and flags (found ${JSON.stringify(cmds)})`)
+  const base = `${SCRIPT_CALL} '<path>'`
+  const chained = ['; rm -rf ~/x', ' && cat x', ' || cat x', ' | tee x', ' $(cat x)', ' `cat x`', ' > out.txt', ' < in.txt', ' & cat x']
+    .filter((tail) => ONLY_CALL.test(base + tail))
+  checkSkill(ONLY_CALL.test(base) && ONLY_CALL.test(`${base} '<path>' --include-concurrent`) && chained.length === 0,
+    `cost-report: the command check rejects anything chained, piped, substituted or redirected after the call${chained.length ? ` (accepted ${JSON.stringify(chained)})` : ''}`)
   checkSkill(!/(^|[^{])\$CLAUDE_PLUGIN_ROOT/.test(body),
     'cost-report: uses the substituted ${CLAUDE_PLUGIN_ROOT}, not $CLAUDE_PLUGIN_ROOT (unset in the Bash tool)')
   const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen|transfer|lock)\b/,
@@ -245,7 +265,7 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
 {
   const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
     'eleven', 'twelve', 'thirteen', 'fourteen', 'fifteen', 'sixteen', 'seventeen', 'eighteen', 'nineteen', 'twenty']
-  const want = readdirSync(join(ROOT, 'skills')).length
+  const want = SKILLS.length
   for (const f of ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'README.md', 'docs/installation.md']) {
     const t = readFileSync(join(ROOT, f), 'utf8')
     const found = [...t.matchAll(new RegExp(`\\b(${NUM.join('|')}) skills\\b`, 'gi'))].map((m) => NUM.indexOf(m[1].toLowerCase()))
@@ -254,8 +274,19 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     checkSkill(found.length > 0 && found.every((n) => n === want),
       `${f}: every stated skill count is ${want}, the number of skills/ directories (found ${JSON.stringify(found)})`)
   }
+  {
+    const d = join(tmpdir(), `skills-stray-${process.pid}`)
+    rmSync(d, { recursive: true, force: true })
+    for (const s of ['alpha', 'beta']) { mkdirSync(join(d, 'skills', s), { recursive: true }); copyFileSync(join(ROOT, 'skills', SKILLS[0], 'SKILL.md'), join(d, 'skills', s, 'SKILL.md')) }
+    mkdirSync(join(d, 'skills', 'empty'))
+    copyFileSync(join(ROOT, 'README.md'), join(d, 'skills', '.DS_Store'))
+    const got = skillDirsIn(d)
+    checkSkill(JSON.stringify(got) === '["alpha","beta"]',
+      `a stray file or a directory with no SKILL.md in skills/ is not counted as a skill (got ${JSON.stringify(got)})`)
+    rmSync(d, { recursive: true, force: true })
+  }
   const readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
-  const missing = [...readdirSync(join(ROOT, 'skills'))].filter((d) => !sectionOf(readme, '### Skills').includes(`\`${d}\``))
+  const missing = SKILLS.filter((d) => !sectionOf(readme, '### Skills').includes(`\`${d}\``))
   checkSkill(missing.length === 0, `README.md: the Skills section names every skill${missing.length ? ` (missing ${missing.join(', ')})` : ''}`)
   const usage = readFileSync(join(ROOT, 'docs/usage.md'), 'utf8')
   const cost = sectionOf(usage, '### Reading the cost of a run')
@@ -852,6 +883,29 @@ console.log('\n== scripts/cost-report.mjs ==')
     const t = cli(join(IDS, 'a'), join(IDS, 'b')).stdout
     c(/^== a\/result\.json \(plan-epic\) ==$/m.test(t) && /^== b\/result\.json \(orchestrate\) ==$/m.test(t),
       'the table heads each same-named run with its distinct id')
+
+    // Inputs with no common directory below / keep short ids, not near-absolute paths.
+    const d = realpathSync(tmpdir())
+    const far = join(d, `cr-far-${process.pid}`)
+    rmSync(far, { recursive: true, force: true }); mkdirSync(far)
+    copyFileSync(join(IDS, 'a', 'result.json'), join(far, 'result.json'))
+    const top = (p) => p.split(sep).filter(Boolean)[0]
+    if (top(far) !== top(realpathSync(IDS))) {
+      const f = (parse(cli('--json', join(IDS, 'a', 'result.json'), join(far, 'result.json')))?.runs || []).map((r) => r.id)
+      c(JSON.stringify(f) === JSON.stringify(['a/result.json', `${basename(far)}/result.json`]),
+        `inputs under different top-level directories get their shortest unique suffix as id (got ${JSON.stringify(f)})`)
+    } else c(false, `test setup: ${far} and ${IDS} share a top-level directory`)
+
+    // Two spellings of one directory are one id: a symlink, and on macOS the
+    // unresolved tmpdir (/var/... or /tmp/...) beside its /private realpath.
+    const alias = join(d, `cr-alias-${process.pid}`)
+    rmSync(alias, { force: true }); symlinkSync(far, alias)
+    const spellings = [join(alias, 'result.json'), join(far, 'result.json')]
+    if (tmpdir() !== d) spellings.push(join(tmpdir(), basename(far), 'result.json'))
+    const s = (parse(cli('--json', ...spellings))?.runs || []).map((r) => r.id)
+    c(s.length === spellings.length && s.every((id) => id === 'result.json'),
+      `${spellings.length} spellings of the same file get the same id (got ${JSON.stringify(s)})`)
+    rmSync(alias, { force: true }); rmSync(far, { recursive: true, force: true })
   }
 }
 
