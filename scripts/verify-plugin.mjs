@@ -392,13 +392,24 @@ for (const file of workflowFiles) {
 
   // --- the procedure skills are preloaded via `skills:`, so no prompt may name one
   // as a slash skill: that cues a Skill call that loads the procedure a second time.
+  check(!/\/delivery:code-/.test(src), 'the workflow source names no /delivery:code-* slash skill in any prompt')
   check(r.dispatches.length === 4 && r.dispatches.every((d) => !/\/delivery:code-/.test(d.prompt)),
     'no dispatched prompt names a /delivery:code-* slash skill')
-  check(r.dispatches.filter((d) => d.agentType !== undefined).every((d) => /\(preloaded\)/.test(d.prompt) || d.label.startsWith('fix:')),
-    'implement, review and re-review prompts refer to the preloaded procedure')
-  const header = src.slice(0, src.indexOf('const RULES'))
-  check(/preloaded/.test(header) && /skills:/.test(header) && !/skills each agent invokes/.test(header),
+  const PROCEDURE = { implement: 'code-issue', review: 'code-review', rereview: 'code-review' }
+  const wrongProc = r.dispatches.filter((d) => {
+    const want = PROCEDURE[d.label.split(':')[0]]
+    return want && !d.prompt.includes(`following the ${want} procedure (preloaded)`)
+  })
+  check(r.dispatches.filter((d) => PROCEDURE[d.label.split(':')[0]]).length === 3 && wrongProc.length === 0,
+    'implement, review and re-review prompts name their own preloaded procedure',
+    wrongProc.map((d) => d.label).join(', '))
+  const headerEnd = src.indexOf('const RULES')
+  const header = src.slice(0, headerEnd)
+  check(headerEnd > 0 && /preloaded/.test(header) && /skills:/.test(header) && !/skills each agent invokes/.test(header),
     'the header comment describes skills: preload, not invocation')
+  const lr = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+  check(lr.dispatches.length === 4 && lr.dispatches.every((d) => !/\/delivery:code-/.test(d.prompt)),
+    'no light-route prompt (scope note, escalated re-review) names a /delivery:code-* slash skill')
 
   // --- orientation is batched in every dispatch, with no separate delivery.md read
   check(r.dispatches.every((d) => d.prompt.includes('cat .claude/delivery.md 2>/dev/null')
