@@ -32,8 +32,10 @@ Ground rules for this dispatch:
    authority on commands, coverage floors, changelog, branch and remote conventions,
    protected paths and data handling, and it wins over anything in this prompt. If the
    repository has an AGENTS.md and no CLAUDE.md, read AGENTS.md instead.
-2. If .claude/delivery.md exists, read it: it holds delivery constraints this project
-   wants every dispatched agent to carry. Its absence is normal.
+2. Orient in one batched Bash call, as your procedure's first step describes, and include
+   \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file separately: it
+   holds delivery constraints this project wants every dispatched agent to carry. Its absence
+   is normal. Then read every file you need in one response of parallel reads.
 3. Where the project states no gate, infer it from the CI workflow and say in your report
    what you inferred.
 4. Do not merge. Merging is the caller's decision.
@@ -466,6 +468,10 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
             `pass) and still found blocking problems, so this cycle is the change's first ` +
             `full-scope review: run every step of the skill on the diff.`
           : '') +
+        `\n\nOrient with one batched call (PR, diff, checks and .claude/delivery.md together), ` +
+        (route.light
+          ? `then read every changed file, in full, in one response of parallel reads.`
+          : `then read the files the findings name in one response of parallel reads.`) +
         `\n\nThe original review:\n${reviewText}\n\nWhat the author then did:\n${formatFix(fixed)}\n\n` +
         `${rules}\n\n` +
         `Verify each blocking finding was ACTUALLY fixed, by running it rather than by ` +
