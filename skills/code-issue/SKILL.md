@@ -230,7 +230,17 @@ Before creating the PR, perform a security review of your own change:
 1. Find the CI configuration (`.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`).
 2. Run the equivalent gate locally, batched, before pushing.
 3. Verify: tests pass, linter clean on changed files, typecheck/build clean, coverage floor held.
-4. After pushing, watch the remote run: `gh pr checks {number} --watch`.
+4. After pushing, wait for the remote run with **one bounded blocking call**, and give the Bash
+   tool an explicit `timeout` of at most `600000` ms:
+   ```bash
+   gh pr checks {number} --watch --fail-fast --interval 30 >/dev/null 2>&1; gh pr checks {number} --json name,bucket
+   ```
+   The streamed watch output is discarded, so only the compact JSON reaches your context. Do not
+   poll in a loop instead: every poll is a model turn, and one blocking wait is cheaper. Do not
+   raise the timeout casually either: a dispatched subagent's prompt cache lives about 5 minutes,
+   so any wait longer than that makes the next turn re-write the cache.
+   **If the timeout fires with checks still pending**, run `gh pr checks {number} --json name,bucket`
+   once more. If any `bucket` is still `pending`, report CI as **not verified**, never as passed.
 5. **A job stuck in `queued` is ambiguous.** It is either a deep queue on healthy runners or a
    runner outage, and the two look identical from `gh pr checks`. Do not guess — check runner health
    (`gh api repos/<owner>/<repo>/actions/runners`) or ask. Never report CI as verified when it never
@@ -378,7 +388,9 @@ Pick up where we left off on epic #42, starting from sub-issue #45
 
 2. **No watch mode** — never run watch or interactive commands. Always force one-shot execution.
    Test runners default to watch mode in several ecosystems; use the run-once form (`--run`,
-   `--watch=false`, `CI=1`) and check what the project's script actually does before trusting it.
+   `--no-watch`, `CI=1`) and check what the project's script actually does before trusting it.
+   **The only exception** is the bounded `gh pr checks` wait in Step 5 item 4: streamed output
+   discarded, an explicit Bash `timeout` of at most `600000` ms, then one compact JSON read.
 
 3. **No background processes** — never use `&`, `nohup` or `disown`. Dev servers and hot-reloading
    application servers are long-running and never belong in a gate.
