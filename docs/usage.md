@@ -34,7 +34,7 @@ If you want a phase to definitely happen, run the workflow.
 |---|---|---|
 | Implement | `delivery:code-issue` | TDD, coverage, branch, PR, CI watch — for each issue in the batch, in order. Also reports each issue's story points and labels and each PR's diff size as structured output |
 | Review | `delivery:code-review` | Independent read of each PR; publishes inline comments, and returns its findings as structured output with a `blocking` flag. **Light** or **full** scope depending on the change's risk (below) |
-| Fix | `delivery:code-issue` | Only if the review flagged a blocking finding |
+| Fix | `delivery:code-issue` | Only if the review flagged a blocking finding. Returns structured output: each finding `changed` (with its test), each `declined` (with the reason), and whether the `gates` passed and the fix is pushed |
 | Re-review | `delivery:code-review` | Cycle 2 of a maximum 2 |
 
 **Every PR is reviewed, and nothing merges.** A batch shares one implementer, never one

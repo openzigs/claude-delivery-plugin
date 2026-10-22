@@ -87,6 +87,59 @@ const formatReview = (r) =>
     `Verification: ${r.verification}`,
   ].join('\n')
 
+// The fix agent answers in structure too, so the re-reviewer gets one line per
+// finding instead of the author's prose -- and a declined finding cannot vanish
+// between the fix and the re-review.
+const FIX_SCHEMA = {
+  type: 'object',
+  properties: {
+    changed: {
+      type: 'array',
+      description: 'One entry per finding you fixed',
+      items: {
+        type: 'object',
+        properties: {
+          finding: { type: 'string', description: 'The finding, as the review stated it' },
+          fix: { type: 'string', description: 'What you changed' },
+          test: { type: 'string', description: 'The test that proves it, which you saw fail without the fix' },
+        },
+        required: ['finding', 'fix', 'test'],
+      },
+    },
+    declined: {
+      type: 'array',
+      description: 'One entry per finding you did not take',
+      items: {
+        type: 'object',
+        properties: {
+          finding: { type: 'string' },
+          reason: { type: 'string', description: 'Why you did not take it' },
+        },
+        required: ['finding', 'reason'],
+      },
+    },
+    gates: {
+      type: 'object',
+      properties: {
+        passed: { type: 'boolean', description: 'true if every gate you re-ran passed' },
+        pushed: { type: 'boolean', description: 'true if the fixes are pushed to the PR branch' },
+        detail: { type: 'string', description: 'Which gates ran, and anything that failed' },
+      },
+      required: ['passed', 'pushed'],
+    },
+  },
+  required: ['changed', 'declined', 'gates'],
+}
+
+const formatFix = (f) =>
+  f
+    ? [
+        ...f.changed.map((c) => `- fixed: ${c.finding} — ${c.fix} (test: ${c.test})`),
+        ...f.declined.map((d) => `- declined: ${d.finding} — ${d.reason}`),
+        `Gates passed: ${f.gates.passed}; pushed: ${f.gates.pushed}` + (f.gates.detail ? ` (${f.gates.detail})` : ''),
+      ].join('\n')
+    : 'The fix agent did not return a result. Check the PR branch for what, if anything, was pushed.'
+
 // Treat the review as blocking if EITHER the top-level flag or any single
 // finding says so. Disagreement between the two should err towards a fix pass.
 const isBlocking = (r) => Boolean(r.blocking || r.findings.some((f) => f.blocking))
@@ -392,8 +445,16 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         `Address every BLOCKING finding, and prove each fix with a test you have seen fail ` +
         `without it. For non-blocking ones, either take them or say why not — do not ` +
         `silently ignore them. Re-run the gates and push.\n\n` +
-        `Report what you changed and what you declined, with reasons.`,
-      { label: `fix:${tag}`, phase: 'Fix', agentType: 'delivery:code-issue', ...modelOpt(models.fix), ...iso },
+        `Return, as structured output, each finding you changed (with its test), each you ` +
+        `declined (with the reason), and whether the gates passed and the fixes are pushed.`,
+      {
+        label: `fix:${tag}`,
+        phase: 'Fix',
+        agentType: 'delivery:code-issue',
+        schema: FIX_SCHEMA,
+        ...modelOpt(models.fix),
+        ...iso,
+      },
     )
 
     rereviewed = await agent(
@@ -405,7 +466,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
             `pass) and still found blocking problems, so this cycle is the change's first ` +
             `full-scope review: run every step of the skill on the diff.`
           : '') +
-        `\n\nThe original review:\n${reviewText}\n\nWhat the author then did:\n${fixed}\n\n` +
+        `\n\nThe original review:\n${reviewText}\n\nWhat the author then did:\n${formatFix(fixed)}\n\n` +
         `${rules}\n\n` +
         `Verify each blocking finding was ACTUALLY fixed, by running it rather than by ` +
         `reading the response. Publish as the skill describes, then return what is still ` +

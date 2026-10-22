@@ -180,6 +180,14 @@ const BLOCKING_REVIEW = {
   findings: [{ severity: 'high', location: 'db.ts:9', summary: 'missing scope column', blocking: true }],
 }
 
+// What the fix agent reports. The declined reason is a sentinel so a test can
+// prove the structured result reaches the re-reviewer rather than being dropped.
+const FIX_RESULT = {
+  changed: [{ finding: 'missing scope column', fix: 'filter on tenant_id', test: 'db.test.ts scoped read' }],
+  declined: [{ finding: 'naming', reason: 'SENTINEL-DECLINED-REASON' }],
+  gates: { passed: true, pushed: true, detail: 'suite green' },
+}
+
 // What the implementer reports for an issue, by case: the issue's own points
 // and labels, and its PR's size. These drive the review routing.
 const MEDIUM_ISSUE = { storyPoints: 5, labels: ['enhancement'], filesChanged: 3, linesChanged: 80 }
@@ -196,7 +204,7 @@ const stubParallel = (thunks) => Promise.all(thunks.map((t) => t().catch(() => n
 
 // Consecutive-distinct phases, whether set by phase() or by an agent's opts.phase.
 function runner(body) {
-  return async ({ argv = '412', review = CLEAN_REVIEW, facts = {}, implement } = {}) => {
+  return async ({ argv = '412', review = CLEAN_REVIEW, facts = {}, implement, fix = FIX_RESULT } = {}) => {
     const dispatches = [], logs = [], seq = []
     let current = null
     const fn = new AsyncFunction('args', 'agent', 'phase', 'log', 'parallel', body)
@@ -211,6 +219,9 @@ function runner(body) {
           const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
           return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `${REPORT_SENTINEL} ${n}` })) }
         }
+        // The fix schema must get a fix-shaped answer, not the review stub: a
+        // review object here would let the phase checks pass for the wrong reason.
+        if (o.schema?.properties?.changed) return fix
         if (o.schema) return typeof review === 'function' ? review(o) : review
         return `[stub ${o.label}]`
       },
@@ -341,6 +352,20 @@ for (const file of workflowFiles) {
     `fix=${modelOf(r.dispatches, 'fix:412')} rereview=${modelOf(r.dispatches, 'rereview:412')}`)
   check(pr0(r).models?.review === 'session model' && pr0(r).models?.fix === 'sonnet',
     'the models used are reported in the result', `models = ${JSON.stringify(pr0(r).models)}`)
+
+  // --- the fix returns structured output, and the re-reviewer sees it
+  r = await run({ review: BLOCKING_REVIEW })
+  const fixProps = r.dispatches.find((d) => d.label === 'fix:412')?.schema?.properties || {}
+  check(['changed', 'declined', 'gates'].every((k) => fixProps[k]), 'the fix dispatch carries the changed/declined/gates schema')
+  check(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('SENTINEL-DECLINED-REASON'),
+    'a declined finding\'s reason reaches the re-review prompt')
+  check(JSON.stringify(pr0(r).fix) === JSON.stringify(FIX_RESULT), 'the structured fix result is returned')
+  r = await run({ review: BLOCKING_REVIEW, fix: { ...FIX_RESULT, gates: { passed: false, pushed: false } } })
+  check(r.dispatches.some((d) => d.label === 'rereview:412') && r.phases.includes('Re-review'),
+    'a fix that did not push still gets its re-review')
+  r = await run({ review: BLOCKING_REVIEW, fix: null })
+  check(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('did not return'),
+    'a fix that never returned is named as such to the re-reviewer')
 
   r = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
   check(modelOf(r.dispatches, 'rereview:412') === null
