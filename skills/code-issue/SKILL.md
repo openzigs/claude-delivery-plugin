@@ -47,7 +47,7 @@ installed it is a convenience, not the path; the `gh` command is.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  0. RULES — Read CLAUDE.md / .claude/delivery.md │
+│  0. RULES — The project's rules come first       │
 ├──────────────────────────────────────────────────┤
 │  1. PLAN — Read issue, analyze codebase, plan    │
 ├──────────────────────────────────────────────────┤
@@ -83,6 +83,7 @@ Orientation takes **two turns**: every separate fetch is a full model turn over 
    ```bash
    for n in {numbers}; do gh issue view $n --json title,body,labels,comments; done; \
    echo '=== DELIVERY'; cat .claude/delivery.md 2>/dev/null; \
+   echo '=== AGENTS'; \
    [ -f CLAUDE.md ] || cat AGENTS.md 2>/dev/null; \
    echo '=== CI'; ls .github/workflows 2>/dev/null; \
    gh repo view --json defaultBranchRef
@@ -392,8 +393,9 @@ Pick up where we left off on epic #42, starting from sub-issue #45
 
 **Critical — follow these to avoid orphaned terminals and hung sessions:**
 
-1. **Batch commands** — chain multiple commands in a SINGLE shell call using `&&`. Never open a new
-   shell invocation per command.
+1. **Batch commands** — chain multiple commands in a SINGLE shell call using `&&`, so a failure stops
+   the chain. The one exception is the read-only orient batch in Step 1, joined with `;` on purpose
+   so a missing file does not abort the rest. Never open a new shell invocation per command.
    ```bash
    # CORRECT — one call
    npm run lint && npm run test && npm run build

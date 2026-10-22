@@ -52,7 +52,7 @@ command (`npm audit --json`, `pip-audit`, `cargo audit`, `govulncheck`) or GitHu
 
 ```
 ┌───────────────────────────────────────────────────────┐
-│  0. RULES — Read CLAUDE.md / .claude/delivery.md      │
+│  0. RULES — The project's rules come first            │
 ├───────────────────────────────────────────────────────┤
 │  1. ORIENT — Read PR, linked issues, and project docs │
 ├───────────────────────────────────────────────────────┤
@@ -90,6 +90,7 @@ turns**: every separate fetch is a full model turn over a growing context.
    echo '=== DIFF'; gh pr diff {PR_NUMBER}; \
    echo '=== CHECKS'; gh pr checks {PR_NUMBER} 2>&1; \
    echo '=== DELIVERY'; cat .claude/delivery.md 2>/dev/null; \
+   echo '=== AGENTS'; \
    [ -f CLAUDE.md ] || cat AGENTS.md 2>/dev/null
    ```
    The parts are joined with `;`, not `&&`, so one failing part does not abort the rest: a
@@ -428,8 +429,9 @@ Check if PR #31 is ready to merge
 
 **Critical — follow these to avoid orphaned terminals and hung sessions:**
 
-1. **Batch commands** — chain multiple commands in a SINGLE shell call using `&&`. Never open a new
-   shell invocation per command.
+1. **Batch commands** — chain multiple commands in a SINGLE shell call using `&&`, so a failure stops
+   the chain. The one exception is the read-only orient batch in Step 1, joined with `;` on purpose
+   so a missing file does not abort the rest. Never open a new shell invocation per command.
    ```bash
    # CORRECT — one call
    npm run lint && npm run test && npm run build

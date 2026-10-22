@@ -469,7 +469,9 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
             `full-scope review: run every step of the skill on the diff.`
           : '') +
         `\n\nOrient with one batched call (PR, diff, checks and .claude/delivery.md together), ` +
-        `then read the files the findings name in one response of parallel reads.` +
+        (route.light
+          ? `then read every changed file, in full, in one response of parallel reads.`
+          : `then read the files the findings name in one response of parallel reads.`) +
         `\n\nThe original review:\n${reviewText}\n\nWhat the author then did:\n${formatFix(fixed)}\n\n` +
         `${rules}\n\n` +
         `Verify each blocking finding was ACTUALLY fixed, by running it rather than by ` +

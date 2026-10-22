@@ -159,6 +159,8 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(/single response/i.test(orient) && /in full/i.test(orient), 'code-review Orient reads every changed file in full, in parallel in a single response')
   checkSkill(!/If\s+`\.claude\/delivery\.md` exists, read it/.test(sectionOf(review, '## Step 0')),
     'code-review Step 0 folds the .claude/delivery.md read into the Orient batch')
+  checkSkill(/echo '=== AGENTS'; \\\n\s*\[ -f CLAUDE\.md \] \|\| cat AGENTS\.md/.test(batch),
+    'code-review Orient labels the AGENTS.md fallback so it is not read as delivery rules')
 
   const issue = readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8')
   const plan = sectionOf(issue, '### Step 1: Planning')
@@ -168,6 +170,13 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(/single response/i.test(plan), 'code-issue Step 1 reads files in parallel in a single response')
   checkSkill(!/If\s+`\.claude\/delivery\.md` exists, read it/.test(sectionOf(issue, '## Step 0')),
     'code-issue Step 0 folds the .claude/delivery.md read into the Step 1 batch')
+  checkSkill(/echo '=== AGENTS'; \\\n\s*\[ -f CLAUDE\.md \] \|\| cat AGENTS\.md/.test(iblocks[0] || ''),
+    'code-issue Step 1 labels the AGENTS.md fallback so it is not read as delivery rules')
+  for (const [name, src] of [['code-review', review], ['code-issue', issue]]) {
+    checkSkill(!/0\. RULES[^\n]*delivery\.md/.test(src), `${name} overview box no longer lists a separate .claude/delivery.md read`)
+    checkSkill(!/using `&&`\. Never open/.test(src) && /not `&&`|never `&&`|`;`/.test(sectionOf(src, '## Shell Execution Rules')),
+      `${name} shell rule 1 allows the deliberate ; batch`)
+  }
 }
 
 // ----------------------------------------------------------------- workflows
@@ -397,6 +406,8 @@ for (const file of workflowFiles) {
   // Matched on the re-review's own wording: RULES says "one batched" in every prompt.
   check((r.dispatches.find((d) => d.label === 'rereview:412')?.prompt || '').includes('PR, diff, checks and .claude/delivery.md together'),
     'the re-review prompt points at the batched orient call')
+  check((r.dispatches.find((d) => d.label === 'rereview:412')?.prompt || '').includes('files the findings name'),
+    'a non-escalated re-review reads only the files the findings name')
 
   // --- the fix returns structured output, and the re-reviewer sees it
   r = await run({ review: BLOCKING_REVIEW })
@@ -417,6 +428,9 @@ for (const file of workflowFiles) {
     && !r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('Review scope: LIGHT')
     && r.dispatches.find((d) => d.label === 'rereview:412')?.prompt.includes('full-scope'),
   'a light review that blocks escalates the re-review to a full one on the session model')
+  check(/every changed file, in full/.test(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt || '')
+    && !/files the findings name/.test(r.dispatches.find((d) => d.label === 'rereview:412')?.prompt || ''),
+  'an escalated re-review reads every changed file in full, not only the files the findings name')
 
   r = await run({ argv: '412 --small', review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
   check(modelOf(r.dispatches, 'fix:412') === null, 'a sonnet implementation that fails review escalates the fix')
