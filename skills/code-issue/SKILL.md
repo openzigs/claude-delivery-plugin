@@ -244,7 +244,7 @@ Before creating the PR, perform a security review of your own change:
 2. Run the equivalent gate locally, batched, before pushing.
 3. Verify: tests pass, linter clean on changed files, typecheck/build clean, coverage floor held.
 4. After pushing, wait for the remote run with **one bounded blocking call**, and give the Bash
-   tool an explicit `timeout` of at most `600000` ms:
+   tool an explicit `timeout` of at most `6000000` ms (long CI runs need the headroom):
    ```bash
    gh pr checks {number} --watch --fail-fast --interval 30 >/dev/null 2>&1; gh pr checks {number} --json name,bucket
    ```
