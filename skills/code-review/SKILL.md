@@ -222,7 +222,7 @@ keep, because a green suite is not evidence.
 | Check | Question |
 |-------|----------|
 | **Coverage** | Are the new code paths covered? Target at least 80% on touched code — unless `CLAUDE.md` names its own floor, which wins |
-| **Can it fail?** | **A test that cannot fail is not a test.** Did the author state which mutations they made and what went red? If not, ask — or mutate the implementation yourself and confirm the test catches it |
+| **Can it fail?** | **A test that cannot fail is not a test.** Did the author state which mutations they made and what went red? If not, mutate the implementation yourself and confirm the test catches it |
 | **Read-back assertions** | Does the test assert by reading through the same path a real consumer uses, or does it assert against the object it just constructed? The latter cannot detect a write that never landed |
 | **Happy path** | Do tests verify the primary use case? |
 | **Edge cases** | Empty inputs, nulls, boundary values, large inputs? |

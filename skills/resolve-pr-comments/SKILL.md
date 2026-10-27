@@ -15,7 +15,8 @@ testing conventions.
 
 ## Per-Project Constraints
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not (or
+`AGENTS.md` when there is no `CLAUDE.md`), and obey it exactly.** That is where
 a project states its own hard rules: the exact build/test/lint commands, coverage floors,
 changelog convention, protected paths, branch and commit conventions. If `.claude/delivery.md`
 exists, read it too — it carries constraints aimed specifically at this delivery pipeline.

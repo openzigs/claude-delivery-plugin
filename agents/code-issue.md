@@ -12,7 +12,14 @@ workflow with full branch/PR automation and self-review.
 
 The repository's `CLAUDE.md` is already in your context and is the authority on this
 project's commands, floors and conventions. **Where it and this agent's defaults disagree,
-the project wins.**
+the project wins.** If it is not in your context, read it; if there is no `CLAUDE.md`, read
+`AGENTS.md`; if the repository has neither, infer the commands from the repository (manifests,
+CI workflow) and say in your report what you inferred.
+
+**Unattended runs.** When a workflow or another agent dispatched you, no user is present:
+never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a
+choice, decide from the request, the issue and the repository, record the decision and why in
+your report, and carry on. Those steps apply only when a user invoked you interactively.
 
 ## Operating style
 

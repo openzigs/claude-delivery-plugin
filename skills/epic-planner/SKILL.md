@@ -27,11 +27,12 @@ skill the summary.
 
 ## Before You Start: Read the Project's Own Rules
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
-project states its own hard rules: architecture, build and test commands, protected paths,
-data-handling rules, and its label and milestone conventions. If `.claude/delivery.md` exists,
-read it too. Neither file existing is fine — infer from the repository and say in your report
-what you inferred.
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not.**
+Obey it exactly. If there is no `CLAUDE.md`, read `AGENTS.md`. If `.claude/delivery.md` exists,
+read it too. If the repository has neither `CLAUDE.md` nor `AGENTS.md`, infer the commands and
+conventions from the repository itself (manifests, CI workflow) and say in your report what you
+inferred. That is where a project states its own hard rules: architecture, build and
+test commands, protected paths, data-handling rules, and its label and milestone conventions.
 
 Things the project's own file, not this skill, is authoritative about:
 
@@ -121,7 +122,8 @@ gh label create epic --color 7057ff --description "Top-level planning epic" 2>/d
 Determine the `<owner>/<repo>` for issue creation:
 1. Check the existing git remote: `git remote -v`. If the project keeps more than one remote,
    pass the intended one explicitly rather than relying on a default.
-2. Ask the user if it is not obvious: *"Which GitHub repository should I create these issues in?"*
+2. If it is not obvious: when invoked interactively, ask *"Which GitHub repository should I create
+   these issues in?"*; when dispatched, use the current repository's `origin` and say so.
 3. Verify access before writing anything: `gh repo view <owner>/<repo> --json nameWithOwner`.
 
 #### 0b. Do Not Duplicate an Existing Issue
@@ -141,9 +143,10 @@ If you find an existing issue covering the same ground, say so and offer to exte
 than filing a second one. Two issues describing the same work is how two branches end up
 editing the same files and one of them loses.
 
-#### 0c. Research Sources — Ask the User
+#### 0c. Research Sources
 
-Present this prompt:
+When dispatched (the `/delivery:plan-epic` workflow has already run research and passed you its
+summary), skip this prompt and use that summary. When invoked interactively, present this prompt:
 > **I can gather additional context to make the epics more detailed. Would you like me to:**
 >
 > 1. **Read local documents** from a directory you specify (Word, PDF, spreadsheet and slide
@@ -178,7 +181,9 @@ Analyze what the user has described:
 3. **Identify dependencies**: What must be built before what?
 4. **Identify unknowns**: What needs more research or user clarification?
 
-Ask clarifying questions if scope is ambiguous:
+If scope is ambiguous: when invoked interactively, ask clarifying questions such as the ones
+below. When dispatched, choose the most likely reading, and record each ambiguity and the reading
+you chose under the epic's open questions:
 > - *"Is this a new feature in an existing app, or a new system from scratch?"*
 > - *"Who are the users? What are the key user journeys?"*
 > - *"Are there external systems or APIs you need to integrate with?"*

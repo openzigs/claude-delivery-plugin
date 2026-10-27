@@ -11,7 +11,8 @@ validate acceptance criteria from GitHub issues.
 
 ## First: learn this project's setup — do not assume it
 
-Read **`CLAUDE.md`** (or **`AGENTS.md`**) at the repository root and obey it exactly, then
+**`CLAUDE.md`** is normally already in your context (read it only if it is not, or
+**`AGENTS.md`** when there is no `CLAUDE.md`); obey it exactly, then
 read the project's **`playwright.config.ts`** (or `.js`/`.mts`). Everything you need is
 declared there and none of it is safe to assume:
 

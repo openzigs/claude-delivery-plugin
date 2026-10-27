@@ -33,7 +33,9 @@ Ground rules for this dispatch:
 1. The repository's CLAUDE.md is already in your context; do not re-read it. It is the
    authority on commands, coverage floors, changelog, branch and remote conventions,
    protected paths and data handling, and it wins over anything in this prompt. If the
-   repository has an AGENTS.md and no CLAUDE.md, read AGENTS.md instead.
+   repository has an AGENTS.md and no CLAUDE.md, read AGENTS.md instead. If it has neither,
+   infer the commands and conventions from the repository (manifests, CI workflow) and say
+   in your report what you inferred.
 2. Orient in one batched Bash call, as your procedure's first step describes, and include
    \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file separately: it
    holds delivery constraints this project wants every dispatched agent to carry. Its absence

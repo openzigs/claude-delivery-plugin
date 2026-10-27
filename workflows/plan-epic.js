@@ -27,7 +27,8 @@ Ground rules for this dispatch:
 1. The repository's CLAUDE.md is already in your context; do not re-read it. It is the
    authority on architecture, commands, label and milestone conventions, protected paths
    and data handling, and it wins over anything in this prompt. If the repository has an
-   AGENTS.md and no CLAUDE.md, read AGENTS.md instead.
+   AGENTS.md and no CLAUDE.md, read AGENTS.md instead. If it has neither, infer from the
+   repository (manifests, CI workflow) and say in your report what you inferred.
 2. Orient in one batched Bash call, joined with \`;\` so a missing file does not abort it, and
    include \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file
    separately: it holds constraints this project wants every dispatched agent to carry. Its
@@ -35,6 +36,10 @@ Ground rules for this dispatch:
 3. Where the project states no rule, infer from the repository and say in your report
    what you inferred.
 4. This workflow writes NO code and opens NO pull request. It ends at filed issues.
+5. **Unattended runs.** When a workflow or another agent dispatched you, no user is present:
+   never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a
+   choice, decide from the request, the issue and the repository, record the decision and why in
+   your report, and carry on. Those steps apply only when a user invoked you interactively.
 `.trim()
 
 const topic = (args && String(args).trim()) || ''

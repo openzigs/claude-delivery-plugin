@@ -59,7 +59,7 @@ installed it is a convenience, not the path; the `gh` command is.
 │     c. Run tests (>=80% on touched code)         │
 │     d. Lint changed files and fix                │
 │     e. Self-review checklist                     │
-│     f. Ask about e2e tests (if UI)               │
+│     f. e2e tests (if UI)                         │
 ├──────────────────────────────────────────────────┤
 │  4. SECURITY — Scan for CVEs, OWASP, vulns       │
 ├──────────────────────────────────────────────────┤
@@ -130,8 +130,9 @@ git checkout feature/{branch-name} && git fetch origin && git merge origin/main
   3. Resolution strategy:
      - Foundation/infrastructure changes from the default branch → prefer the default branch
      - New feature code → preserve the feature branch's intent
-     - Logic conflicts (both sides modified the same function) → merge the intent of both, and ask
-       the user if the result is behaviorally ambiguous
+     - Logic conflicts (both sides modified the same function) → merge the intent of both; if the
+       result is behaviorally ambiguous, ask the user when interactive, or when dispatched choose,
+       and record the choice in the PR body
   4. Stage resolved files and complete: `git add {files} && git merge --continue`
   5. Run the project's full test suite to verify the merge
   6. If tests fail after the merge, fix the regressions before proceeding
@@ -215,8 +216,10 @@ Before proceeding, verify:
 
 If the issue involves UI changes:
 
-- Ask the user: *"This issue includes UI changes. Would you like me to create Playwright e2e tests?"*
-- If yes, hand off to the **`delivery:e2e-test`** agent, or run `/delivery:e2e-test`
+- When invoked interactively, ask the user: *"This issue includes UI changes. Would you like me to
+  create Playwright e2e tests?"* When dispatched, do not ask: decide from the issue's acceptance
+  criteria and say in the PR body whether e2e tests are recommended.
+- If they are wanted, hand off to the **`delivery:e2e-test`** agent, or run `/delivery:e2e-test`
 - For live visual verification of a running app, hand off to **`delivery:ui-vision`**. Those two are
   the only agents that use Playwright MCP tools; this skill does not.
 
@@ -267,7 +270,7 @@ scale is `critical | high | medium | low | nit`, the same words as the review's 
    the local gate from item 2.
 5. **A job stuck in `queued` is ambiguous.** It is either a deep queue on healthy runners or a
    runner outage, and the two look identical from `gh pr checks`. Do not guess — check runner health
-   (`gh api repos/<owner>/<repo>/actions/runners`) or ask. Never report CI as verified when it never
+   (`gh api repos/<owner>/<repo>/actions/runners`), or ask when interactive. Never report CI as verified when it never
    ran.
 
 ### Step 5.5: Update Living Documents
@@ -414,10 +417,10 @@ Pick up where we left off on epic #42, starting from sub-issue #45
 | `gh` push fails | Retry with `git push`; check `gh auth status` |
 | PR creation fails | Fall back to opening the PR from the branch compare URL |
 | Tests fail after implementation | Debug, fix, re-run — never weaken an assertion to make it pass |
-| Security scan finds CVEs | Present to the user, suggest fixes, apply |
+| Security scan finds CVEs | Apply the security blocking rule, fix, and report findings with status |
 | CI job fails | Read the logs (`gh run view --log-failed`), fix, re-run |
 | CI job stuck in `queued` | Check runner health before assuming an outage; never report unverified CI as green |
-| Issue is unclear or blocked | Ask the user for clarification |
+| Issue is unclear or blocked | Interactive: ask the user for clarification. Dispatched: decide from the acceptance criteria and record the decision, or report it blocked and why |
 | A command in `CLAUDE.md` does not work | Report it — a stale documented command is a finding, not a detour |
 
 ## Shell Execution Rules

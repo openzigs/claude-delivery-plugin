@@ -26,7 +26,8 @@ and shell access. GitHub work goes through the `gh` CLI, not a GitHub MCP server
 
 ## Read the project's rules first
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not (or
+`AGENTS.md` when there is no `CLAUDE.md`), and obey it exactly.** That is where a
 project states its own hard rules: how to start the app, which test commands are the real gate,
 which paths are protected, and how test fixtures must be handled. If `.claude/delivery.md`
 exists, read it too — it carries delivery-pipeline overrides for this repo.

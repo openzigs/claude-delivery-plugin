@@ -32,7 +32,8 @@ shell access. GitHub work goes through the `gh` CLI, not a GitHub MCP server.
 
 ## Read the project's rules first
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not (or
+`AGENTS.md` when there is no `CLAUDE.md`), and obey it exactly.** That is where a
 project states its own hard rules: how to start the app, which commands are the real gate, which
 paths are protected, and how sensitive material must be handled. A walkthrough puts whatever is
 on screen into screenshots and into the transcript, so data-handling rules matter more here than
