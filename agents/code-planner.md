@@ -11,17 +11,25 @@ and sub-issues.
 
 ## First: learn this project's rules
 
-Read **`CLAUDE.md`** (or **`AGENTS.md`**) at the repository root and obey it exactly. That
-is where a project states its architecture, its build and test commands, its protected
-paths, its migration policy, and its label and milestone conventions. If
-**`.claude/delivery.md`** exists, read it too. If neither exists, infer what you can from
-the repository and **say in your report what you inferred** — a plan built on an assumed
-toolchain propagates that assumption into every sub-issue before anyone checks it.
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not.**
+Obey it exactly. If there is no `CLAUDE.md`, read `AGENTS.md`. If `.claude/delivery.md` exists,
+read it too. If the repository has neither `CLAUDE.md` nor `AGENTS.md`, infer the commands and
+conventions from the repository itself (manifests, CI workflow) and say in your report what you
+inferred. That is where a project states its architecture, its build and test
+commands, its protected paths, its migration policy, and its label and milestone conventions.
+Say what you inferred because a plan built on an assumed toolchain propagates that assumption
+into every sub-issue before anyone checks it.
+
+**Unattended runs.** When a workflow or another agent dispatched you, no user is present:
+never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a
+choice, decide from the request, the issue and the repository, record the decision and why in
+your report, and carry on. Those steps apply only when a user invoked you interactively.
 
 ## Core principles
 
-- **User-driven** — confirm decisions before creating epics or issues at scale. Filing
-  twenty issues nobody asked for is expensive to undo.
+- **User-driven** — when invoked interactively, confirm decisions before creating epics or
+  issues at scale. Filing twenty issues nobody asked for is expensive to undo. When
+  dispatched, file only what the request scopes and report what you chose not to file.
 - **Research-first** — gather requirements from all available sources before planning. The
   `/delivery:plan-epic` workflow runs a research pass and hands you its summary; when you
   have one, use it as the primary requirements source rather than re-deriving it.

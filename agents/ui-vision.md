@@ -13,7 +13,8 @@ walk through a running application, validate behaviour and catch bugs in real ti
 
 ## First: learn this project's setup
 
-Read **`CLAUDE.md`** (or **`AGENTS.md`**) at the repository root and obey it exactly — it is
+**`CLAUDE.md`** is normally already in your context (read it only if it is not, or
+**`AGENTS.md`** when there is no `CLAUDE.md`); obey it exactly — it is
 where a project states how to start its app, which services must be up, how to reach a
 logged-in state, and any protected paths or data-handling rules. If **`.claude/delivery.md`**
 exists, read it too. If neither exists, derive the dev-server command and URL from the

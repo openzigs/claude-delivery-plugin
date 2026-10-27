@@ -51,6 +51,14 @@ const skillDirsIn = (root) => readdirSync(join(root, 'skills'), { withFileTypes:
   .filter((e) => e.isDirectory() && existsSync(join(root, 'skills', e.name, 'SKILL.md'))).map((e) => e.name).sort()
 const SKILLS = skillDirsIn(ROOT)
 
+// The one unattended-run rule (#51). Every agent a workflow can dispatch carries it word for
+// word, and so do the plan-epic prompts, so no dispatched run stalls on a question.
+const UNATTENDED = '**Unattended runs.** When a workflow or another agent dispatched you, no user is present: ' +
+  'never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a choice, ' +
+  'decide from the request, the issue and the repository, record the decision and why in your report, and ' +
+  'carry on. Those steps apply only when a user invoked you interactively.'
+const squash = (t) => t.replace(/\s+/g, ' ')
+
 // ---------------------------------------------------------------- plugin.json
 console.log('\n== .claude-plugin/plugin.json ==')
 const manifest = JSON.parse(readFileSync(join(ROOT, '.claude-plugin/plugin.json'), 'utf8'))
@@ -256,6 +264,31 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     checkSkill(scale && canon?.includes(`\`${scale}\``), `the rule's severity scale is REVIEW_SCHEMA's enum (${scale})`)
     const informational = files.filter((f) => /\bInformational\b/.test(readFileSync(join(ROOT, f), 'utf8')))
     checkSkill(informational.length === 0, `"Informational" is not used as a severity in skills, agents or workflows${informational.length ? ` (found in ${informational})` : ''}`)
+  }
+
+  // Unattended runs: the rule in every dispatchable agent, no unconditional CLAUDE.md
+  // re-read, and every "ask the user" step conditioned on an interactive run.
+  {
+    for (const a of ['code-planner', 'research', 'code-review', 'code-issue']) {
+      checkSkill(squash(readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8')).includes(UNATTENDED),
+        `agents/${a}.md carries the unattended-run rule word for word`)
+    }
+    const texts = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.map((d) => `skills/${d}/SKILL.md`)]
+    const rereads = texts.filter((f) => /Read (the project's )?\*{0,2}`CLAUDE\.md`/.test(readFileSync(join(ROOT, f), 'utf8')))
+    checkSkill(rereads.length === 0, `no agent or skill tells the agent to read CLAUDE.md unconditionally${rereads.length ? ` (found in ${rereads.join(', ')})` : ''}`)
+    for (const f of ['agents/code-planner.md', 'agents/research.md', 'agents/code-review.md', 'agents/code-issue.md']) {
+      checkSkill(/has neither/.test(readFileSync(join(ROOT, f), 'utf8')), `${f} says what to do when the repository has neither CLAUDE.md nor AGENTS.md`)
+    }
+    const ASK = /\bask(s)? (the user|clarifying|before|first)\b|\bAsk the user\b|Would you like me to/
+    const unconditioned = []
+    for (const f of ['agents/code-planner.md', 'agents/research.md', 'agents/code-review.md', 'agents/code-issue.md',
+      'skills/research-gather/SKILL.md', 'skills/epic-planner/SKILL.md', 'skills/code-issue/SKILL.md', 'skills/code-review/SKILL.md']) {
+      for (const sec of readFileSync(join(ROOT, f), 'utf8').split(/\n(?=#{2,4} )/)) {
+        if (ASK.test(sec) && !/interactive|dispatched/i.test(sec)) unconditioned.push(`${f}: ${sec.split('\n')[0]}`)
+      }
+    }
+    checkSkill(unconditioned.length === 0,
+      `every "ask the user" step in the dispatchable agents and their skills is conditioned on an interactive run${unconditioned.length ? ` (unconditioned: ${unconditioned.join('; ')})` : ''}`)
   }
 
   for (const [name, src] of [['code-review', review], ['code-issue', issue]]) {
@@ -512,6 +545,9 @@ for (const file of workflowFiles) {
           && !/If \.claude\/delivery\.md exists, read it/.test(d.prompt))
           ? ok('plan-epic.js: every dispatch reads .claude/delivery.md inside its first batched call, not separately')
           : bad('plan-epic.js: a dispatch still reads .claude/delivery.md as a separate step')
+        dispatches.length === 2 && dispatches.every((d) => squash(d.prompt).includes(UNATTENDED) && /If it has neither/.test(d.prompt))
+          ? ok('plan-epic.js: every dispatch carries the unattended-run rule and the neither-CLAUDE.md-nor-AGENTS.md case')
+          : bad('plan-epic.js: a dispatch lacks the unattended-run rule or the neither-file case')
         dispatches.every((d) => !('effort' in d))
           ? ok('plan-epic.js: no dispatch sets effort')
           : bad('plan-epic.js: a dispatch sets effort')
@@ -633,6 +669,9 @@ for (const file of workflowFiles) {
   const lr = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
   check(lr.dispatches.length === 4 && lr.dispatches.every((d) => !/\/delivery:code-/.test(d.prompt)),
     'no light-route prompt (scope note, escalated re-review) names a /delivery:code-* slash skill')
+
+  check(r.dispatches.every((d) => /If it has neither/.test(d.prompt)),
+    'every dispatch says what to do when the repository has neither CLAUDE.md nor AGENTS.md')
 
   // --- orientation is batched in every dispatch, with no separate delivery.md read
   check(r.dispatches.every((d) => d.prompt.includes('cat .claude/delivery.md 2>/dev/null')

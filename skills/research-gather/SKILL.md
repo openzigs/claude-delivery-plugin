@@ -26,11 +26,12 @@ skill and then hands its summary to the epic planner for you.
 
 ## Before You Start: Read the Project's Own Rules
 
-**Read the project's `CLAUDE.md` (or `AGENTS.md`) FIRST and obey it exactly.** That is where a
-project states its own hard rules: architecture, build and test commands, protected paths,
-data-handling rules, and its label and milestone conventions. If `.claude/delivery.md` exists,
-read it too. Neither file existing is fine — infer from the repository and say in your report
-what you inferred.
+**The project's `CLAUDE.md` is normally already in your context; read it only if it is not.**
+Obey it exactly. If there is no `CLAUDE.md`, read `AGENTS.md`. If `.claude/delivery.md` exists,
+read it too. If the repository has neither `CLAUDE.md` nor `AGENTS.md`, infer the commands and
+conventions from the repository itself (manifests, CI workflow) and say in your report what you
+inferred. That is where a project states its own hard rules: architecture, build and
+test commands, protected paths, data-handling rules, and its label and milestone conventions.
 
 Two of those rules bite hardest during research, because research is a reading activity:
 
@@ -80,7 +81,7 @@ format if v1 of that format had five columns, v2 added two optional ones, and th
 project actually ingests is v1 with a vendor extension. Write it as: *"Format v2 defines seven
 columns, the last two optional (source: vendor spec PDF, p. 14). The fixtures in this repository
 are v1 with five columns (source: `tests/fixtures/sample-export.csv`). The importer does not yet
-detect the version — confirm with the user which versions must be supported."*
+detect the version. Open question: which versions must be supported?"*
 
 The same discipline applies to a library: "the client exposes `createSession()`" is worth
 nothing without "in 4.x; this project pins 3.2, where it is `newSession()`".
@@ -106,9 +107,12 @@ Never tell the user to install a server, and never let a step depend on one.
 
 ## Workflow
 
-### Step 1: Ask the User About Sources
+### Step 1: Choose the Sources
 
-Present this menu:
+When invoked interactively, present this menu. When dispatched, do not present it: a path or URL
+in the request is the primary source; otherwise use this repository plus web and library docs in
+proportion, and record the sources you chose and why.
+
 
 > **Where should I gather research material from?** (Choose all that apply)
 >
@@ -175,7 +179,7 @@ wins for "what should be", and **the disagreement itself is a finding** — reco
 ### Step 4: Web Research (if selected)
 
 #### 4a. Get URLs or Search
-Ask the user for URLs, or infer from the project context:
+Infer URLs from the request and the project context. When invoked interactively you may also ask:
 > *"What URLs should I fetch — documentation, design specs, API references?"*
 
 #### 4b. Fetch and Parse
@@ -310,7 +314,7 @@ epic that silently resolved an open question is worse than one that admits it.
 
 | Scenario | Action |
 |----------|--------|
-| Local path doesn't exist | Ask the user to verify the path |
+| Local path doesn't exist | Interactive: ask the user to verify the path. Dispatched: list it as unread under "Could Not Confirm" and continue |
 | Path is protected by project rules | Do not read it; tell the user which rule matched |
 | A read is refused by a project guard | Read the refusal message; it names the file and the rule. Do not route around it |
 | File conversion fails | Log the error, skip the file, continue with the others, list it as unread |
@@ -318,8 +322,8 @@ epic that silently resolved an open question is worse than one that admits it.
 | Web fetch fails | Note the URL as inaccessible under "Could Not Confirm", continue |
 | Search returns nothing useful | Broaden the terms, try the primary source directly, then say so |
 | An optional MCP server is absent | Use the always-available equivalent; do not tell the user to install anything |
-| Enterprise session expired | Inform the user, let re-authentication happen, retry once |
-| Sources contradict each other | Record both, name the contradiction, ask the user — do not pick silently |
+| Enterprise session expired | Interactive: inform the user, let re-authentication happen, retry once. Dispatched: list the source as unread |
+| Sources contradict each other | Record both and name the contradiction as an open question — do not pick silently. Ask the user only when interactive |
 
 ## Tips
 
