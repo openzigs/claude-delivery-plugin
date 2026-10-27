@@ -163,6 +163,12 @@ for (const dir of SKILLS) {
   else ok(`skills/${dir}: frontmatter ok (${fm.description.length} char description)`)
 }
 
+// Anthropic's skill guidance keeps a SKILL.md to 500 lines; detail goes in reference files (#54).
+{
+  const long = SKILLS.map((d) => [d, readFileSync(join(ROOT, 'skills', d, 'SKILL.md'), 'utf8').split('\n').length - 1]).filter(([, n]) => n > 500)
+  ;(long.length === 0 ? ok : bad)(`every skills/*/SKILL.md is at most 500 lines${long.length ? ` (over: ${long.map(([d, n]) => `${d} ${n}`).join(', ')})` : ''}`)
+}
+
 // Every file a skill or agent points at through ${CLAUDE_PLUGIN_ROOT} must exist: a reference
 // file moved out of a preloaded skill is read on demand, and a dangling pointer silently drops
 // the rules it held.
@@ -274,12 +280,21 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   const DISPATCH_SKIP = /If a workflow or another agent dispatched you, skip/
   checkSkill(DISPATCH_SKIP.test(sectionOf(planner, '### Step 7: Handoff')),
     'epic-planner Step 7 skips the user handoff when dispatched')
-  // Step 7 embeds a markdown template with its own ### headings, so bound it by Step 8.
-  // Both headings must exist: indexOf -1 would make the slice cover most of the file.
-  const g7 = gather.indexOf('### Step 7: Compile'), g8 = gather.indexOf('### Step 8')
-  checkSkill(g7 > 0 && g8 > g7, 'research-gather has its Step 7 and Step 8 headings, in order, to bound Step 7')
+  // The compile step embeds a markdown template with its own ### headings, so bound it by the
+  // handoff step. Both headings must exist: indexOf -1 would make the slice cover most of the
+  // file. #54 removed the enterprise step, so Compile is Step 6 and Handoff is Step 7.
+  const g7 = gather.indexOf('### Step 6: Compile'), g8 = gather.indexOf('### Step 7: Handoff')
+  checkSkill(g7 > 0 && g8 > g7, 'research-gather has its Step 6 (Compile) and Step 7 (Handoff) headings, in order, to bound Step 6')
   checkSkill(g7 > 0 && g8 > g7 && DISPATCH_SKIP.test(gather.slice(g7, g8)),
-    'research-gather Step 7 skips the user question when dispatched')
+    'research-gather Step 6 (Compile) skips the user question when dispatched')
+  // No agent allowlists an enterprise-search server, so that step could never run (#54); and
+  // the research menus offer sources, not planning, which /delivery:plan-epic already runs.
+  checkSkill(!/Microsoft|Copilot|Enterprise/i.test(gather), 'research-gather names no Microsoft 365 / Copilot / enterprise-search step')
+  const menu = (gather.match(/\n> \d+\. \*\*[^*]+\*\*/g) || []).map((l) => l.replace(/\n> \d+\. /, ''))
+  checkSkill(menu.length >= 4 && menu.every((m) => !/plan|epic|enterprise/i.test(m)),
+    `research-gather's source menu offers only sources, nothing plan-epic already runs (${menu.join(', ')})`)
+  checkSkill(!/\n> \d+\. \*\*(Read local documents|Research from the web|Look up library docs)/.test(sectionOf(planner, '#### 0c. Research Sources')),
+    'epic-planner 0c runs no research menu of its own; research-gather and plan-epic own research')
 
   // One security blocking rule, stated once in code-issue Step 4 and quoted word for word
   // by code-review and the orchestrator agent, so the implementer never ships a finding the
