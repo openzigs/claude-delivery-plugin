@@ -1528,6 +1528,17 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
   // The control's defect (RETRY_LIMIT in an unseen config) can be named only by guessing its value.
   const CONTROL_HIT = 'src/jobs/retry.js:5 — high — RETRY_LIMIT is 4096 in config, so a failing call retries for hours\nRecommendation: do not merge'
   const MISS = 'src/x.js:1 — nit — consider renaming this variable for clarity\nRecommendation: merge'
+  // Replies that block at high severity on some other defect. A grader that checks only the
+  // verdict or the severity would pass these, so every seeded grader must reject all of them.
+  // The first uses words the race and test graders once matched inside other words
+  // (blocker, trace, mock).
+  const WRONG_DEFECT = [
+    'src/a.js:3 — high — no input validation; this is a blocker\nRecommendation: do not merge',
+    'src/x.js:1 — high — the exported function name is misleading and has no JSDoc\nRecommendation: do not merge',
+    'src/x.js:2 — high — the stack trace in the error page leaks the grace period config\nRecommendation: do not merge',
+    'src/x.js:5 — medium — the retry runs in a loop with no backoff\nRecommendation: do not merge',
+    'test/x.test.js:4 — medium — use jest.mocked() for a typed mock\nsrc/y.js:9 — high — an unbounded loop with a deeply nested callback\nRecommendation: do not merge',
+  ]
   const FALSE_BLOCK = 'src/x.js:1 — high — this change looks risky\nRecommendation: do not merge'
   const seeded = cases.filter((n) => n.startsWith('seeded-')), controls = cases.filter((n) => n.startsWith('control-'))
   const clean = cases.filter((n) => n.startsWith('clean-'))
@@ -1549,6 +1560,7 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
       `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml tagged light-review`)
     const re = grader(n)
     if (!n.startsWith('clean-')) c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
+    if (n.startsWith('seeded-')) c(re && WRONG_DEFECT.every((w) => !re.test(w)), `${n}: its grader fails on a high-severity do-not-merge reply that names a different defect`)
     if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
     if (DISMISS[n]) c(re && !re.test(DISMISS[n]), `${n}: its grader fails on a reply that dismisses the defect and says merge`)
     // The full-scope copy: the same diff and graders, the FULL scope paragraph, its own name and tag.
@@ -1562,7 +1574,7 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
       && JSON.stringify(tagsOf(fd).slice(1)) === JSON.stringify(tagsOf(join(EV, n)).slice(1)),
     `${n}: evals/full/${n} is the same case at FULL scope (same diff, graders and tags; name ${n}-full)`)
   }
-  const fullDirs = existsSync(join(EV, 'full')) ? readdirSync(join(EV, 'full')).sort() : []
+  const fullDirs = existsSync(join(EV, 'full')) ? readdirSync(join(EV, 'full'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : []
   c(JSON.stringify(fullDirs) === JSON.stringify(cases), `every full-scope case has a light one and vice versa (${fullDirs.length} / ${cases.length})`)
   for (const n of clean) {
     const re = grader(n)
@@ -1645,6 +1657,14 @@ console.log('\n== scripts/footprint.mjs ==')
     const twice = await measure((p) => (p === 'workflows/orchestrate.js'
       ? read(p).replace('`Review pull request #', '`Follow the /delivery:code-review skill. Review pull request #') : read(p)))
     c(overCeiling(twice).some((o) => o.dispatch === 'full review'), 'a prompt that loads code-review a second time puts the full review over the ceiling')
+    // The full review reads FULL_REVIEW_STEPS.md every run, so its bytes count and its growth shows.
+    const row = (mm, d) => mm.rows.find((r) => r.dispatch === d)
+    const refB = Buffer.byteLength(read('skills/code-review/FULL_REVIEW_STEPS.md'), 'utf8')
+    c(row(m, 'full review').refBytes === refB && row(m, 're-review').refBytes === refB && !row(m, 'light review').refBytes,
+      `the full review and re-review count FULL_REVIEW_STEPS.md (${refB} B) and the light review does not`)
+    const grown = await measure((p) => (p === 'skills/code-review/FULL_REVIEW_STEPS.md' ? read(p) + 'x'.repeat(4096) : read(p)))
+    c(JSON.stringify(overCeiling(grown).map((o) => o.dispatch).sort()) === '["full review","re-review"]',
+      '4 KB added to FULL_REVIEW_STEPS.md puts the full review and re-review over the ceiling')
     const gone = await measure((p) => (p === 'workflows/orchestrate.js' ? null : read(p)))
     c(overCeiling(gone).length === 5, 'a dispatch that cannot be measured counts as over the ceiling, not as within it')
   } catch (e) { c(false, `measure() threw — ${e.message}`) }

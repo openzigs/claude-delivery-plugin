@@ -11,7 +11,9 @@
 // `<case>-full` (the copies under evals/full/). Recall is the share of `seeded-*` cases whose
 // seeded defect was found, overall and per category (the category is the case's tag in its
 // case.yaml: security, correctness, performance, tests, requirements). A false block is a
-// `clean-*` case -- a diff with nothing to block -- that did not end in `Recommendation: merge`.
+// `clean-*` case -- a diff with nothing to block -- that its grader scored 0. The
+// grader looks for `Recommendation: merge` unanchored, so a reply with no verdict at all is
+// also a false block, though it blocks nothing.
 // Spend is the run's list-price cost and mean turns per run. With --runs N a seeded case counts
 // as found only if every run scored 1, and a clean case counts as a false block if any run
 // blocked. Output tokens are not reported because the eval result records none (schemaVersion

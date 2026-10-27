@@ -12,11 +12,14 @@
 //   skills   every skill it carries before its first tool result: each `skills:` preload, plus
 //            each `/delivery:<skill>` the prompt names (a slash name cues a Skill call, so a
 //            preloaded skill named again is paid twice, and counted twice)
+//   refs     reference files every run of that dispatch must read (see below)
 //   prompt   the prompt the workflow builds, rendered by running workflows/*.js against a stub
 //            agent() whose review and fix answers are one short line each
 // The project's CLAUDE.md, Claude Code's own system prompt and tool definitions are NOT
-// counted: they are the same for every ref, so they cannot change a comparison. Reference
-// files a skill reads on demand are not counted either: they are not a fixed cost.
+// counted: they are the same for every ref, so they cannot change a comparison. A reference
+// file the skill orders every run of that dispatch to read is counted (refs): the full review
+// reads code-review/FULL_REVIEW_STEPS.md, the light review does not. Files read only when a
+// situation arises (MERGE_CONFLICTS.md, LIVING_DOCS.md) are not a fixed cost and are not counted.
 // Tokens are approximate: bytes / 4.
 //
 // The workflow scripts at a ref are executed (against stubs, with no network and no gh) to
@@ -32,14 +35,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 // from the measurement at the commit that introduced it plus about 5% headroom, so ordinary
 // edits pass and a silent re-bloat (a reference file folded back into a preloaded skill, a
 // second load of the same skill) fails. Raise it in the PR that needs to, with the reason.
-// Measured at introduction: implement 17,925, full review 21,243, light review 21,971,
-// fix 18,107, re-review 21,591 bytes (0.7.1 was 30-32 KB for each).
+// Measured at introduction: implement 17,925, full review 25,347 (21,243 + the 4,104 B
+// FULL_REVIEW_STEPS.md it reads), light review 21,971, fix 18,107, re-review 25,695 bytes
+// (0.7.1 was 30-32 KB for each).
 export const CEILINGS = {
   implement: 18800,
-  'full review': 22300,
+  'full review': 26600,
   'light review': 23100,
   fix: 19000,
-  're-review': 22700,
+  're-review': 27000,
 }
 
 // A reader returns a file's text, or null if the file does not exist there.
@@ -127,11 +131,16 @@ export async function measure(read) {
     const named = [...d.prompt.matchAll(/\/delivery:([a-z0-9-]+)/g)].map((m) => m[1])
     const skills = [...preloads(agentMd).map((s) => s.replace(/^delivery:/, '')), ...named]
     const skillTexts = skills.map((s) => read(`skills/${s}/SKILL.md`)).filter((t) => t != null)
+    // A skill that names FULL_REVIEW_STEPS.md makes every full-scope review read it. The light
+    // review's prompt carries the LIGHT scope paragraph and skips it.
+    const refTexts = skills.includes('code-review') && /FULL_REVIEW_STEPS\.md/.test(read('skills/code-review/SKILL.md') || '') && !/Review scope: LIGHT/.test(d.prompt)
+      ? [read('skills/code-review/FULL_REVIEW_STEPS.md')].filter((t) => t != null) : []
+    const refBytes = refTexts.reduce((n, t) => n + bytes(t), 0)
     const agentBytes = bytes(body(agentMd))
     const skillBytes = skillTexts.reduce((n, t) => n + bytes(body(t)), 0)
     const promptBytes = bytes(d.prompt)
-    const total = agentBytes + skillBytes + promptBytes
-    rows.push({ dispatch: name, agent: d.agentType, skills, agentBytes, skillBytes, promptBytes, total, tokens: Math.round(total / 4) })
+    const total = agentBytes + skillBytes + refBytes + promptBytes
+    rows.push({ dispatch: name, agent: d.agentType, skills, agentBytes, skillBytes, refBytes, promptBytes, total, tokens: Math.round(total / 4) })
   }
   const sum = (names) => {
     const picked = names.map((n) => rows.find((r) => r.dispatch === n))
@@ -195,7 +204,7 @@ if (isMain) {
   if (asJson) console.log(JSON.stringify({ columns: cols.map((c) => ({ ref: c.name, ...c.m })), ceilings: CEILINGS }, null, 2))
   else {
     console.log(table(cols))
-    console.log('\nFixed prefix per dispatch: agent body + preloaded and prompt-named skills + the rendered prompt.')
-    console.log('Excludes the project CLAUDE.md, Claude Code\'s system prompt and tools, and files read on demand. Tokens ~ bytes/4.')
+    console.log('\nFixed prefix per dispatch: agent body + preloaded and prompt-named skills + mandatory reference files + the rendered prompt.')
+    console.log('Excludes the project CLAUDE.md, Claude Code\'s system prompt and tools, and files read only on demand. Tokens ~ bytes/4.')
   }
 }

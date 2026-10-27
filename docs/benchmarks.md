@@ -25,6 +25,8 @@ before it does any work:
 - **skills**: every skill it holds before its first tool result — each `skills:` preload, plus
   each `/delivery:<skill>` the prompt names (a slash name cues a Skill call, so a preloaded skill
   named again is paid twice and counted twice);
+- **refs**: a reference file the skill orders every run of that dispatch to read — the full
+  review and re-review read `skills/code-review/FULL_REVIEW_STEPS.md`; the light review skips it;
 - **prompt**: the prompt the workflow builds, rendered by running `workflows/*.js` against a stub
   `agent()` whose review and fix answers are one short line each.
 
@@ -33,12 +35,12 @@ It prints bytes and approximate tokens (bytes / 4) per dispatch, and the sums fo
 refs it adds a change column.
 
 **What it proves.** That the plugin's own fixed text per dispatch went up or down, by how much,
-and where (agent, skill or prompt; `--json` splits them). It is exact for that text at that ref.
+and where (agent, skill or prompt; `--json` splits them). It is deterministic for that text at that ref (the byte counts are exact; the token figure is bytes / 4).
 
 **What it does not prove.** What a run costs. It leaves out the project's `CLAUDE.md` (the same
 for every ref, and often the biggest single cost — see
 [per-project configuration](per-project-configuration.md#keep-claudemd-small--it-is-the-biggest-cost-lever)),
-Claude Code's own system prompt and tool definitions, reference files a skill reads on demand,
+Claude Code's own system prompt and tool definitions, reference files read only when a situation arises (`MERGE_CONFLICTS.md`, `LIVING_DOCS.md`),
 everything the agent reads and writes while working, and prompt caching. bytes / 4 is a rough
 token estimate, not a tokenizer count. Use scenario 1 to catch text growth; use
 `/delivery:cost-report` on real runs for what a run spent.
@@ -55,14 +57,14 @@ Baseline at the 0.8.0 release, against 0.7.1:
 | dispatch | 0.7.1 (6567d82) | 0.8.0 | change |
 |----------|-----------------|-------|--------|
 | implement | 30,372 B / ~7,593 tok | 17,925 B / ~4,481 tok | -41% |
-| full review | 31,690 B / ~7,923 tok | 21,243 B / ~5,311 tok | -33% |
+| full review | 31,690 B / ~7,923 tok | 25,347 B / ~6,337 tok | -20% |
 | light review | 32,296 B / ~8,074 tok | 21,971 B / ~5,493 tok | -32% |
 | fix | 30,355 B / ~7,589 tok | 18,107 B / ~4,527 tok | -40% |
-| re-review | 32,038 B / ~8,010 tok | 21,591 B / ~5,398 tok | -33% |
+| re-review | 32,038 B / ~8,010 tok | 25,695 B / ~6,424 tok | -20% |
 | research | 24,035 B / ~6,009 tok | 23,206 B / ~5,802 tok | -3% |
 | plan | 33,147 B / ~8,287 tok | 26,005 B / ~6,501 tok | -22% |
-| no-fix cycle (implement + full review) | 62,062 B / ~15,516 tok | 39,168 B / ~9,792 tok | -37% |
-| blocking cycle (+ fix + re-review) | 124,455 B / ~31,114 tok | 78,866 B / ~19,717 tok | -37% |
+| no-fix cycle (implement + full review) | 62,062 B / ~15,516 tok | 43,272 B / ~10,818 tok | -30% |
+| blocking cycle (+ fix + re-review) | 124,455 B / ~31,114 tok | 87,074 B / ~21,769 tok | -30% |
 | plan-epic (research + plan) | 57,182 B / ~14,296 tok | 49,211 B / ~12,303 tok | -14% |
 
 ## Scenario 2 — review precision and recall

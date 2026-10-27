@@ -13,7 +13,7 @@ diff --git a/src/payments/client.js b/src/payments/client.js
  
 -const gateway = new Gateway(process.env.PAYMENT_API_KEY)
 +// Temporary: the staging env var keeps getting unset, so pin the key here.
-+const PAYMENT_API_KEY = 'pk_live_51Hx9QeLkT2vB8nR4sWm0ZyA7cD3fG6hJ'
++const PAYMENT_API_KEY = 'pgw_secret_51Hx9QeLkT2vB8nR4sWm0ZyA7cD3fG6hJ'
 +const gateway = new Gateway(PAYMENT_API_KEY)
  
  module.exports = { charge: (opts) => gateway.charges.create(opts) }
