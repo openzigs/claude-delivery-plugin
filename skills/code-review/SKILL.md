@@ -24,8 +24,8 @@ that rests on an inferred standard must be labelled as such, not asserted as a r
 
 ## Tools
 
-The reviewer has **no web tools**: everything a review needs is in the repository, the PR and
-GitHub. For a dependency the PR added or bumped, read its advisories with the ecosystem's audit
+The reviewer holds `Read`, `Bash` and `Skill`, with `Write` and `Edit` disallowed: it reads the
+repository, runs commands (the project's gates, `gh`), and has **no web tools**. For a dependency the PR added or bumped, read its advisories with the ecosystem's audit
 command (`npm audit --json`, `pip-audit`, `cargo audit`, `govulncheck`) or GitHub's database
 (`gh api "/advisories?affects=<package>@<version>"`), not a web search.
 
@@ -294,7 +294,7 @@ gh pr review {PR_NUMBER} --comment --body-file "${PAYLOAD%.json}.md"
 
 ## Review Comment Style Guide
 
-Follow [Google's guidance on review comments](https://google.github.io/eng-practices/review/reviewer/comments.html):
+After Google's engineering-practices guidance on review comments:
 
 - **Be kind.** Critique the code, not the person.
 - **Explain why.** Do not just say "this is wrong" — say what is better, and why.
