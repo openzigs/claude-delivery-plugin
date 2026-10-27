@@ -309,7 +309,7 @@ words ("review PR 88"), but then the main model decides whether to use it.
 
 | Agent | What it does | Used |
 |---|---|---|
-| `delivery:orchestrator` | Runs implement → review → fix → re-review, dispatching the others | Directly, when you say "work on issue N" without naming agents |
+| `delivery:orchestrator` | Points you at `/delivery:orchestrate`; runs the same implement → review → fix → re-review only when the command cannot be used | Directly, when you say "work on issue N" without naming agents |
 | `delivery:code-issue` | Implements one issue end to end: TDD, coverage, branch, PR, CI watch | By `/delivery:orchestrate` (Implement, Fix); or directly for a one-off |
 | `delivery:code-review` | Reviews a PR against its requirements, OWASP, design, performance and tests; publishes inline comments. No write tools | By `/delivery:orchestrate` (Review, Re-review); or directly before a merge |
 | `delivery:code-planner` | Files an epic and sub-issues with diagrams, story points and phase order | By `/delivery:plan-epic` (Plan) |

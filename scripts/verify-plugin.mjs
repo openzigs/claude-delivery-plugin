@@ -128,6 +128,24 @@ for (const file of agentFiles) {
   ;(ttl.length === 0 ? ok : bad)(`cacheTtl is not set anywhere${ttl.length ? ` (found in ${ttl.join(', ')})` : ''}`)
 }
 
+// The orchestrator agent is a thin pointer to /delivery:orchestrate (#60): every reference to
+// it in skills, docs and the README also names the command, and the agent lists no phase the
+// workflow does not run.
+{
+  const walkMd = (d) => readdirSync(join(ROOT, d), { withFileTypes: true }).flatMap((e) =>
+    e.isDirectory() ? walkMd(join(d, e.name)) : e.name.endsWith('.md') ? [join(d, e.name)] : [])
+  const stale = [...walkMd('skills'), ...walkMd('docs'), 'README.md'].flatMap((f) => readFileSync(join(ROOT, f), 'utf8').split('\n')
+    .map((l, i) => [f, i + 1, l]).filter(([, , l]) => l.includes('delivery:orchestrator') && !l.includes('/delivery:orchestrate')))
+  ;(stale.length === 0 ? ok : bad)(`every line naming delivery:orchestrator in skills, docs and README also names /delivery:orchestrate${stale.length ? ` (${stale.map(([f, n]) => `${f}:${n}`).join(', ')})` : ''}`)
+  const orch = readFileSync(join(ROOT, 'agents/orchestrator.md'), 'utf8')
+  const wfSrc = readFileSync(join(ROOT, 'workflows/orchestrate.js'), 'utf8')
+  const wfPhases = [...extractMetaPhases(wfSrc)]
+  const agentPhases = [...orch.matchAll(/^\| \d+ \| ([^|]+?) \|/gm)].map((m) => m[1].trim())
+  const extra = agentPhases.filter((p) => !wfPhases.includes(p))
+  ;(agentPhases.length > 0 && extra.length === 0 && orch.includes('/delivery:orchestrate') ? ok : bad)(
+    `agents/orchestrator.md points at /delivery:orchestrate and lists only phases the workflow runs (${agentPhases.join(', ')}${extra.length ? `; not in the workflow: ${extra.join(', ')}` : ''})`)
+}
+
 // No agent sets `model:` (#56). Since Claude Code v2.1.251 an explicit frontmatter model,
 // `inherit` included, outranks CLAUDE_CODE_SUBAGENT_MODEL; omitting it lets the variable
 // apply. Model routing is the workflow's job, per call. An agent that genuinely needs a pin
@@ -497,6 +515,11 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'docs/usage.md: "Reading the cost of a run" links "What the result measures" and repeats the concurrent and proxy caveats')
   checkSkill(/task output/i.test(cost) && /`\*\.output`/.test(cost) && /completion notice/i.test(cost),
     'docs/usage.md: "Reading the cost of a run" says a finished run\'s task output can be passed directly, and where it is written')
+}
+
+// A workflow's meta.phases titles, read without executing it (meta is a pure literal).
+function extractMetaPhases(src) {
+  return [...src.slice(src.indexOf('phases:'), src.indexOf('],', src.indexOf('phases:'))).matchAll(/title: '([^']+)'/g)].map((m) => m[1])
 }
 
 // ----------------------------------------------------------------- workflows

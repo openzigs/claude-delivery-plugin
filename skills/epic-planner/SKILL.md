@@ -281,8 +281,8 @@ Present to the user:
 
 ### Recommended Starting Point
 > Begin with **Epic #{first_epic}** (Phase 1: {name}).
-> Run `/delivery:code-issue #{first_issue}` to start implementation, or hand the epic to the
-> `delivery:orchestrator` agent to sequence implementation and review across its sub-issues.
+> Run `/delivery:orchestrate {first_issue} {next_issue} ...` to implement and review its
+> sub-issues in order, one PR each.
 
 ### Living Documents
 - {architecture doc} and {user guide} — maintained by the `delivery:code-issue` agent as the
