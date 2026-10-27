@@ -122,6 +122,16 @@ function orchestrateRows(data) {
       model: cell(b, 'implementModel', isStr),
       findings: NA, reviewDidNotReturn: false,
     })
+    // --batch-review (cheap mode): one review covered the batch; its tokens are the batch's.
+    if (b?.reviewMode === 'batch') {
+      rows.push({
+        batch, issue: issues.length ? issues : NA, pr: NA, phase: 'Batch review',
+        outputTokens: cell(b?.outputTokens, 'batchReview', isNum),
+        effort: prs.length ? cell(prs[0]?.effort, 'review', isStr) : NA,
+        model: prs.length ? cell(prs[0]?.models, 'review', isStr) : NA,
+        findings: NA, reviewDidNotReturn: false,
+      })
+    }
     for (const p of prs) {
       const notReturned = p?.reviewCompleted === false
       for (const [phase, key] of ORCHESTRATE_PHASES) {
@@ -136,6 +146,7 @@ function orchestrateRows(data) {
           model: cell(p?.models, key, isStr),
           findings,
           reviewDidNotReturn: notReturned && key === 'review',
+          inBatch: key === 'review' && p?.reviewedInBatch === true,
           // Low-confidence non-blocking findings the workflow dropped, recorded per PR (review +
           // re-review) and shown once, on the PR's Review row.
           suppressed: key === 'review' && isNum(p?.suppressedFindings) ? p.suppressedFindings : NA,
@@ -176,7 +187,8 @@ export function summarise(results, opts = {}) {
     }
     const rows = workflow === 'orchestrate' ? orchestrateRows(data) : planEpicRows(data)
     const concurrent = workflow === 'orchestrate' && data.batches.length > 1
-    runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows), ...(isNum(startTime) ? { startTime } : {}) })
+    runs.push({ id, workflow, concurrent, rows, total: sumTokens(rows), ...(isNum(startTime) ? { startTime } : {}),
+      ...(workflow === 'orchestrate' && data.cheapMode === true ? { cheapMode: true } : {}) })
     times.push(startTime)
   }
   // Start-time order only when every run has one; a partial order would be a
@@ -270,12 +282,14 @@ export function render(report, opts = {}) {
       const n = new Set(run.rows.map((r) => r.batch)).size
       out.push(`CONCURRENT (${n} batches): token deltas include the other batches' spend`)
     }
+    if (run.cheapMode) out.push('cheap mode: one review per batch (--batch-review); a batch with a risk label was still reviewed per PR')
     if (run.workflow === 'orchestrate') {
       const ref = (v, p) => (v === NA ? '-' : Array.isArray(v) ? v.map((n) => `${p}${n}`).join(',') : v === null ? '-' : `${p}${v}`)
       out.push(table(['batch', 'issue', 'pr', 'phase', 'outputTokens', 'effort', 'model', 'findings', 'note'],
         run.rows.map((r) => [String(r.batch), ref(r.issue, '#'), ref(r.pr, '#'), r.phase, fmtNum(r.outputTokens),
           fmtCell(r.effort), fmtCell(r.model), fmtCell(r.findings),
-          [r.reviewDidNotReturn ? 'REVIEW DID NOT RETURN' : '', isNum(r.suppressed) && r.suppressed ? `${r.suppressed} suppressed` : '']
+          [r.reviewDidNotReturn ? 'REVIEW DID NOT RETURN' : '', isNum(r.suppressed) && r.suppressed ? `${r.suppressed} suppressed` : '',
+            r.inBatch ? 'in batch review' : '']
             .filter(Boolean).join('; ')])))
     } else {
       out.push(table(['phase', 'outputTokens', 'effort', 'model', 'findings'],
