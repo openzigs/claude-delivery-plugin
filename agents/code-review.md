@@ -4,7 +4,6 @@ description: "Senior code reviewer. Validates a pull request against its require
 tools: Read, Bash, Skill
 skills: delivery:code-review
 disallowedTools: Write, Edit
-model: inherit
 color: orange
 ---
 

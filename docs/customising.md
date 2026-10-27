@@ -152,8 +152,16 @@ Options worth knowing on `agent()`:
 
 ### Choosing models: in the script, not in frontmatter
 
-Every agent in this plugin is `model: inherit`. Any tiering is done by the workflow, per
-`agent()` call, so it applies only to that pipeline, is decided by code and shows in the
+No agent in this plugin sets `model:` in its frontmatter — not even `model: inherit`. Since
+Claude Code v2.1.251 the subagent model is resolved in this order: the per-invocation `model`,
+then the agent's frontmatter `model` (where `inherit` means the main conversation's model), then
+the `CLAUDE_CODE_SUBAGENT_MODEL` environment variable, then the main conversation's model
+([sub-agents, "Choose a model"](https://code.claude.com/docs/en/sub-agents)). An explicit
+`model: inherit` therefore silently overrides `CLAUDE_CODE_SUBAGENT_MODEL`; omitting the field
+lets the variable apply, and otherwise gives the same session model. A `model` the workflow
+passes per call still takes precedence over the variable (set
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1`, v2.1.257+, to force one model everywhere). Any tiering is
+done by the workflow, per `agent()` call, so it applies only to that pipeline, is decided by code and shows in the
 run's log. A `model:` pin in an agent's frontmatter applies however the agent is reached,
 and the caller cannot see it. That is how an Opus-driven planning run once did its whole
 research phase on Sonnet.

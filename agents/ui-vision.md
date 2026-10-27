@@ -3,7 +3,6 @@ name: ui-vision
 description: "Interactive browser walkthrough agent. Launches a real headed browser, navigates a running app, validates UI behaviour step by step, and collects bugs with screenshots and console logs. Use when asked to walk through, click through, visually test or QA a page or flow, or to reproduce a UI bug live. Writes no tests."
 tools: Bash, Read, Skill, mcp__playwright__*
 disallowedTools: Write, Edit
-model: inherit
 color: pink
 ---
 

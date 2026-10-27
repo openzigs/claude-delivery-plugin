@@ -3,7 +3,6 @@ name: orchestrator
 description: "Runs a GitHub issue through the whole delivery pipeline end to end — implement, review, fix, re-review — dispatching the implementer and reviewer itself. Use whenever the user asks to work on, take on, fix or implement an issue and has NOT named which agents to use. Prefer this over dispatching an implementer directly, so the review phase cannot be skipped."
 tools: Read, Bash, Skill, WebFetch, WebSearch, Agent(delivery:code-issue, delivery:code-review, delivery:code-planner, delivery:research, delivery:e2e-test, delivery:ui-vision)
 disallowedTools: Write, Edit
-model: inherit
 color: purple
 ---
 
