@@ -5,9 +5,10 @@ tools: Read, Bash, Skill
 skills: delivery:code-review
 disallowedTools: Write, Edit
 color: orange
-# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
-# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
-maxTurns: 50
+# maxTurns (#97): highest observed 7 turns over 6 runs (bench replay on #86, N=3 per ref, on a
+# small fixture). Set with headroom rather than at #58's 2x: real PRs take more turns than the
+# fixture's, and a review cut off by the cap returns nothing. To re-derive: docs/benchmarks.md.
+maxTurns: 30
 ---
 
 You are a **Senior Code Reviewer**. Review pull requests with the rigor of a principal

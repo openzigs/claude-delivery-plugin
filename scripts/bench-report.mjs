@@ -20,8 +20,8 @@
 //   #48  every FULL review ran at `high` effort
 //   #49  the fix phase created no branch and no PR
 //   #51  no agent read CLAUDE.md (it is already in context), and none asked the user a question
-// and the highest turn count per agent type, which is what the provisional maxTurns (#58)
-// should be set from.
+// and the highest turn count per agent type, which is what the agents' maxTurns are set from
+// (#97; docs/benchmarks.md says how).
 import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'node:fs'
 import { join, resolve, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -253,7 +253,7 @@ export function render(groups) {
   out.push(table(['ref', 'scenario', '#48 full review at high', '#49 fix: no new branch/PR', '#51 no CLAUDE.md read', '#51 no ask-user'],
     groups.map((g) => [g.ref, g.scenario, ck(g.checks.fullReviewHigh), ck(g.checks.fixNoNewBranchOrPr), ck(g.checks.noClaudeMdRead), ck(g.checks.noAskUser)])))
   out.push('')
-  out.push('Highest turn count per agent type (#58: set maxTurns at about twice the highest observed)')
+  out.push('Highest turn count per agent type (#97: maxTurns is set from this with headroom; see docs/benchmarks.md)')
   const types = [...new Set(groups.flatMap((g) => Object.keys(g.maxTurns)))].sort()
   out.push(table(['ref', 'scenario', ...types], groups.map((g) => [g.ref, g.scenario, ...types.map((t) => g.maxTurns[t] ?? '-')])))
   out.push('')
