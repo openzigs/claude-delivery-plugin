@@ -29,7 +29,21 @@
         "nit": 0
        }
       },
-      "fix": {}
+      "fix": {},
+      "review": {
+       "recommendation": "do not merge",
+       "blocking": true,
+       "findings": [
+        {
+         "severity": "high",
+         "location": "src/reorder.js:7",
+         "summary": "reorderLines still reads each lowStock entry as a SKU string",
+         "blocking": true,
+         "confidence": 95
+        }
+       ]
+      },
+      "blockingFindings": true
      },
      {
       "issue": 9,
@@ -44,7 +58,21 @@
        },
        "rereview": null
       },
-      "fix": null
+      "fix": null,
+      "review": {
+       "recommendation": "merge with follow-ups",
+       "blocking": false,
+       "findings": [
+        {
+         "severity": "nit",
+         "location": "src/inventory.js:20",
+         "summary": "wording",
+         "blocking": false,
+         "confidence": 80
+        }
+       ]
+      },
+      "blockingFindings": false
      }
     ]
    }

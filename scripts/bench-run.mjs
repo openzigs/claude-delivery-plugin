@@ -21,13 +21,18 @@
 // issues are filed. That is why --reset-scratch must be passed to say so. Nothing else on
 // GitHub is touched.
 //
-// For each ref and run: a detached git worktree of this repository at the ref is the plugin
+// For each ref and run: an export of this repository at the ref is the plugin
 // (`claude --plugin-dir`, which takes precedence over an installed `delivery` plugin); a fresh
-// temporary copy of bench/fixture-repo is the project. Scenario `orchestrate` runs three
+// temporary copy of bench/fixture-repo is the project. Scenario `orchestrate` runs four
 // separate `claude -p` calls -- small (--points 1: sonnet implement, light review), medium
-// (--points 3: full review) and trap (--points 3; a planted requirement the obvious
-// implementation misses, to draw a blocking finding, a fix and a re-review). Scenario
-// `plan-epic` runs one, on bench/topics/plan-epic.md. The calls run with
+// (--points 3: full review), trap (--points 3; a requirement in the acceptance criteria the
+// obvious implementation misses, which now measures the implementer) and caller (--points 3; a
+// planted defect in an unchanged caller that the natural implementation breaks, to draw a
+// blocking finding, a fix and a re-review). A planted defect is described in its issue file's
+// front matter, which is never filed. The plugin is exported without git history and without
+// the files that describe planted defects (HIDDEN_FROM_AGENTS), so no agent reads it locally
+// (an agent with gh credentials could still fetch it from GitHub). Scenario `plan-epic` runs
+// one, on bench/topics/plan-epic.md. The calls run with
 // --dangerously-skip-permissions. That is NOT confined: the agents have an unrestricted shell
 // and whatever `gh` credentials you are logged in with. Run it with a GH_TOKEN that can reach
 // only the scratch repository (a fine-grained token), and not on a machine holding secrets.
@@ -52,17 +57,26 @@ export const ISSUES = [
   { name: 'small', points: 1 },
   { name: 'medium', points: 3 },
   { name: 'trap', points: 3 },
+  { name: 'caller', points: 3 },
 ]
 
 // Claude Code's project directory for a working directory: its real path, every character
 // that is not a letter or digit replaced by '-'.
 export const projectSlug = (dir) => realpathSync(dir).replace(/[^A-Za-z0-9]/g, '-')
 
+// Only title, labels and body are filed. `defect` (a note for maintainers), `defectLocations`
+// (file or file:start-end, comma-separated) and `defectKeywords` describe a planted defect; they
+// stay in the front matter, are recorded in meta.json, and bench-report.mjs matches the review's
+// blocking findings against them.
 export function parseIssue(md) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(md.replace(/\r\n/g, '\n'))
   if (!m) throw new Error('issue file has no front matter')
   const fm = Object.fromEntries(m[1].split('\n').map((l) => /^(\w+):\s*(.*)$/.exec(l)).filter(Boolean).map((x) => [x[1], x[2].trim()]))
-  return { title: fm.title, labels: (fm.labels || '').split(',').map((s) => s.trim()).filter(Boolean), points: Number(fm.points), body: m[2].trim() + '\n' }
+  const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const planted = fm.defectLocations || fm.defectKeywords
+    ? { note: fm.defect || '', locations: list(fm.defectLocations), keywords: list(fm.defectKeywords) }
+    : null
+  return { title: fm.title, labels: list(fm.labels), points: Number(fm.points), body: m[2].trim() + '\n', planted }
 }
 
 export function parseArgs(argv) {
@@ -137,6 +151,23 @@ export function clearResults(steps) {
 
 const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
+// Files that describe a planted defect: the scenarios, their documentation, the bench scripts
+// and the verifier with its fixtures. None of them is part of the plugin, so the agents under
+// test never see them.
+export const HIDDEN_FROM_AGENTS = [
+  'bench', 'docs/benchmarks.md', 'scripts/verify-plugin.mjs', 'scripts/bench-run.mjs',
+  'scripts/bench-report.mjs', 'scripts/fixtures/bench',
+]
+
+// Exports the plugin at `sha` into `dir` with `git archive`: a plain tree with no .git, so no
+// agent can recover a hidden file from history either.
+export function exportPlugin(sha, dir) {
+  mkdirSync(dir, { recursive: true })
+  const tar = execFileSync('git', ['-C', ROOT, 'archive', '--format=tar', sha], { maxBuffer: 1 << 30 })
+  execFileSync('tar', ['-x', '-C', dir], { input: tar })
+  for (const p of HIDDEN_FROM_AGENTS) rmSync(join(dir, p), { recursive: true, force: true })
+}
+
 // Isolate a step from every earlier one: delete every issue (open or closed: the epic planner
 // searches `--state all` for a duplicate, so a closed epic would still be found), close every
 // open pull request (GitHub cannot delete one; `gh issue list` never lists a PR), and delete
@@ -167,9 +198,9 @@ function runStep(step, o) {
   const tmp = mkdtempSync(join(tmpdir(), 'delivery-bench-'))
   const pluginDir = join(tmp, 'plugin')
   const work = join(tmp, 'work')
-  sh('git', ['-C', ROOT, 'worktree', 'add', '--detach', pluginDir, sha])
   const repo = step.repo
   try {
+    exportPlugin(sha, pluginDir)
     const isolation = { mode: o.isolation, repo, ...resetScratch(repo, (args) => sh('gh', args, ROOT)) }
     cpSync(join(BENCH, 'fixture-repo'), work, { recursive: true })
     sh('git', ['init', '-q', '-b', 'main'], work)
@@ -186,7 +217,7 @@ function runStep(step, o) {
         const url = sh('gh', ['issue', 'create', '--repo', repo, '--title', is.title, '--body', is.body, ...is.labels.flatMap((l) => ['--label', l])], work)
         const n = Number(/\/issues\/(\d+)\s*$/.exec(url)?.[1])
         if (!n) throw new Error(`could not read the issue number from ${url}`)
-        return { ...c, number: n, prompt: c.prompt.replace(`<#${c.issue}>`, String(n)) }
+        return { ...c, number: n, planted: is.planted, prompt: c.prompt.replace(`<#${c.issue}>`, String(n)) }
       })
     } else {
       cpSync(join(BENCH, 'topics', 'plan-epic.md'), join(work, 'PLAN-TOPIC.md'))
@@ -208,12 +239,11 @@ function runStep(step, o) {
         const src = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects', projectSlug(work), sessionId)
         if (existsSync(src)) { cpSync(src, join(step.out, 'sessions', sessionId), { recursive: true }); sessionFound = true }
       }
-      calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
+      calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, planted: c.planted ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
       console.log(`  ${step.ref} ${step.scenario} run ${step.run}: ${c.prompt} — exit ${r.status}, ${(wallMs / 60000).toFixed(1)} min`)
     })
     writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls, orchestrateArgs: step.orchestrateArgs }, null, 2) + '\n')
   } finally {
-    spawnSync('git', ['-C', ROOT, 'worktree', 'remove', '--force', pluginDir])
     if (!o.keep) rmSync(tmp, { recursive: true, force: true })
   }
 }
@@ -234,7 +264,7 @@ if (isMain) {
     'Expect a few million tokens for both scenarios on two refs.')
   for (const s of steps) {
     console.log(`${s.ref} / ${s.scenario} / run ${s.run} -> ${s.out}  [reset ${s.repo} first]`)
-    for (const c of s.calls) console.log(`  claude ${claudeArgs(c.prompt, '<worktree of ' + s.ref + '>').map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`)
+    for (const c of s.calls) console.log(`  claude ${claudeArgs(c.prompt, '<export of ' + s.ref + '>').map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`)
   }
   if (o.dryRun) process.exit(0)
   clearResults(steps)
