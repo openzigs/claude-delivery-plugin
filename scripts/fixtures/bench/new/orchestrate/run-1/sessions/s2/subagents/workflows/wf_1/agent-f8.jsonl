@@ -1,0 +1,1 @@
+{"type":"assistant","effort":"medium","message":{"id":"msg_0","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":20},"content":[{"type":"text","text":"x"},{"type":"tool_use","name":"Bash","input":{"command":"gh pr checkout 1008 --detach && git push origin HEAD:feature/issue-8-x"}}]}}

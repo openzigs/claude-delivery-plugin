@@ -1,13 +1,20 @@
-# Benchmarks: prompt footprint and review evals
+# Benchmarks: prompt footprint, review evals and pipeline replay
 
-Two cheap, repeatable measurements of what the plugin costs and how well its review finds
-defects. Run them before and after a change that moves a prompt, a skill or a review tier, and
-compare. Neither touches GitHub.
+> **Cost.** Scenarios 1 and 2 are free or cheap. Scenarios 3–5, the pipeline replay, are
+> **expensive**: one full run of both scenarios on two refs (0.7.1 and 0.8.0, N=1) is in the
+> order of **a few million tokens** — every issue goes through a real implement, review and,
+> for the trap issue, fix and re-review, on a real GitHub scratch repository. Each `--runs`
+> multiplies that. They are opt-in and are never run by CI.
+
+Repeatable measurements of what the plugin costs, how well its review finds defects, and
+whether the pipeline still behaves as the 0.8.0 fixes intended. Run them before and after a
+change that moves a prompt, a skill or a review tier, and compare.
 
 | Scenario | Command | Cost | Deterministic |
 |----------|---------|------|---------------|
 | 1. Static prompt footprint | `node scripts/footprint.mjs --ref <a> --ref <b>` | free | yes |
 | 2. Review precision and recall | `claude plugin eval` + `node scripts/eval-tiers.mjs` | a few dollars at list price for the full matrix | no |
+| 3–5. Pipeline replay and behaviour checks | `node scripts/bench-run.mjs` + `node scripts/bench-report.mjs` | a few million tokens for two refs | no |
 
 ## Scenario 1 — static prompt footprint per dispatch
 
@@ -125,3 +132,94 @@ way the pattern does not expect; read the reply in the HTML report before callin
 model's fault. Effort is not compared: the eval CLI has no effort flag, so every row ran at the
 CLI's default effort, whereas the workflow passes `high` to the first full review. Output tokens
 are not reported, because the eval result records none.
+
+## Scenarios 3–5 — pipeline replay on a fixture repository
+
+```bash
+# 1. once: a GitHub repository you own and do not care about
+gh repo create <you>/delivery-bench-scratch --private
+# 2. see what would run, without running it
+node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/delivery-bench-scratch --dry-run
+# 3. run it (expensive; see the cost note at the top), then report
+node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch
+node scripts/bench-report.mjs            # or --json
+```
+
+Options: `--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
+`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
+
+**What it runs.** For each ref and run, `bench-run.mjs` checks the ref out as a detached git
+worktree of this repository and uses it as the plugin (`claude --plugin-dir`, which takes
+precedence over an installed `delivery` plugin). It copies `bench/fixture-repo/` — a tiny
+Node module with a `CLAUDE.md`, a test suite and a CI workflow that runs `npm test` — to a
+temporary directory, and force-pushes it as the scratch repository's `main`. That is why
+`--reset-scratch` must be passed: it says you know the scratch repository is reset. Then:
+
+- **Scenario 3, `orchestrate`.** It files the three canned issues in `bench/issues/` and runs
+  one `claude -p "/delivery:orchestrate <n> --points <p>"` per issue:
+  - **small**: 1 point, no risk label. This exercises the sonnet implementer and the light
+    review.
+  - **medium**: 3 points. This exercises the full review on the session model.
+  - **trap**: 3 points, with a requirement planted outside the acceptance criteria that the
+    obvious implementation misses. It should draw a blocking finding, a fix and a re-review.
+- **Scenario 4, `plan-epic`.** It runs `claude -p "/delivery:plan-epic ./PLAN-TOPIC.md"` on
+  `bench/topics/plan-epic.md`, which files issues in the scratch repository.
+
+Every call runs with `--dangerously-skip-permissions`, because a non-interactive run cannot
+answer a permission prompt. Nothing confines it: the agents have an unrestricted shell and
+whatever `gh` credentials you are logged in with. It is *meant* to work in the temporary copy
+and write to the scratch repository, but that is the task, not a sandbox. Run it with a
+fine-grained `GH_TOKEN` that can reach only the scratch repository, and not on a machine
+holding secrets. Each call's JSON output and wall time are copied to
+`bench/results/<ref>/<scenario>/run-<n>/`. A rerun first deletes
+`bench/results/<ref>/<scenario>/`, so stale sessions are never read again; two `--ref` values
+that map to the same directory name (`HEAD~1`, `HEAD^1`) are refused. The session is read from
+`$CLAUDE_CONFIG_DIR` or `~/.claude`. So is the session Claude Code persisted under
+`~/.claude/projects/`: the workflow results and every subagent transcript. Issues and PRs from
+earlier runs stay in the scratch repository; delete and recreate it to start clean.
+
+**Scenario 5: what the report shows.** `bench-report.mjs` reads only the results tree. Per ref
+and scenario, averaged over runs, it reports:
+- total subagent tokens (input, cache writes, cache reads and output, from the transcripts)
+- output tokens per phase
+- wall time
+- list-price cost (`total_cost_usd`, summed over calls)
+- review findings by severity (from each result's `findingCounts`)
+- fix cycles
+- for plan-epic, whether an epic was filed: the scratch repository gained issues across the
+  call (the planner's own reply is free text and proves nothing)
+
+A run whose call exited non-zero, timed out, or whose session could not be found is reported
+with a `WARNING ... INCOMPLETE` line under the tables: its numbers are lower or vacuous, not
+better.
+
+Then come the behaviour checks, read from the transcripts. A check passes only if it passed in
+every run it applied to:
+
+| Check | What fails it |
+|-------|---------------|
+| #48 full review at `high` | a full review whose transcript records an effort other than `high` |
+| #49 fix makes no new branch or PR | a Fix-phase agent running `git checkout -b`, `git switch -c`, `git branch <name>` or `gh pr create` |
+| #51 no CLAUDE.md read | any agent's `Read` of `CLAUDE.md`, or a `cat`/`head`/`sed`… of it (it is already in context) |
+| #51 no ask-user | any agent calling `AskUserQuestion` |
+
+The last table is the highest turn count per agent type. That is the number the provisional
+`maxTurns` ceilings (#58) should be set from, at about twice the highest observed.
+
+**What it proves.** On this fixture, with these three issues and this topic, how many tokens
+each ref spent per delivered issue and per phase, what its reviews found, and whether the
+behaviours 0.8.0 fixed stayed fixed. The transcripts are kept with the results, so every
+number can be traced to the agent that produced it.
+
+**What it does not prove.** How the plugin performs on your repository. A small fixture has a
+small CLAUDE.md and small files, so it understates the per-dispatch cost a large project pays.
+At N=1, one run is one sample: the trap may or may not draw a blocking finding, and token
+counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
+reads fields (`findingCounts`, recorded effort) that may be missing from an older ref's
+results; where one is missing it says `n/a` rather than guessing. 0.7.1 already returns
+`findingCounts` and `reviewScope`, so its full reviews are checked by #48 and will show FAIL
+there if they did not run at `high`.
+
+The report reads results from `bench-run.mjs`'s own results tree and the persisted transcripts
+rather than through `cost-report.mjs`: it needs per-agent turns, effort and tool calls, which
+the result JSON does not carry.

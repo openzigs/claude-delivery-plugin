@@ -1,0 +1,54 @@
+{
+ "workflowName": "orchestrate",
+ "durationMs": 1000,
+ "result": {
+  "batches": [
+   {
+    "issues": [
+     8,
+     9
+    ],
+    "prs": [
+     {
+      "issue": 8,
+      "reviewScope": "full",
+      "findingCounts": {
+       "review": {
+        "critical": 0,
+        "high": 1,
+        "medium": 0,
+        "low": 0,
+        "nit": 0
+       },
+       "rereview": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "nit": 0
+       }
+      },
+      "fix": {}
+     },
+     {
+      "issue": 9,
+      "reviewScope": "light",
+      "findingCounts": {
+       "review": {
+        "critical": 0,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "nit": 1
+       },
+       "rereview": null
+      },
+      "fix": null
+     }
+    ]
+   }
+  ],
+  "reviewCompleted": true,
+  "merged": false
+ }
+}

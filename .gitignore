@@ -26,3 +26,6 @@ tmp/
 
 # claude plugin eval output (per-run results and reports)
 evals/results/
+
+# pipeline replay benchmark output (scripts/bench-run.mjs)
+bench/results/

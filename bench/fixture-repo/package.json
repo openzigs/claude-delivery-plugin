@@ -1,0 +1,10 @@
+{
+  "name": "bench-fixture-inventory",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A tiny inventory module the delivery plugin's pipeline benchmark works on.",
+  "scripts": {
+    "test": "node --test"
+  }
+}
