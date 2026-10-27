@@ -1,0 +1,1 @@
+{"type":"assistant","effort":"medium","message":{"id":"msg_0","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":1000,"output_tokens":10},"content":[{"type":"text","text":"x"}]}}

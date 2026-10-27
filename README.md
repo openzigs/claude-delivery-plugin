@@ -476,8 +476,11 @@ scripts/
   cost-report.mjs      # the report /delivery:cost-report runs
   eval-tiers.mjs       # tier table over `claude plugin eval` results
   footprint.mjs        # fixed prompt bytes per dispatch, for any git ref
+  bench-run.mjs        # opt-in, expensive pipeline replay of a plugin ref on bench/ (never in CI)
+  bench-report.mjs     # tokens, findings and behaviour checks from bench-run's results
   fixtures/            # synthetic inputs for the verifier
 evals/                 # review eval cases (seeded defects, clean controls), light scope; full/ holds the full-scope copies
+bench/                 # fixture repo, canned issues and a plan-epic topic for bench-run.mjs
 docs/                  # installation, usage, configuration, gotchas, customising, benchmarks, templates
 ```
 

@@ -1655,5 +1655,101 @@ console.log('\n== scripts/footprint.mjs ==')
   c(opt.status === 2 && /not a git ref/.test(opt.stderr), `a --ref that starts with "-" is refused, never passed to git (exit ${opt.status})`)
 }
 
+// The pipeline-replay benchmark (#86): opt-in and never wired into CI. bench-report.mjs is
+// checked against a synthetic results tree in which one ref shows every behaviour the 0.8.0
+// fixes removed and the other none; bench-run.mjs only in --dry-run, which executes nothing.
+console.log('\n== bench/ and scripts/bench-*.mjs ==')
+{
+  const c = (cond, msg) => (cond ? ok(`bench: ${msg}`) : bad(`bench: ${msg}`))
+  const RUN = join(ROOT, 'scripts/bench-run.mjs'), REP = join(ROOT, 'scripts/bench-report.mjs')
+  for (const f of [RUN, REP]) {
+    const src = readFileSync(f, 'utf8')
+    const specs = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
+    c(specs.length > 0 && specs.every((x) => x.startsWith('node:')), `${basename(f)} imports only node: builtins`)
+  }
+  c(!/\b(writeFile|appendFile|mkdir|rm|unlink|rename|cpSync|spawn|exec)\w*\s*\(/.test(readFileSync(REP, 'utf8')), 'bench-report.mjs writes nothing and runs nothing')
+  const ci = readdirSync(join(ROOT, '.github/workflows')).map((f) => readFileSync(join(ROOT, '.github/workflows', f), 'utf8')).join('\n')
+  c(!/bench-(run|report)/.test(ci), 'the benchmark is not wired into CI')
+  c(/^bench\/results\/$/m.test(readFileSync(join(ROOT, '.gitignore'), 'utf8')), 'bench results (bench/results/) are gitignored')
+  const doc = readFileSync(join(ROOT, 'docs/benchmarks.md'), 'utf8')
+  c(/million tokens/.test(doc.split('\n').slice(0, 12).join('\n')) && /bench-run\.mjs/.test(doc) && /--reset-scratch/.test(doc),
+    'docs/benchmarks.md states the cost of a full run at the top and how to run it')
+
+  // The fixture project and the canned issues.
+  const FX = join(ROOT, 'bench/fixture-repo')
+  const pkg = JSON.parse(readFileSync(join(FX, 'package.json'), 'utf8'))
+  const t = spawnSync(process.execPath, ['--test'], { cwd: FX, encoding: 'utf8' })
+  c(pkg.scripts?.test === 'node --test' && t.status === 0 && existsSync(join(FX, '.github/workflows/ci.yml')) && existsSync(join(FX, 'CLAUDE.md')),
+    `the fixture repo has a CLAUDE.md, a CI-shaped npm test, and its suite passes (exit ${t.status})`)
+  try {
+    const run = await import(RUN)
+    const issues = Object.fromEntries(run.ISSUES.map((i) => [i.name, run.parseIssue(readFileSync(join(ROOT, 'bench/issues', `${i.name}.md`), 'utf8'))]))
+    c(run.ISSUES.every((i) => issues[i.name].points === i.points && new RegExp(`^\\*\\*Story Points\\*\\*: ${i.points}$`, 'm').test(issues[i.name].body)),
+      'each canned issue\'s Story Points line matches the --points hint it is run with (small 1, medium 3, trap 3)')
+    c(Object.values(issues).every((i) => i.labels.length && !i.labels.some((l) => /secur|auth|migrat|breaking|payment|billing|privacy|infra|data-loss/i.test(l))),
+      'no canned issue carries a risk label, so the small one is eligible for the light review')
+    c(/delete the key/.test(issues.trap.body) && /## Notes/.test(issues.trap.body), 'the trap issue plants its requirement outside the acceptance criteria')
+    c(existsSync(join(ROOT, 'bench/topics/plan-epic.md')), 'the plan-epic topic file is committed')
+    const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
+    c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
+      'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
+  } catch (e) { c(false, `bench-run.mjs import threw — ${e.message}`) }
+  // `no.such.owner` cannot be a GitHub account (logins have no dots), and git may not prompt:
+  // if a guard below ever broke, the run it let through would fail at its first push.
+  const cli = (...a) => spawnSync(process.execPath, [RUN, ...a], { encoding: 'utf8', cwd: ROOT, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+  const before = existsSync(join(ROOT, 'bench/results'))
+  const dry = cli('--ref', '6567d82', '--ref', 'HEAD', '--repo', 'no.such.owner/scratch', '--dry-run')
+  const lines = dry.stdout.split('\n').filter((l) => /^\s+claude -p /.test(l))
+  c(dry.status === 0 && /DRY RUN — nothing will be executed/.test(dry.stdout) && lines.length === 8
+    && lines.filter((l) => /\/delivery:orchestrate <#small> --points 1"/.test(l)).length === 2
+    && lines.filter((l) => /\/delivery:plan-epic/.test(l)).length === 2 && lines.every((l) => /--plugin-dir/.test(l))
+    && existsSync(join(ROOT, 'bench/results')) === before,
+  `--dry-run prints 8 calls for two refs (3 orchestrate + 1 plan-epic each) and runs nothing (exit ${dry.status})`)
+  c(cli('--ref', 'HEAD', '--dry-run').status === 2, 'without --repo it refuses to start')
+  const noAck = cli('--ref', 'HEAD', '--repo', 'no.such.owner/scratch')
+  c(noAck.status === 2 && /--reset-scratch is required/.test(noAck.stderr), 'a real run without --reset-scratch refuses to start')
+  c(cli('--ref', '--output=/dev/null', '--repo', 'a/b', '--dry-run').status === 2, 'a --ref starting with "-" is refused')
+
+  // bench-report on the synthetic tree.
+  try {
+    const rep = await import(REP)
+    const groups = rep.aggregate(rep.collect(join(ROOT, 'scripts/fixtures/bench')))
+    const g = (ref, sc) => groups.find((x) => x.ref === ref && x.scenario === sc)
+    const old = g('old', 'orchestrate'), neu = g('new', 'orchestrate'), epic = g('new', 'plan-epic')
+    c(old && Object.values(old.checks).every((v) => v === false), `every behaviour check fails on the ref that shows each behaviour (${JSON.stringify(old?.checks)})`)
+    c(neu && Object.values(neu.checks).every((v) => v === true), `every behaviour check passes on the ref that shows none (${JSON.stringify(neu?.checks)})`)
+    c(epic && epic.checks.fullReviewHigh === null && epic.checks.fixNoNewBranchOrPr === null && epic.epicFiled === true,
+      'plan-epic has no review or fix to check, and records whether the epic was filed')
+    c(neu.runs === 2 && neu.tokens === 12265 && neu.wallMs === 45000 && neu.costUsd === 1.5 && neu.fixCycles === 1
+      && JSON.stringify(neu.findings) === '{"critical":0,"high":1.5,"medium":0,"low":0,"nit":1}'
+      && JSON.stringify(neu.outputByPhase) === '{"Implement":400,"Review":185,"Fix":20,"Re-review":5}',
+    `numbers are means over runs: tokens, wall time, cost, findings by severity, output per phase (got ${JSON.stringify({ t: neu.tokens, w: neu.wallMs, c: neu.costUsd, f: neu.findings })})`)
+    const runs = rep.collect(join(ROOT, 'scripts/fixtures/bench'))
+    const mixed = rep.aggregate([runs.find((x) => x.ref === 'old'), ...runs.filter((x) => x.ref === 'new' && x.scenario === 'orchestrate')].map((x) => ({ ...x, ref: 'm' })))
+    c(mixed.length === 1 && mixed[0].runs === 3 && Object.values(mixed[0].checks).every((v) => v === false),
+      'a check that failed in any one run fails for the ref, however many runs passed')
+    c(neu.maxTurns['delivery:code-review'] === 4 && old.maxTurns['delivery:code-issue'] === 3, 'the highest turn count per agent type is reported')
+    const out = rep.render(groups)
+    c(/^old\s+orchestrate\s+FAIL\s+FAIL\s+FAIL\s+FAIL$/m.test(out) && /^new\s+plan-epic\s+n\/a\s+n\/a\s+PASS\s+PASS$/m.test(out)
+      && /^new\s+orchestrate\s+2\s+12,265\s+Implement 400, Review 185, Fix 20, Re-review 5\s+0\.8 min\s+\$1\.50\s+0\/1\.5\/0\/0\/1\s+1\s+-$/m.test(out),
+    'the report prints the comparison table and the behaviour checks')
+    // Each detector, against what it must and must not match.
+    const B = (command) => ({ name: 'Bash', input: { command } })
+    c(['git checkout -b x', 'git switch -c x', 'git branch topic', 'gh pr create --fill', 'cd w && git checkout -B y'].every((x) => rep.createsBranchOrPr(B(x)))
+      && !['gh pr checkout 5 --detach', 'git push origin HEAD:feature/x', 'git checkout --detach', 'git branch -D old', 'git branch --show-current'].some((x) => rep.createsBranchOrPr(B(x))),
+    'the new-branch-or-PR detector matches creation and not checkout, push or deletion')
+    c(rep.readsClaudeMd({ name: 'Read', input: { file_path: '/w/CLAUDE.md' } }) && rep.readsClaudeMd(B('cat CLAUDE.md'))
+      && !rep.readsClaudeMd({ name: 'Read', input: { file_path: '/w/docs/templates/CLAUDE.md.bak' } }) && !rep.readsClaudeMd(B('git add CLAUDE.md')),
+    'the CLAUDE.md-read detector matches a Read or a cat of it and not other commands that name it')
+    const tr = rep.readTranscript([
+      JSON.stringify({ type: 'assistant', effort: 'high', message: { id: 'm1', content: [{ type: 'text' }] } }),
+      JSON.stringify({ type: 'assistant', effort: 'high', message: { id: 'm1', usage: { input_tokens: 1, output_tokens: 7 }, content: [{ type: 'tool_use', name: 'Bash', input: {} }] } }),
+      JSON.stringify({ type: 'user', message: { content: 'x' } }), 'not json',
+    ].join('\n'))
+    c(tr.turns === 1 && tr.tokens.output === 7 && tr.tools.length === 1 && JSON.stringify(tr.efforts) === '["high"]',
+      'streamed blocks of one message count as one turn, and its usage once')
+  } catch (e) { c(false, `bench-report.mjs threw — ${e.message}`) }
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)
 process.exit(fails === 0 ? 0 : 1)

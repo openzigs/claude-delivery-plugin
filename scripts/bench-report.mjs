@@ -1,0 +1,241 @@
+#!/usr/bin/env node
+//
+// Report the pipeline-replay benchmark that scripts/bench-run.mjs recorded. Stdlib only,
+// read-only: it reads the results tree and prints; it runs nothing.
+//
+//   node scripts/bench-report.mjs [bench/results] [--json]
+//
+// Layout read (written by bench-run.mjs):
+//   <results>/<ref>/<scenario>/run-<n>/meta.json            ref, sha, scenario, wall time per call
+//   <results>/<ref>/<scenario>/run-<n>/claude-<k>.json       `claude -p --output-format json` output
+//   <results>/<ref>/<scenario>/run-<n>/sessions/<id>/workflows/wf_*.json            workflow results
+//   <results>/<ref>/<scenario>/run-<n>/sessions/<id>/subagents/workflows/wf_*/agent-*.jsonl (+ .meta.json)
+//
+// Per ref and scenario, averaged over runs: total subagent tokens (input + cache writes + cache
+// reads + output), output tokens per phase, wall time, list-price cost, review findings by
+// severity, fix cycles. Then the behaviour checks, read from the transcripts, which pass only
+// if every run passes:
+//   #48  every FULL review ran at `high` effort
+//   #49  the fix phase created no branch and no PR
+//   #51  no agent read CLAUDE.md (it is already in context), and none asked the user a question
+// and the highest turn count per agent type, which is what the provisional maxTurns (#58)
+// should be set from.
+import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'node:fs'
+import { join, resolve, dirname, basename } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
+const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit']
+const ORCH_PHASES = ['Implement', 'Review', 'Fix', 'Re-review']
+const EPIC_PHASES = ['Research', 'Plan']
+
+const isDir = (p) => existsSync(p) && statSync(p).isDirectory()
+const ls = (p) => (isDir(p) ? readdirSync(p).sort() : [])
+const readJson = (p) => { try { return JSON.parse(readFileSync(p, 'utf8')) } catch { return null } }
+const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+// What an agent did, from its transcript. Streamed blocks of one assistant message share its
+// id, so turns and usage are counted per distinct message id (the last usage seen wins).
+export function readTranscript(text) {
+  const usage = new Map()
+  const efforts = new Set()
+  const tools = []
+  for (const line of text.split('\n')) {
+    if (!line.trim()) continue
+    let d
+    try { d = JSON.parse(line) } catch { continue }
+    if (d?.type !== 'assistant' || !d.message) continue
+    const id = d.message.id || `line-${usage.size}`
+    if (d.message.usage) usage.set(id, d.message.usage)
+    else if (!usage.has(id)) usage.set(id, null)
+    if (typeof d.effort === 'string') efforts.add(d.effort)
+    for (const c of Array.isArray(d.message.content) ? d.message.content : []) {
+      if (c?.type === 'tool_use') tools.push({ name: c.name, input: c.input || {} })
+    }
+  }
+  const tokens = { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }
+  for (const u of usage.values()) {
+    if (!u) continue
+    tokens.input += num(u.input_tokens)
+    tokens.cacheWrite += num(u.cache_creation_input_tokens)
+    tokens.cacheRead += num(u.cache_read_input_tokens)
+    tokens.output += num(u.output_tokens)
+  }
+  return { turns: usage.size, tokens, efforts: [...efforts].sort(), tools }
+}
+
+const bashOf = (t) => (t.name === 'Bash' && typeof t.input.command === 'string' ? t.input.command : '')
+const CLAUDE_MD_READ = /(^|[\s/'"])CLAUDE\.md\b/
+const SHELL_READ = /\b(cat|head|tail|less|more|sed|awk|grep|bat)\b[^|;&\n]*\bCLAUDE\.md\b/
+export const readsClaudeMd = (t) =>
+  (t.name === 'Read' && typeof t.input.file_path === 'string' && /(^|\/)CLAUDE\.md$/.test(t.input.file_path))
+  || (t.name === 'Bash' && SHELL_READ.test(bashOf(t)))
+  || ((t.name === 'Grep' || t.name === 'Glob') && CLAUDE_MD_READ.test(String(t.input.path || t.input.pattern || '')))
+export const asksUser = (t) => t.name === 'AskUserQuestion'
+const NEW_BRANCH = /\bgit\s+(?:checkout\s+(?:-b|-B)|switch\s+(?:-c|-C|--create)|branch\s+(?!-)[\w./-]+|worktree\s+add\s+(?:\S+\s+)*?-b)\b|\bgh\s+pr\s+create\b/
+export const createsBranchOrPr = (t) => NEW_BRANCH.test(bashOf(t))
+
+function agentsOf(sessionDir) {
+  const out = []
+  const root = join(sessionDir, 'subagents', 'workflows')
+  for (const wf of ls(root)) {
+    for (const f of ls(join(root, wf)).filter((x) => /^agent-.*\.jsonl$/.test(x))) {
+      const meta = readJson(join(root, wf, f.replace(/\.jsonl$/, '.meta.json'))) || {}
+      const t = readTranscript(readFileSync(join(root, wf, f), 'utf8'))
+      out.push({ agentType: meta.agentType || 'unknown', label: meta.description || '', phase: meta.workflowPhase || 'unknown', model: meta.model || null, ...t })
+    }
+  }
+  return out
+}
+
+function resultsOf(sessionDir) {
+  return ls(join(sessionDir, 'workflows')).filter((f) => /^wf_.*\.json$/.test(f))
+    .map((f) => readJson(join(sessionDir, 'workflows', f))).filter(Boolean)
+    .map((w) => {
+      let r = w.result
+      if (typeof r === 'string') { try { r = JSON.parse(r) } catch { r = null } }
+      return { workflowName: w.workflowName || null, durationMs: num(w.durationMs) || null, result: r }
+    })
+}
+
+export function analyseRun(runDir) {
+  const meta = readJson(join(runDir, 'meta.json')) || {}
+  const sessions = ls(join(runDir, 'sessions')).map((s) => join(runDir, 'sessions', s))
+  const agents = sessions.flatMap(agentsOf)
+  const results = sessions.flatMap(resultsOf)
+  const claude = ls(runDir).filter((f) => /^claude-.*\.json$/.test(f)).map((f) => readJson(join(runDir, f))).filter(Boolean)
+  const tokens = agents.reduce((n, a) => n + a.tokens.input + a.tokens.cacheWrite + a.tokens.cacheRead + a.tokens.output, 0)
+  const outputByPhase = {}
+  for (const a of agents) outputByPhase[a.phase] = (outputByPhase[a.phase] || 0) + a.tokens.output
+  // Findings come from the workflow results (review + re-review), when they record them.
+  const prs = results.flatMap((r) => (Array.isArray(r.result?.batches) ? r.result.batches : []).flatMap((b) => (Array.isArray(b?.prs) ? b.prs : [])))
+  let findings = null
+  for (const p of prs) {
+    for (const k of ['review', 'rereview']) {
+      const c = p?.findingCounts?.[k]
+      if (!c || typeof c !== 'object') continue
+      findings ||= Object.fromEntries(SEVERITIES.map((s) => [s, 0]))
+      for (const s of SEVERITIES) findings[s] += num(c[s])
+    }
+  }
+  const fullIssues = new Set(prs.filter((p) => p?.reviewScope === 'full').map((p) => String(p.issue)))
+  const fullReviews = agents.filter((a) => a.phase === 'Review' && fullIssues.has(a.label.replace(/^review:/, '')))
+  const fixAgents = agents.filter((a) => a.phase === 'Fix')
+  const count = (pred, list = agents) => list.reduce((n, a) => n + a.tools.filter(pred).length, 0)
+  const turnsByType = {}
+  for (const a of agents) turnsByType[a.agentType] = Math.max(turnsByType[a.agentType] || 0, a.turns)
+  return {
+    ref: meta.ref ?? basename(dirname(dirname(runDir))),
+    sha: meta.sha ?? null,
+    scenario: meta.scenario ?? basename(dirname(runDir)),
+    run: basename(runDir),
+    wallMs: Array.isArray(meta.calls) ? meta.calls.reduce((n, c) => n + num(c.wallMs), 0) : null,
+    costUsd: claude.length ? claude.reduce((n, c) => n + num(c.total_cost_usd), 0) : null,
+    agents: agents.length,
+    tokens,
+    outputByPhase,
+    findings,
+    fixCycles: fixAgents.length,
+    epicFiled: meta.scenario === 'plan-epic' ? results.some((r) => r.workflowName === 'plan-epic' && r.result && r.result.plan) : null,
+    checks: {
+      fullReviewHigh: fullReviews.length ? fullReviews.every((a) => a.efforts.length > 0 && a.efforts.every((e) => e === 'high')) : null,
+      fixNoNewBranchOrPr: fixAgents.length ? count(createsBranchOrPr, fixAgents) === 0 : null,
+      noClaudeMdRead: agents.length ? count(readsClaudeMd) === 0 : null,
+      noAskUser: agents.length ? count(asksUser) === 0 : null,
+    },
+    counts: { claudeMdReads: count(readsClaudeMd), askUser: count(asksUser), fixBranchOrPr: count(createsBranchOrPr, fixAgents), fullReviews: fullReviews.length },
+    turnsByType,
+  }
+}
+
+export function collect(dir) {
+  const runs = []
+  for (const ref of ls(dir)) {
+    for (const scenario of ls(join(dir, ref))) {
+      for (const run of ls(join(dir, ref, scenario)).filter((r) => /^run-\d+$/.test(r))) runs.push(analyseRun(join(dir, ref, scenario, run)))
+    }
+  }
+  return runs
+}
+
+// Mean over runs for numbers; a check passes only if it passed in every run where it applied.
+export function aggregate(runs) {
+  const groups = new Map()
+  for (const r of runs) {
+    const k = `${r.ref}\u0000${r.scenario}`
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(r)
+  }
+  const mean = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null)
+  return [...groups.values()].map((rs) => {
+    const nums = (f) => rs.map(f).filter((v) => typeof v === 'number')
+    const ORDER = [...ORCH_PHASES, ...EPIC_PHASES]
+    const rank = (p) => (ORDER.includes(p) ? ORDER.indexOf(p) : ORDER.length)
+    const phases = [...new Set(rs.flatMap((r) => Object.keys(r.outputByPhase)))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+    const checks = {}
+    for (const c of Object.keys(rs[0].checks)) {
+      const vals = rs.map((r) => r.checks[c]).filter((v) => v !== null)
+      checks[c] = vals.length ? vals.every(Boolean) : null
+    }
+    const turns = {}
+    for (const r of rs) for (const [t, n] of Object.entries(r.turnsByType)) turns[t] = Math.max(turns[t] || 0, n)
+    const withFindings = rs.filter((r) => r.findings)
+    return {
+      ref: rs[0].ref, sha: rs[0].sha, scenario: rs[0].scenario, runs: rs.length,
+      tokens: mean(nums((r) => r.tokens)),
+      outputByPhase: Object.fromEntries(phases.map((p) => [p, mean(rs.map((r) => r.outputByPhase[p] || 0))])),
+      wallMs: mean(nums((r) => r.wallMs)),
+      costUsd: mean(nums((r) => r.costUsd)),
+      findings: withFindings.length ? Object.fromEntries(SEVERITIES.map((s) => [s, mean(withFindings.map((r) => r.findings[s]))])) : null,
+      fixCycles: mean(rs.map((r) => r.fixCycles)),
+      epicFiled: rs[0].scenario === 'plan-epic' ? rs.every((r) => r.epicFiled) : null,
+      checks,
+      maxTurns: turns,
+    }
+  })
+}
+
+const fmt = (n, d = 0) => (n == null ? 'n/a' : Number(n.toFixed(d)).toLocaleString('en-US'))
+const ck = (v) => (v === null || v === undefined ? 'n/a' : v ? 'PASS' : 'FAIL')
+function table(head, rows) {
+  const w = head.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)))
+  return [head, ...rows].map((r) => r.map((c, i) => String(c).padEnd(w[i])).join('  ').trimEnd()).join('\n')
+}
+
+export function render(groups) {
+  if (!groups.length) return 'no benchmark runs found'
+  const out = []
+  const phasesFor = (g) => (g.scenario === 'plan-epic' ? EPIC_PHASES : ORCH_PHASES)
+  out.push(table(['ref', 'scenario', 'runs', 'subagent tokens', 'output by phase', 'wall time', 'costUsd', 'findings c/h/m/l/n', 'fix cycles', 'epic filed'],
+    groups.map((g) => [g.ref, g.scenario, g.runs, fmt(g.tokens),
+      phasesFor(g).map((p) => `${p} ${fmt(g.outputByPhase[p] ?? 0)}`).join(', '),
+      g.wallMs == null ? 'n/a' : `${fmt(g.wallMs / 60000, 1)} min`, g.costUsd == null ? 'n/a' : `$${g.costUsd.toFixed(2)}`,
+      g.findings ? SEVERITIES.map((s) => fmt(g.findings[s], 1)).join('/') : 'n/a', fmt(g.fixCycles, 1),
+      g.epicFiled === null ? '-' : g.epicFiled ? 'yes' : 'NO'])))
+  out.push('')
+  out.push(table(['ref', 'scenario', '#48 full review at high', '#49 fix: no new branch/PR', '#51 no CLAUDE.md read', '#51 no ask-user'],
+    groups.map((g) => [g.ref, g.scenario, ck(g.checks.fullReviewHigh), ck(g.checks.fixNoNewBranchOrPr), ck(g.checks.noClaudeMdRead), ck(g.checks.noAskUser)])))
+  out.push('')
+  out.push('Highest turn count per agent type (#58: set maxTurns at about twice the highest observed)')
+  const types = [...new Set(groups.flatMap((g) => Object.keys(g.maxTurns)))].sort()
+  out.push(table(['ref', 'scenario', ...types], groups.map((g) => [g.ref, g.scenario, ...types.map((t) => g.maxTurns[t] ?? '-')])))
+  out.push('')
+  out.push('Numbers are means over runs; a check passes only if it passed in every run it applied to (n/a: nothing to check).')
+  return out.join('\n')
+}
+
+const isMain = process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
+if (isMain) {
+  const args = process.argv.slice(2)
+  const asJson = args.includes('--json')
+  const rest = args.filter((a) => a !== '--json')
+  if (rest.some((a) => a.startsWith('-')) || rest.length > 1) {
+    console.error('usage: node scripts/bench-report.mjs [results-dir] [--json]')
+    process.exit(2)
+  }
+  const dir = resolve(rest[0] || join(ROOT, 'bench', 'results'))
+  if (!isDir(dir)) { console.error(`no results directory at ${dir}; run scripts/bench-run.mjs first`); process.exit(2) }
+  const runs = collect(dir)
+  const groups = aggregate(runs)
+  console.log(asJson ? JSON.stringify({ runs, groups }, null, 2) : render(groups))
+}
