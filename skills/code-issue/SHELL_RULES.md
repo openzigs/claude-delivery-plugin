@@ -31,10 +31,7 @@ inline under `## Shell Execution Rules` and points here.
 4. **No interactive sessions** — never launch a REPL (`node`, `python`, `psql`, `sqlite3` without
    `-c`). Use the one-shot flag form.
 
-5. **Prefer a non-interactive execution subagent** when you need to run a command and read its
-   output to make a decision, where one is available. It always exits.
-
-6. **CI quality gate** — run the project's gate as one batched call per toolchain. A repository with
+5. **CI quality gate** — run the project's gate as one batched call per toolchain. A repository with
    two toolchains is two calls; run only the side(s) your change touches, and both if it touches
    both. `CLAUDE.md` names the real commands. The table below is the *shape*, not the commands:
 
@@ -52,7 +49,7 @@ inline under `## Shell Execution Rules` and points here.
    a bare tool name can resolve to a system install that lacks the project's dependencies and fails
    in a way that reads like the tool is missing.
 
-7. **Keep command output small.** Every line a command prints stays in your context and is re-sent
+6. **Keep command output small.** Every line a command prints stays in your context and is re-sent
    on every later turn, so one noisy test run can cost more than the rest of the task put
    together. Run tests with a quiet or summary reporter (`--reporter=dot`, `-q`, `--silent`,
    `--quiet`), and pipe long output through `tail -n 60` or a `grep` for failures — then re-run only

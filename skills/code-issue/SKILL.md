@@ -54,9 +54,10 @@ create `feature/issue-{number}-{short-description}` unless the project names its
 and push it with `git push -u origin {branch}`. Always name the remote explicitly: a repository
 may carry remotes that are not push targets.
 
-**If the checkout may be shared with another session, do not `git checkout` in it** — a branch
-switch under another agent moves its HEAD mid-task. Create your own worktree (`git worktree add`)
-and remove it when you are done.
+**Under a workflow, the workflow decides isolation.** It runs a concurrent batch in a worktree it
+created for you, so do not create another. **When not under a workflow** and the checkout may be
+shared with another session, do not `git checkout` in it — a branch switch under another agent
+moves its HEAD mid-task. Create your own worktree (`git worktree add`) and remove it when done.
 
 ### Step 3: Implementation
 
@@ -116,8 +117,9 @@ If the issue involves UI changes:
   create Playwright e2e tests?"* When dispatched, do not ask: decide from the issue's acceptance
   criteria and say in the PR body whether e2e tests are recommended.
 - If they are wanted, hand off to the **`delivery:e2e-test`** agent, or run `/delivery:e2e-test`
-- For live visual verification of a running app, hand off to **`delivery:ui-vision`**. Those two are
-  the only agents that use Playwright MCP tools; this skill does not.
+- For live visual verification of a running app, say in the PR body that a **`delivery:ui-vision`**
+  walkthrough is recommended. This agent cannot dispatch it; `delivery:e2e-test` and
+  `delivery:ui-vision` are the only agents that use Playwright MCP tools.
 
 ### Step 4: Security Scan
 
