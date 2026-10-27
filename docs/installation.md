@@ -193,7 +193,7 @@ Component inventory
 
 **A count lower than 9 or 7 is the diagnostic.** A missing agent is almost always a
 frontmatter problem — see
-[precedence-and-gotchas](precedence-and-gotchas.md#an-agents-name-must-match-its-filename).
+[precedence-and-gotchas](precedence-and-gotchas.md#3-an-agent-is-named-by-its-name-not-its-filename).
 
 ### 3. Did the workflows register?
 

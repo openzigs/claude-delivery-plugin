@@ -412,9 +412,13 @@ Every item here fails **silently**. Read
 
 - A project's `.claude/agents/<name>.md` **silently overrides** a plugin agent of the same name.
 - **Workflows cannot be symlinked.** Copy them.
-- An agent's `name:` must be lowercase-with-hyphens and **match its filename stem**.
+- An agent is named by its `name:`, not its file: a mismatch **silently renames** it, so every
+  reference written from the filename points at nothing. Keep them equal.
 - An orchestrator whose `tools:` omits `Agent` narrates a pipeline and **delegates nothing**.
 - Agent references must be namespaced: `Agent(delivery:code-issue)`.
+- An explicit `model: inherit` **overrides** `CLAUDE_CODE_SUBAGENT_MODEL`; a model blocked by
+  `availableModels` is **substituted**, not refused; plugin agents **ignore** `hooks`,
+  `mcpServers` and `permissionMode`.
 
 To fork an agent, override one for a single project or add your own workflow, see
 [`docs/customising.md`](docs/customising.md).
