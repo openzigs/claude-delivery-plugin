@@ -62,8 +62,14 @@ const REVIEW_SCHEMA = {
           location: { type: 'string', description: 'file:line, or "general"' },
           summary: { type: 'string', description: 'The finding and why it matters' },
           blocking: { type: 'boolean' },
+          confidence: {
+            type: 'integer',
+            minimum: 0,
+            maximum: 100,
+            description: 'How sure you are, after checking, that the finding is real and this PR introduced it (0-100)',
+          },
         },
-        required: ['severity', 'location', 'summary', 'blocking'],
+        required: ['severity', 'location', 'summary', 'blocking', 'confidence'],
       },
     },
     verification: {
@@ -170,6 +176,23 @@ const formatFix = (f) => {
 // Treat the review as blocking if EITHER the top-level flag or any single
 // finding says so. Disagreement between the two should err towards a fix pass.
 const isBlocking = (r) => Boolean(r.blocking || r.findings.some((f) => f.blocking))
+
+// Confidence filter. A false-positive finding costs a fix pass and a re-review, so a
+// NON-blocking finding the reviewer itself rates below this confidence is dropped before the
+// fix agent sees it, and counted in the result as suppressedFindings rather than discarded
+// silently. A blocking finding is never dropped, whatever its confidence: suppressing a real
+// blocker costs more than any fix cycle it saves. A finding with no confidence is kept, since
+// unknown is not low.
+// The value 50 is a PROVISIONAL default, not an eval result: the light-review eval suite's
+// results record no per-finding confidence, so there is no measured threshold yet. Raise it, or
+// extend it to blocking findings, only with eval data that supports it.
+const CONFIDENCE_THRESHOLD = 50
+const lowConfidence = (f) => !f?.blocking && Number.isFinite(f?.confidence) && f.confidence < CONFIDENCE_THRESHOLD
+const dropLowConfidence = (r) => {
+  if (!r || !Array.isArray(r.findings)) return [r, 0]
+  const kept = r.findings.filter((f) => !lowConfidence(f))
+  return [{ ...r, findings: kept }, r.findings.length - kept.length]
+}
 
 // Finding counts by severity, read from the structured output rather than the prose,
 // so the effect of a cheaper re-review on what it finds can be measured.
@@ -506,7 +529,7 @@ async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
     `#${tag}: ${batch ? 'batch review' : route.light ? 'light review' : 'full review'} on ${modelName(route.model)} ` +
       `(${route.why}).`,
   )
-  const [reviewed, reviewTokens] = batch ? [batch.review, null] : await metered(() => agent(
+  let [reviewed, reviewTokens] = batch ? [batch.review, null] : await metered(() => agent(
     `Review pull request #${it.pr}, opened for ${subject}, following the code-review ` +
       `procedure (preloaded).\n\n` +
       (route.light ? `${LIGHT_SCOPE}\n\n` : '') +
@@ -526,6 +549,13 @@ async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
     },
   ))
   if (!batch) outputTokens.review = reviewTokens
+  let suppressedFindings = 0
+  if (reviewed) {
+    let n
+    ;[reviewed, n] = dropLowConfidence(reviewed)
+    suppressedFindings += n
+    if (n) log(`#${tag}: ${n} non-blocking finding(s) below confidence ${CONFIDENCE_THRESHOLD} suppressed.`)
+  }
   const effortNames = () => Object.fromEntries(Object.entries(effort).map(([k, e]) => [k, effortName(e)]))
   const base = {
     issue: it.issue,
@@ -624,6 +654,11 @@ async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
         ...iso,
       },
     ))
+    if (rereviewed) {
+      let n
+      ;[rereviewed, n] = dropLowConfidence(rereviewed)
+      suppressedFindings += n
+    }
   } else {
     log(`#${tag}: no blocking findings — skipping fix and re-review.`)
   }
@@ -640,6 +675,7 @@ async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
     effort: effortNames(),
     outputTokens,
     findingCounts: { review: countBySeverity(reviewed), rereview: countBySeverity(rereviewed) },
+    suppressedFindings,
   }
 }
 

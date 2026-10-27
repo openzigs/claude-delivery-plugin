@@ -147,6 +147,9 @@ function orchestrateRows(data) {
           findings,
           reviewDidNotReturn: notReturned && key === 'review',
           inBatch: key === 'review' && p?.reviewedInBatch === true,
+          // Low-confidence non-blocking findings the workflow dropped, recorded per PR (review +
+          // re-review) and shown once, on the PR's Review row.
+          suppressed: key === 'review' && isNum(p?.suppressedFindings) ? p.suppressedFindings : NA,
         })
       }
     }
@@ -210,8 +213,10 @@ export function summarise(results, opts = {}) {
   const findingCounts = { review: zero(), rereview: zero() }
   const reviewsCounted = { review: 0, rereview: 0 }
   let reviewsNotReturned = 0
+  let suppressedFindings = null
   for (const run of runs) {
     for (const r of run.rows) {
+      if (isNum(r.suppressed)) suppressedFindings = (suppressedFindings ?? 0) + r.suppressed
       if (r.reviewDidNotReturn) { reviewsNotReturned++; continue }
       const key = r.phase === 'Review' ? 'review' : r.phase === 'Re-review' ? 'rereview' : null
       if (!key || !isCounts(r.findings)) continue
@@ -245,6 +250,7 @@ export function summarise(results, opts = {}) {
       findingCounts,
       reviewsCounted,
       reviewsNotReturned,
+      suppressedFindings,
     },
     trend: { order, untimed: runs.filter((r) => !isNum(r.startTime)).length, includeConcurrent, excluded, phases },
     ...(since !== null || last !== null ? { filter: { found } } : {}),
@@ -282,7 +288,9 @@ export function render(report, opts = {}) {
       out.push(table(['batch', 'issue', 'pr', 'phase', 'outputTokens', 'effort', 'model', 'findings', 'note'],
         run.rows.map((r) => [String(r.batch), ref(r.issue, '#'), ref(r.pr, '#'), r.phase, fmtNum(r.outputTokens),
           fmtCell(r.effort), fmtCell(r.model), fmtCell(r.findings),
-          [r.reviewDidNotReturn ? 'REVIEW DID NOT RETURN' : '', r.inBatch ? 'in batch review' : ''].filter(Boolean).join('; ')])))
+          [r.reviewDidNotReturn ? 'REVIEW DID NOT RETURN' : '', isNum(r.suppressed) && r.suppressed ? `${r.suppressed} suppressed` : '',
+            r.inBatch ? 'in batch review' : '']
+            .filter(Boolean).join('; ')])))
     } else {
       out.push(table(['phase', 'outputTokens', 'effort', 'model', 'findings'],
         run.rows.map((r) => [r.phase, fmtNum(r.outputTokens), fmtCell(r.effort), fmtCell(r.model), fmtCell(r.findings)])))
@@ -305,7 +313,9 @@ export function render(report, opts = {}) {
     (t.concurrentRuns ? `; includes ${plural(t.concurrentRuns, 'concurrent run')}, whose deltas overlap` : ''))
   out.push(`  findings review   ${fmtCounts(t.findingCounts.review)} over ${plural(t.reviewsCounted.review, 'review')}` +
     (t.reviewsNotReturned ? ` (${plural(t.reviewsNotReturned, 'review')} did not return, not counted)` : ''))
-  out.push(`  findings rereview ${fmtCounts(t.findingCounts.rereview)} over ${plural(t.reviewsCounted.rereview, 're-review')}`, '')
+  out.push(`  findings rereview ${fmtCounts(t.findingCounts.rereview)} over ${plural(t.reviewsCounted.rereview, 're-review')}`)
+  if (t.suppressedFindings !== null) out.push(`  suppressed        ${plural(t.suppressedFindings, 'low-confidence non-blocking finding')}`)
+  out.push('')
 
   const tr = report.trend
   out.push(`Per-phase trend (${tr.order === 'start time' ? 'by start time' : 'in input order'}` +

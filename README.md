@@ -295,6 +295,7 @@ entry records:
 | `effort` | The effort passed to each phase that ran (`high` or `medium`; runs from before 0.8.0 show `inherit`) |
 | `outputTokens` | Output tokens of `review`, and of `fix` / `rereview` when they ran; `null` when the runtime gave no budget |
 | `findingCounts` | `{ review, rereview }`, each a count per severity: `critical`, `high`, `medium`, `low`, `nit` |
+| `suppressedFindings` | Non-blocking findings dropped for a confidence below 50; blocking findings are never dropped |
 | `stillBlocking` | After a re-review: `true` if blocking findings remain, `false` if not; `null` when no re-review ran |
 
 Also present: `reviewScope` (`light` or `full`) with its `reviewRouting` reason, the review,
@@ -482,9 +483,10 @@ scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
   cost-report.mjs      # the report /delivery:cost-report runs
   eval-tiers.mjs       # tier table over `claude plugin eval` results
+  footprint.mjs        # fixed prompt bytes per dispatch, for any git ref
   fixtures/            # synthetic inputs for the verifier
-evals/                 # light-review eval cases (seeded defects + a control) for A/B-ing model tiers
-docs/                  # installation, usage, configuration, gotchas, customising, templates
+evals/                 # review eval cases (seeded defects, clean controls), light scope; full/ holds the full-scope copies
+docs/                  # installation, usage, configuration, gotchas, customising, benchmarks, templates
 ```
 
 ## Contributing
