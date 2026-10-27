@@ -367,6 +367,26 @@ Then state:
 For a full implement → review → fix → re-review loop, hand the work to **`delivery:orchestrator`**
 rather than driving the phases by hand.
 
+## Fix mode
+
+A dispatch that says **Fix mode** is fixing review findings on a PR that already exists. It is
+not a new implementation, so most of the workflow above does not apply:
+
+- **Work on the existing PR branch.** The prompt names it (`headRefName`). Check it out and push
+  to it. If you are in an isolated worktree, use `gh pr checkout <number> --detach` and push with
+  `git push origin HEAD:<headRefName>`.
+- **Create no new branch and no new PR.** Do not edit the PR's title or body beyond noting the
+  fixes.
+- **Address only the listed findings.** Every blocking finding gets a fix and a test you saw fail
+  without it (Step 3a's mutation rule applies). Each non-blocking finding is either taken or
+  declined with a reason. Do not widen the change.
+- **Run the project's test and lint gates** (Step 3a and 3c) on what you changed, and wait for CI
+  as Step 5 describes.
+- **Skip** Step 1's issue planning, Step 2 (branch setup), the full Step 4 security scan (review
+  only the lines you changed), Step 5.5 (living documents), Step 6's PR creation and Step 7.
+- **Report** in the structured fix output the dispatch asks for: each finding changed, with its
+  test; each declined, with the reason; and whether the gates passed and the fixes are pushed.
+
 ## Example Invocation
 
 ```
