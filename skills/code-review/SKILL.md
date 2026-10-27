@@ -1,26 +1,14 @@
 ---
 name: code-review
-description: Comprehensive code review workflow for pull requests in any repository. Validates the PR against its linked requirements, then reviews design, security (OWASP Top 10), performance, test quality and documentation, and publishes a structured GitHub review with inline comments via the gh CLI. Optionally hands off for fixes.
+description: Comprehensive code review workflow for pull requests in any repository. Validates the PR against its linked requirements, then reviews design, security (OWASP Top 10), performance, test quality and documentation, and publishes a structured GitHub review with inline comments via the gh CLI.
 argument-hint: "[PR number] — e.g. 'review PR #47' or 'review PR #47 against epic #12'"
 ---
 
 # Code Review
 
-## Purpose
-
-This skill drives the **Code Review** agent through a structured, multi-dimensional review of a pull request. It goes beyond surface-level linting — it validates the PR against the original requirements, checks for OWASP security issues, evaluates performance characteristics, verifies that the tests could actually fail, and assesses code design. The review is published as a formal GitHub PR review with inline comments.
-
-It assumes nothing about the repository's language, layout or toolchain. Everything project-specific is read from the project, not guessed.
-
-Inspired by [Google's Engineering Practices](https://google.github.io/eng-practices/review/reviewer/looking-for.html) and the [OWASP Code Review Guide](https://owasp.org/www-project-code-review-guide/).
-
-## When to Use
-
-- A PR is ready for review and the user asks "review PR #N"
-- The user wants a pre-merge quality gate before approving
-- After an implementation agent creates a PR and before the user merges
-- The user asks to "check if PR #N meets the requirements for issue #M"
-- As a handoff target from the Code Issue agent's delivery step
+Review one pull request against its linked requirements, security, correctness, tests and — on a
+full review — design, performance and documentation, then publish a structured GitHub review with
+inline comments. Nothing here assumes the repository's language, layout or toolchain.
 
 ## Step 0: The project's rules come first
 
@@ -34,49 +22,15 @@ If the project states no commands or conventions, infer them from the repository
 manifests, `Makefile`, the CI workflow — and **say in the review what you inferred**. A finding
 that rests on an inferred standard must be labelled as such, not asserted as a rule.
 
-## Agent and tools
+## Tools
 
-Execute with the **`delivery:code-review`** agent — the same reach as `delivery:code-issue`, but a
-reviewer's posture: read-heavy, comment-focused, and it does not modify code unless asked.
-
-GitHub work is done with the **`gh` CLI**. It is always available and authenticates independently.
-**MCP servers are optional and may be absent — never make a step depend on one.** Every command in
-Step 9 is `gh`, deliberately.
+GitHub work is done with the **`gh` CLI**; MCP servers are optional and may be absent — never make
+a step depend on one. Every command in Step 9 is `gh`, deliberately.
 
 The reviewer has **no web tools**: everything a review needs is in the repository, the PR and
 GitHub. For a dependency the PR added or bumped, read its advisories with the ecosystem's audit
 command (`npm audit --json`, `pip-audit`, `cargo audit`, `govulncheck`) or GitHub's database
 (`gh api "/advisories?affects=<package>@<version>"`), not a web search.
-
-## Workflow Overview
-
-```
-┌───────────────────────────────────────────────────────┐
-│  0. RULES — The project's rules come first            │
-├───────────────────────────────────────────────────────┤
-│  1. ORIENT — Read PR, linked issues, and project docs │
-├───────────────────────────────────────────────────────┤
-│  2. REQUIREMENTS — Validate completeness against spec │
-├───────────────────────────────────────────────────────┤
-│  3. DESIGN — Evaluate architecture and design choices │
-├───────────────────────────────────────────────────────┤
-│  4. SECURITY — OWASP Top 10 + dependency advisories   │
-├───────────────────────────────────────────────────────┤
-│  5. QUALITY — Code quality, complexity, naming, style │
-├───────────────────────────────────────────────────────┤
-│  6. PERFORMANCE — Identify bottlenecks and anti-pats  │
-├───────────────────────────────────────────────────────┤
-│  7. TESTS — Coverage, can-they-fail, edge cases       │
-├───────────────────────────────────────────────────────┤
-│  8. DOCUMENTATION — Inline docs, README, changelog    │
-├───────────────────────────────────────────────────────┤
-│  9. PUBLISH — Submit the GitHub review                │
-├───────────────────────────────────────────────────────┤
-│  10. HANDOFF — Offer to fix the findings              │
-└───────────────────────────────────────────────────────┘
-```
-
-## Detailed Steps
 
 ### Step 1: Orient
 
@@ -101,8 +55,9 @@ turns**: every separate fetch is a full model turn over a growing context.
    parallel tool call:
    - the linked issue(s)/epic, `gh issue view {N} --json title,body,labels,comments`: acceptance
      criteria, definition of done, sub-issue scope and boundaries, labels;
-   - **every changed file, in full**, not just the diff hunks. Context matters, and the defects
-     that matter most are usually visible only in the part the diff did not touch;
+   - on a full review, **every changed file, in full**, not just the diff hunks. Context matters,
+     and the defects that matter most are usually visible only in the part the diff did not touch.
+     (A light review reads the diff plus only the changed files it needs, as its scope note says);
    - the project's own documentation that bears on the change: architecture notes, specs, user
      guides. Wherever they live in this repository; do not assume a `docs/` directory exists.
 3. **Read CI from the batch.** Failing CI is blocking. A job stuck in `queued` is not the PR's
@@ -125,24 +80,11 @@ turns**: every separate fetch is a full model turn over a growing context.
 
 **Output:** a list of requirements with pass/fail status. Flag every gap.
 
-### Step 3: Design Review
+### Step 3: Design Review (full review only)
 
-**Goal:** Evaluate high-level architecture and design decisions.
-
-Based on [Google's design review criteria](https://google.github.io/eng-practices/review/reviewer/looking-for.html#design):
-
-- **Does this change belong here?** Or should it live in a library, another module, or configuration?
-- **Integration:** does it fit the existing architecture, or fight it?
-- **Abstractions:** are the right ones used? Too many layers? Too few?
-- **Coupling:** does this introduce tight coupling between modules?
-- **Single Responsibility:** does each new class/function/module do one thing?
-- **Over-engineering:** unnecessary generalization or premature abstraction?
-- **Patterns:** does it follow existing patterns, or introduce new ones without justification?
-- **Consumers:** does anything actually *use* what this adds? An endpoint with no caller and a store
-  field nothing renders from are both untested-by-construction. Building an endpoint's first
-  consumer is when its defects surface, so an unconsumed one should be called out as unproven.
-
-Verify library APIs against real documentation rather than memory when the usage looks unusual.
+On a full review, read `${CLAUDE_PLUGIN_ROOT}/skills/code-review/FULL_REVIEW_STEPS.md` now and run its Step 3 (design), Step 6 (performance) and
+Step 8 (documentation) at their places in this sequence. A light review skips all three and says
+so in its "Scope of this review" section.
 
 ### Step 4: Security Review (OWASP Focus)
 
@@ -201,18 +143,9 @@ scale is `critical | high | medium | low | nit`, the same words as the review's 
 lint run is not evidence about this change. A new finding in a file the PR touched is the author's;
 the rest is not this PR's job.
 
-### Step 6: Performance Review
+### Step 6: Performance Review (full review only)
 
-| Pattern | What to Look For |
-|---------|------------------|
-| **N+1 queries** | Database calls inside loops |
-| **Unbounded queries** | Full-table reads without a limit, missing pagination |
-| **Memory leaks** | Event listeners not cleaned up, unclosed resources, growing caches |
-| **Bundle size** | Large dependencies pulled in for a small feature |
-| **Unnecessary re-renders** | Component memoization missing where it demonstrably matters |
-| **Blocking operations** | Synchronous I/O on a request or UI thread, long computations without workers |
-| **Missing caching** | Repeated expensive computation without memoization |
-| **Regex backtracking** | Patterns that can degrade catastrophically (ReDoS) |
+In `${CLAUDE_PLUGIN_ROOT}/skills/code-review/FULL_REVIEW_STEPS.md`.
 
 ### Step 7: Test Review
 
@@ -244,18 +177,9 @@ Two more shapes that survive a green build:
 - **A guard that cannot fire.** A validation, permission check or assertion placed where the
   condition it tests is already impossible.
 
-### Step 8: Documentation Review
+### Step 8: Documentation Review (full review only)
 
-| Check | Question |
-|-------|----------|
-| **Inline docs** | Are public APIs documented? Are non-obvious algorithms explained? |
-| **README** | If behavior changed, is the README updated? |
-| **Changelog** | Does the PR follow the project's changelog convention, as `CLAUDE.md` states it? If the project uses per-PR fragments, the PR should add a fragment rather than edit the shared CHANGELOG — a PR editing the shared file directly should be asked to move the entry. A missing entry on a user-facing change is **blocking**, but *presence is a judgment call that nothing automates*, which is why it is asked here: a tests-only or internals-only PR may legitimately carry none, and should say so. |
-| **Architecture docs** | If new modules, services, endpoints or schemas were introduced, are the project's architecture docs updated — diagram nodes, project structure, endpoint contracts, tech stack table? Flag as blocking when architectural change ships undocumented. |
-| **User docs** | If user-facing features, config options or CLI commands changed, is the user documentation updated? |
-| **Agent-instruction file** | Did the PR add to the root `CLAUDE.md` / `AGENTS.md`? That file is injected into every agent session and re-sent every turn, so it is an index: detail, gotchas, measurements and rationale belong in a topic file, with at most a one-line pointer in the root. Flag additions of detail to the root file, "last updated" stamps, and anything that pushes it over a stated size budget (**blocking** if a budget check would fail). |
-| **Migration** | If there are schema or API changes, is there a migration — with a working rollback — and a guide where consumers need one? |
-| **Removed code** | If features were removed, was their documentation removed too? |
+In `${CLAUDE_PLUGIN_ROOT}/skills/code-review/FULL_REVIEW_STEPS.md`.
 
 ### Step 9: Publish the Review
 
@@ -294,11 +218,10 @@ jq '{event, body_len: (.body|length), comments: (.comments|length), first: (.com
 gh api -X POST "repos/$REPO/pulls/{PR_NUMBER}/reviews" --input "$PAYLOAD"
 ```
 
-A reused scratch file such as `findings.json` left over from an earlier session publishes a
-*previous PR's* inline comments against this PR — and the symptom is not an obvious one: it
-surfaces as repeated `422 Path could not be resolved`, once per comment, which reads like a
-line-number bug in your own payload. The tell is that the error count matches the *stale* file's
-comment count, not yours. A fresh `mktemp -d` path plus the `jq` read-back rules it out.
+A reused scratch file from an earlier session publishes a *previous PR's* inline comments against
+this PR. It surfaces as repeated `422 Path could not be resolved`, one per *stale* comment, which
+reads like a line-number bug in your own payload. A fresh `mktemp -d` path plus the `jq` read-back
+rules it out.
 
 **3. Publish `"event": "COMMENT"` with a `Recommendation:` line — always.**
 
@@ -372,19 +295,6 @@ as named in CLAUDE.md. Did not exercise the running application.
 gh pr review {PR_NUMBER} --comment --body-file "${PAYLOAD%.json}.md"
 ```
 
-### Step 10: Handoff (Optional)
-
-If a workflow or another agent dispatched you, skip this step: your report or structured output
-is the handoff.
-
-After publishing, offer:
-
-> **Review published. Would you like me to hand the findings to `delivery:code-issue` for fixes?**
-
-If yes, run `/delivery:resolve-pr-comments` with the same PR number to work through the comments
-just created. For a full implement → review → fix → re-review loop, `delivery:orchestrator` owns the
-sequencing.
-
 ## Review Comment Style Guide
 
 Follow [Google's guidance on review comments](https://google.github.io/eng-practices/review/reviewer/comments.html):
@@ -411,79 +321,15 @@ Follow [Google's guidance on review comments](https://google.github.io/eng-pract
 | Cannot determine coverage | Run the project's coverage command; if it will not run, say so rather than implying a number |
 | No project documentation exists | Skip the documentation cross-reference and note it in the review |
 
-## Example Invocations
-
-```
-/delivery:code-review 47
-```
-
-```
-Review PR #23 against the requirements in epic #12
-```
-
-```
-Do a security-focused review of PR #55
-```
-
-```
-Check if PR #31 is ready to merge
-```
-
 ## Shell Execution Rules
 
-**Critical — follow these to avoid orphaned terminals and hung sessions:**
+Digest; the full rules, shared with code-issue, are in
+`${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SHELL_RULES.md`.
 
-1. **Batch commands** — chain multiple commands in a SINGLE shell call using `&&`, so a failure stops
-   the chain. The one exception is the read-only orient batch in Step 1, joined with `;` on purpose
-   so a missing file does not abort the rest. Never open a new shell invocation per command.
-   ```bash
-   # CORRECT — one call
-   npm run lint && npm run test && npm run build
-
-   # WRONG — three separate calls
-   npm run lint
-   npm run test
-   npm run build
-   ```
-
-2. **No watch mode** — never run watch or interactive commands. Always force one-shot execution
-   (`--run`, `--watch=false`, `CI=1`), and check what the project's script actually does before
-   trusting it to exit.
-
-3. **No background processes** — never use `&`, `nohup` or `disown`. Dev servers and hot-reloading
-   application servers are long-running and never belong in a review gate.
-
-4. **No interactive sessions** — never launch a REPL (`node`, `python`, `psql`, `sqlite3` without
-   `-c`). Use the one-shot flag form.
-
-5. **Prefer a non-interactive execution subagent** when you need to run a command and read its
-   output to make a decision, where one is available. It always exits.
-
-6. **Verifying the PR's own gate** — when you re-run the project's checks to test the author's
-   claims, run them as one batched call per toolchain, and only for the side(s) the PR touches.
-   `CLAUDE.md` names the real commands; the table below is the *shape*, not the commands:
-
-   | Ecosystem | Batched gate (example only) |
-   |---|---|
-   | Node | `npm run lint && npm run test && npm run build` |
-   | Python | `python -m pytest -q && python -m ruff check <changed files> && python -m mypy <changed files>` |
-   | Go | `go vet ./... && go test ./... && go build ./...` |
-   | Rust | `cargo clippy -- -D warnings && cargo test && cargo build` |
-
-   One detail decides whether a gate is authoritative: a build script may also *be* the typecheck,
-   in which case a PR that skipped the build skipped type checking entirely.
-
-7. **Keep command output small.** Every line a command prints stays in your context and is re-sent
-   on every later turn, so one noisy test run can cost more than the rest of the review put
-   together. Run tests with a quiet or summary reporter (`--reporter=dot`, `-q`, `--silent`,
-   `--quiet`), and pipe long output through `tail -n 60` or a `grep` for failures — then re-run only
-   the failing test, verbosely, if you need its detail. Never print a whole build log, coverage
-   table or lockfile diff to read one line of it.
-
-## Prerequisites
-
-- GitHub access to read PRs and create reviews
-- GitHub CLI (`gh`) installed and authenticated — this is the review interface, not a fallback
-- `jq` available, for reading back the review payload before POSTing
-- The project's test runner installed, to verify coverage claims rather than repeat them
-- `CLAUDE.md` / `AGENTS.md` read, or the conventions inferred and labelled as inferred
+1. **Batch** dependent commands in one shell call joined with `&&`; the read-only orient batch in
+   Step 1 is joined with `;` on purpose.
+2. **No watch mode** — use the run-once form (`--run`, `--watch=false`, `CI=1`).
+3. **No background processes** (`&`, `nohup`, `disown`) and **no interactive sessions** (REPLs).
+4. **Verify the PR's own gate** as one batched call per toolchain, only for the side(s) the PR
+   touches; a build script may also be the typecheck.
+5. **Keep output small** — quiet reporters, `tail -n 60` or a `grep` for failures.

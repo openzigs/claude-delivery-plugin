@@ -200,7 +200,21 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'code-review Orient batch fetches PR, files, diff, checks and .claude/delivery.md')
   checkSkill(!batch.includes('&&'), 'code-review Orient batch is joined with ; so one failure does not abort it')
   checkSkill(!/--json files/.test(review), 'code-review has no separate --json files fetch')
-  checkSkill(/single response/i.test(orient) && /in full/i.test(orient), 'code-review Orient reads every changed file in full, in parallel in a single response')
+  // #53 deliberately narrows the LIGHT review's reads (checked on LIGHT_SCOPE below); a full
+  // review still reads every changed file in full.
+  checkSkill(/single response/i.test(orient) && /on a full review, \*\*every changed file, in full\*\*/i.test(orient),
+    'code-review Orient: a full review reads every changed file in full, in parallel in a single response')
+  {
+    const FULL = 'skills/code-review/FULL_REVIEW_STEPS.md'
+    const full = existsSync(join(ROOT, FULL)) ? readFileSync(join(ROOT, FULL), 'utf8') : ''
+    checkSkill(['### Step 3: Design Review', '### Step 6: Performance Review', '### Step 8: Documentation Review'].every((h) => full.includes(h))
+      && /On a full review, read `\$\{CLAUDE_PLUGIN_ROOT\}\/skills\/code-review\/FULL_REVIEW_STEPS\.md` now/.test(sectionOf(review, '### Step 3: Design Review')),
+      `code-review Step 3 tells a full review to read ${FULL}, which exists and holds Steps 3, 6 and 8`)
+    const words = review.split(/\s+/).filter(Boolean).length
+    checkSkill(words <= 2900, `skills/code-review/SKILL.md is at most 2,900 words, 70% of 0.7.1's 4,143 (has ${words})`)
+    checkSkill(sectionOf(review, '## Shell Execution Rules').includes('${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SHELL_RULES.md'),
+      'code-review keeps a Shell Execution Rules digest that points at the shared skills/code-issue/SHELL_RULES.md')
+  }
   checkSkill(!/If\s+`\.claude\/delivery\.md` exists, read it/.test(sectionOf(review, '## Step 0')),
     'code-review Step 0 folds the .claude/delivery.md read into the Orient batch')
   checkSkill(/echo '=== AGENTS'; \\\n\s*\[ -f CLAUDE\.md \] \|\| cat AGENTS\.md/.test(batch),
@@ -668,6 +682,14 @@ for (const file of workflowFiles) {
     check((rv?.model ?? null) === want && light === (want === 'sonnet'), name,
       `${name} — got model=${rv?.model ?? null} light=${light}`)
     check(r.logs.some((l) => l.startsWith('#412:') && l.includes('review on')), `the review routing is logged (${name})`)
+  }
+  {
+    const lightP = (await run({ facts: { 412: SMALL_ISSUE } })).dispatches.find((d) => d.label === 'review:412')?.prompt || ''
+    const fullP = (await run({ facts: { 412: MEDIUM_ISSUE } })).dispatches.find((d) => d.label === 'review:412')?.prompt || ''
+    check(/read the diff plus only the changed files you need/.test(lightP) && /not every changed file in full/.test(lightP)
+      && !/read the diff plus only the changed files/.test(fullP),
+      'the light review is told to read the diff plus only the files it needs; the full review is not narrowed')
+    check(/Skip Step 3 \(design\), Step 6 \(performance\) and Step 8/.test(lightP), 'the light review is still told to skip Steps 3, 6 and 8')
   }
 
   // --- the fix branch is decided by structured output
