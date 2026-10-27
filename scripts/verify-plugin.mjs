@@ -1066,6 +1066,46 @@ for (const file of workflowFiles) {
   check(JSON.stringify(pr0(r).findingCounts) === JSON.stringify({ review: { ...ZERO, nit: 1 }, rereview: null }),
     'with no re-review, its finding counts are null')
 
+  // --- finding confidence (#65): non-blocking findings below the threshold are dropped and
+  // counted; a blocking finding is never dropped, whatever its confidence.
+  {
+    const conf = r0 => r0.dispatches.find((d) => d.label === 'review:412')?.schema?.properties?.findings?.items
+    r = await run()
+    const it = conf(r)
+    check(it?.properties?.confidence?.type === 'integer' && it.properties.confidence.minimum === 0
+      && it.properties.confidence.maximum === 100 && it.required.includes('confidence'),
+    'every review finding carries a required integer confidence from 0 to 100')
+    const f = (summary, blocking, confidence) => ({ severity: blocking ? 'high' : 'nit', location: 'a.ts:1', summary, blocking, ...(confidence === undefined ? {} : { confidence }) })
+    r = await run({ review: (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW
+      : { ...CLEAN_REVIEW, blocking: false, findings: [f('SENTINEL-BLOCKER-AT-10', true, 10)] }) })
+    const fx = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+    check(r.phases.includes('Fix') && pr0(r).blockingFindings === true && fx.includes('[BLOCKING] high a.ts:1: SENTINEL-BLOCKER-AT-10')
+      && pr0(r).review.findings.length === 1 && pr0(r).suppressedFindings === 0,
+    'a blocking finding at confidence 10 is still reported, reaches the fix, and still blocks')
+    r = await run({ review: (o) => (o.label.startsWith('rereview:')
+      ? { ...CLEAN_REVIEW, findings: [f('SENTINEL-RR-LOW', false, 5), f('rr-kept', false, 90)] }
+      : { ...BLOCKING_REVIEW, findings: [f('real blocker', true, 95), f('SENTINEL-LOW-CONF', false, 20),
+        f('kept at threshold', false, 50), f('kept, no confidence', false)] }) })
+    const fx2 = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+    check(!fx2.includes('SENTINEL-LOW-CONF') && fx2.includes('kept at threshold') && fx2.includes('kept, no confidence')
+      && !JSON.stringify(pr0(r).review).includes('SENTINEL-LOW-CONF'),
+    'a non-blocking finding below the threshold is dropped; one at the threshold, or with no confidence, is kept')
+    check(pr0(r).suppressedFindings === 2 && !JSON.stringify(pr0(r).reReview).includes('SENTINEL-RR-LOW')
+      && pr0(r).findingCounts.review.nit === 2 && pr0(r).findingCounts.rereview.nit === 1,
+    'suppressed findings from the review and the re-review are counted in the result, not discarded silently',
+    `suppressedFindings = ${pr0(r).suppressedFindings}, findingCounts = ${JSON.stringify(pr0(r).findingCounts)}`)
+    check(r.logs.some((l) => /#412: 1 non-blocking finding\(s\) below confidence 50 suppressed/.test(l)), 'a suppression is logged with the threshold')
+    check(/const CONFIDENCE_THRESHOLD = 50\n/.test(src) && /PROVISIONAL default, not an eval result/.test(src),
+      'the threshold and its source (a provisional default, no eval data yet) are recorded in the code comment')
+    r = await run()
+    check(pr0(r).suppressedFindings === 0, 'a run with nothing below the threshold records suppressedFindings 0')
+    const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
+    const out = cr.render(cr.summarise([{ id: 'conf', data: r.result }].map((x) => ({ ...x, data: { ...x.data,
+      batches: [{ ...x.data.batches[0], prs: [{ ...x.data.batches[0].prs[0], suppressedFindings: 3 }] }] } }))))
+    check(/^1\s+#412\s+#1412\s+Review\s.*3 suppressed$/m.test(out) && /^  suppressed\s+3 low-confidence non-blocking findings$/m.test(out),
+      'the cost-report shows the suppressed count on the PR\'s Review row and in the totals', out.split('\n').slice(0, 6).join(' | '))
+  }
+
   // --- a partial fix entry names what is missing rather than printing undefined
   r = await run({ review: BLOCKING_REVIEW, fix: { changed: [{ finding: 'x' }], declined: [{}], gates: FIX_RESULT.gates } })
   check(rrPrompt(r).includes('- fixed: x — (not reported) (test: (not reported))')
