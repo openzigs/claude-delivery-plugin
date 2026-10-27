@@ -1,0 +1,146 @@
+@@@ base package.json
+{
+  "name": "notes-api",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0", "pg": "^8.11.0" }
+}
+@@@ base src/db.js
+const { Pool, types } = require('pg')
+
+// timestamptz columns come back as the ISO 8601 strings Postgres sends, not Date objects:
+// the API returns them unchanged, so parsing them here would only be undone on the way out.
+types.setTypeParser(1184, (value) => value)
+
+const pool = new Pool()
+exports.query = async (text, params = []) => (await pool.query(text, params)).rows
+@@@ base src/routes/notes.js
+const router = require('express').Router()
+const { query } = require('../db')
+const { slugify } = require('../lib/slug')
+
+// Every note belongs to one user; a user only ever sees or changes their own notes.
+router.get('/notes', async (req, res) => {
+  res.json(await query('SELECT * FROM notes WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]))
+})
+
+router.get('/notes/:id', async (req, res) => {
+  const [note] = await query('SELECT * FROM notes WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id])
+  if (!note) return res.status(404).end()
+  res.json(note)
+})
+
+router.post('/notes', async (req, res) => {
+  const { title, body, dueAt = null } = req.body
+  const [note] = await query(
+    'INSERT INTO notes (user_id, title, slug, body, due_at) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [req.user.id, title, slugify(title), body, dueAt],
+  )
+  res.status(201).json(note)
+})
+
+module.exports = router
+@@@ base src/lib/slug.js
+function slugify(title) {
+  const s = String(title).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+  return s.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note'
+}
+
+module.exports = { slugify }
+@@@ base test/slug.test.js
+const { slugify } = require('../src/lib/slug')
+
+test('slugify lower-cases and hyphenates', () => {
+  expect(slugify('Hello, World!')).toBe('hello-world')
+})
+@@@ head:1412 src/routes/notes.js
+const router = require('express').Router()
+const { query } = require('../db')
+const { slugify } = require('../lib/slug')
+
+// Every note belongs to one user; a user only ever sees or changes their own notes.
+router.get('/notes', async (req, res) => {
+  res.json(await query('SELECT * FROM notes WHERE user_id = $1 ORDER BY created_at DESC', [req.user.id]))
+})
+
+router.get('/notes/:id', async (req, res) => {
+  const [note] = await query('SELECT * FROM notes WHERE id = $1 AND user_id = $2', [req.params.id, req.user.id])
+  if (!note) return res.status(404).end()
+  res.json(note)
+})
+
+router.post('/notes', async (req, res) => {
+  const { title, body, dueAt = null } = req.body
+  const [note] = await query(
+    'INSERT INTO notes (user_id, title, slug, body, due_at) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [req.user.id, title, slugify(title), body, dueAt],
+  )
+  res.status(201).json(note)
+})
+
+router.delete('/notes/:id', async (req, res) => {
+  const rows = await query('DELETE FROM notes WHERE id = $1 RETURNING id', [req.params.id])
+  res.status(rows.length ? 204 : 404).end()
+})
+
+module.exports = router
+@@@ issue:412
+Delete a note
+
+DELETE /notes/:id deletes the signed-in user's note: 204 when deleted, 404 when there is no such note.
+@@@ pr:1412 412
+Adds DELETE /notes/:id. Closes #412.
+@@@ head:1413 src/lib/reminders.js
+// Notes whose due date has passed, for the hourly reminder email.
+function overdue(notes, now = new Date()) {
+  return notes.filter((note) => note.due_at !== null && note.due_at < now)
+}
+
+module.exports = { overdue }
+@@@ head:1413 test/reminders.test.js
+const { overdue } = require('../src/lib/reminders')
+
+test('picks the notes whose due date has passed', () => {
+  const now = new Date('2026-03-01T12:00:00Z')
+  const notes = [
+    { id: 1, due_at: new Date('2026-03-01T11:00:00Z') },
+    { id: 2, due_at: new Date('2026-03-01T13:00:00Z') },
+    { id: 3, due_at: null },
+  ]
+  expect(overdue(notes, now).map((n) => n.id)).toEqual([1])
+})
+@@@ issue:413
+Reminders for overdue notes
+
+The hourly reminder job needs the notes whose due date has passed.
+@@@ pr:1413 413
+Adds `overdue(notes, now)` for the reminder job, with a test. Closes #413.
+@@@ head:1415 src/lib/slug.js
+// URL slug for a note title: lower case, accents removed, runs of other characters collapsed
+// to one hyphen, at most 80 characters, and never empty.
+function slugify(title) {
+  const plain = String(title).toLowerCase().normalize('NFKD').replace(/[̀-ͯ]/g, '')
+  return plain.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'note'
+}
+
+module.exports = { slugify }
+@@@ head:1415 test/slug.test.js
+const { slugify } = require('../src/lib/slug')
+
+test('slugify lower-cases and hyphenates', () => {
+  expect(slugify('Hello, World!')).toBe('hello-world')
+})
+
+test('slugify strips accents', () => {
+  expect(slugify('Crème brûlée')).toBe('creme-brulee')
+})
+
+test('slugify never returns an empty slug', () => {
+  expect(slugify('!!!')).toBe('note')
+})
+@@@ issue:415
+Document and test slugify
+
+slugify has no comment and one test. Document what it does and cover accents and the empty case. No behaviour change.
+@@@ pr:1415 415
+Documents `slugify`, renames a local and adds two tests. No behaviour change. Closes #415.

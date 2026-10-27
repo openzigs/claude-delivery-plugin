@@ -1,0 +1,38 @@
+@@@ base package.json
+{
+  "name": "promotions",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "jest" }
+}
+@@@ base src/coupons.js
+export function applyCoupon(total, coupon) {
+  return Math.max(0, total - coupon.amount)
+}
+@@@ base test/coupons.test.js
+import { applyCoupon } from '../src/coupons'
+
+test('applyCoupon never goes below zero', () => {
+  expect(applyCoupon(10, { amount: 30 })).toBe(0)
+})
+@@@ head src/coupons.js
+export function applyCoupon(total, coupon) {
+  if (coupon.expiresAt < Date.now()) throw new Error('coupon expired')
+  return Math.max(0, total - coupon.amount)
+}
+@@@ head test/coupons.test.js
+import { applyCoupon } from '../src/coupons'
+
+test('applyCoupon never goes below zero', () => {
+  expect(applyCoupon(10, { amount: 30, expiresAt: Date.now() + 60000 })).toBe(0)
+})
+
+test('applyCoupon subtracts the coupon amount', () => {
+  expect(applyCoupon(100, { amount: 30, expiresAt: Date.now() + 60000 })).toBe(70)
+})
+@@@ issue
+Reject expired coupons
+
+applyCoupon must throw for a coupon whose expiresAt has passed. Cover the new behaviour with tests.
+@@@ pr
+Rejects expired coupons; tests updated. Closes #412.

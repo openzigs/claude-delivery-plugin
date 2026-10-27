@@ -1,0 +1,10 @@
+{"type":"system","subtype":"init"}
+{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m0","content":[]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s0","content":[{"type":"tool_use"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s0","content":[{"type":"text"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s1","content":[{"type":"tool_use"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s1","content":[{"type":"text"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s2","content":[{"type":"tool_use"}]}}
+{"type":"assistant","parent_tool_use_id":"toolu_1","message":{"id":"s2","content":[{"type":"text"}]}}
+{"type":"result","result":"Dispatched; waiting for the agent."}
+{"type":"result","result":"src/routes/users.js:16 — high — 90 — blocking — SQL injection: name is concatenated into the query\nsrc/routes/users.js:14 — low — 40 — non-blocking — the route has no pagination\nRecommendation: do not merge"}

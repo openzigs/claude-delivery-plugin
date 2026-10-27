@@ -1,0 +1,52 @@
+@@@ base package.json
+{
+  "name": "accounts",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0" }
+}
+@@@ base src/logger.js
+// Structured logger. Everything logged here is shipped to the shared log store.
+module.exports = require('pino')()
+@@@ base src/auth/login.js
+const express = require('express')
+const users = require('../users')
+const { sign } = require('./token')
+const logger = require('../logger')
+
+const router = express.Router()
+
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body
+  const user = await users.verify(email, password)
+  if (!user) return res.status(401).end()
+  res.json({ token: sign(user) })
+})
+
+module.exports = router
+@@@ head src/auth/login.js
+const express = require('express')
+const users = require('../users')
+const { sign } = require('./token')
+const logger = require('../logger')
+
+const router = express.Router()
+
+router.post('/login', async (req, res) => {
+  logger.info('login attempt', { body: req.body, ip: req.ip })
+  const { email, password } = req.body
+  const user = await users.verify(email, password)
+  if (!user) {
+    logger.warn('login failed', { email })
+    return res.status(401).end()
+  }
+  res.json({ token: sign(user) })
+})
+
+module.exports = router
+@@@ issue
+Log login attempts
+
+Security wants login attempts and failures in the logs to spot credential stuffing.
+@@@ pr
+Logs every login attempt and each failure. Closes #412.

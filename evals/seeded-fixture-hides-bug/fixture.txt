@@ -1,0 +1,60 @@
+@@@ base package.json
+{
+  "name": "accounts",
+  "private": true,
+  "scripts": { "test": "jest" }
+}
+@@@ base src/users/model.js
+// Emails are stored exactly as the user typed them at sign-up, so the same address can appear
+// as Ana@Example.com and ana@example.com. Compare emails only through normaliseEmail().
+function normaliseEmail(email) {
+  return email.trim().toLowerCase()
+}
+
+module.exports = { normaliseEmail }
+@@@ base test/fixtures/users.json
+[
+  { "id": 1, "email": "ana@example.com", "name": "Ana" },
+  { "id": 2, "email": "ben@example.com", "name": "Ben" },
+  { "id": 3, "email": "ana@example.com", "name": "Ana P." },
+  { "id": 4, "email": "chloe@example.com", "name": "Chloe" },
+  { "id": 5, "email": "ben@example.com", "name": "Benjamin" }
+]
+@@@ base test/model.test.js
+const { normaliseEmail } = require('../src/users/model')
+
+test('normaliseEmail trims and lower-cases', () => {
+  expect(normaliseEmail('  Ana@Example.com ')).toBe('ana@example.com')
+})
+@@@ head src/users/dedupe.js
+// Find duplicate sign-ups: two accounts with the same email are one person.
+// Returns [original, duplicate] pairs in sign-up order.
+function findDuplicates(users) {
+  const seen = new Map()
+  const pairs = []
+  for (const user of users) {
+    if (seen.has(user.email)) pairs.push([seen.get(user.email), user])
+    else seen.set(user.email, user)
+  }
+  return pairs
+}
+
+module.exports = { findDuplicates }
+@@@ head test/dedupe.test.js
+const users = require('./fixtures/users.json')
+const { findDuplicates } = require('../src/users/dedupe')
+
+test('finds every duplicate sign-up', () => {
+  const pairs = findDuplicates(users)
+  expect(pairs.map(([a, b]) => [a.id, b.id])).toEqual([[1, 3], [2, 5]])
+})
+
+test('finds no duplicates in a list of distinct users', () => {
+  expect(findDuplicates(users.filter((u) => u.id !== 3 && u.id !== 5))).toEqual([])
+})
+@@@ issue
+Find duplicate sign-ups
+
+Support merges accounts that belong to one person. Add findDuplicates(users), which pairs accounts that share an email, with tests.
+@@@ pr
+Adds `findDuplicates` with tests against the shared users fixture; both pass. Closes #412.

@@ -1,0 +1,42 @@
+@@@ base package.json
+{
+  "name": "storefront",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run", "build": "vite build" },
+  "dependencies": { "@stripe/stripe-js": "^4.0.0" }
+}
+@@@ base server/payments.js
+import Stripe from 'stripe'
+
+// The secret key never leaves the server.
+export const stripe = new Stripe(process.env.STRIPE_SECRET_KEY)
+@@@ base web/checkout.js
+import { loadStripe } from '@stripe/stripe-js'
+
+export async function startCheckout(clientSecret) {
+  const stripe = await loadStripe(window.__CONFIG__.stripePublishableKey)
+  return stripe.confirmPayment({ clientSecret, confirmParams: { return_url: `${location.origin}/thanks` } })
+}
+@@@ base web/config.js
+// Browser config is injected by the server at render time.
+export const config = window.__CONFIG__
+@@@ head web/checkout.js
+import { loadStripe } from '@stripe/stripe-js'
+import { STRIPE_PUBLISHABLE_KEY } from './stripe-key.js'
+
+export async function startCheckout(clientSecret) {
+  const stripe = await loadStripe(STRIPE_PUBLISHABLE_KEY)
+  return stripe.confirmPayment({ clientSecret, confirmParams: { return_url: `${location.origin}/thanks` } })
+}
+@@@ head web/stripe-key.js
+// Stripe's publishable key. It is public by design: it ships in the browser bundle and can only
+// create tokens and confirm payments that the server set up. The secret key stays on the
+// server, in STRIPE_SECRET_KEY.
+export const STRIPE_PUBLISHABLE_KEY = 'pk_live_51NzQxKLm2vT8bR4sWm0ZyA7cD3fG6hJkLp9QrS'
+@@@ issue
+Checkout breaks when the page config fails to load
+
+The static checkout page is sometimes served from the CDN without window.__CONFIG__, and startCheckout throws. Build the publishable key into the bundle instead.
+@@@ pr
+Builds Stripe's publishable key into the bundle so checkout no longer depends on the injected page config. The secret key is untouched and stays server-side. Closes #412.

@@ -1,0 +1,27 @@
+@@@ base package.json
+{
+  "name": "catalog-web",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run" }
+}
+@@@ base src/lib/paginate.js
+export function pageCount(total, pageSize) {
+  return Math.ceil(total / pageSize)
+}
+@@@ head src/lib/paginate.js
+// page is 1-based; returns at most pageSize items.
+export function paginate(items, page, pageSize) {
+  const start = (page - 1) * pageSize
+  return items.slice(start, start + pageSize - 1)
+}
+
+export function pageCount(total, pageSize) {
+  return Math.ceil(total / pageSize)
+}
+@@@ issue
+Paginate the product list
+
+Show products pageSize at a time, with page numbers starting at 1.
+@@@ pr
+Adds `paginate(items, page, pageSize)`. Closes #412.

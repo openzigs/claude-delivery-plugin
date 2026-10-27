@@ -31,14 +31,18 @@
 //      README's Skills section names every skill; the README names every /delivery:*
 //      command and every flag cost-report.mjs accepts; and docs/usage.md's "Reading the cost
 //      of a run" links "What the result measures" and repeats its caveats
-//  10. the review eval suite has 12+ seeded cases (every category), 3+ clean controls and a
-//      control, each grader proven able to fail on a canned reply, every case mirrored at FULL
-//      scope under evals/full/, and eval-tiers.mjs reports recall per category and false blocks
+//  10. the review eval suite has the 12 original and 10+ harder seeded cases (every category),
+//      clean controls with 2+ decoys, a control and the batch-review comparison; each case's
+//      prompt is generated from the workflow and dispatches delivery:code-review on a scaffolded
+//      fixture repository; each grader is proven able to fail on a canned reply, including one
+//      naming a different defect; every case is mirrored at FULL scope under evals/full/; and
+//      eval-run.mjs / eval-tiers.mjs run the matrix and report recall with its spread, invalid
+//      runs, the batch criterion and the confidence calibration
 //  11. scripts/footprint.mjs measures every dispatch, and the code-issue and code-review
 //      dispatches stay under their stored byte ceiling
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, realpathSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join, basename, dirname, sep } from 'node:path'
@@ -1625,13 +1629,16 @@ console.log('\n== cost-report --discover ==')
   rmSync(uconf, { recursive: true, force: true })
 }
 
-// The light-review eval suite (#59) and its tier table. The graders are checked here against
-// canned replies, so each is proven able to fail without spending a model call.
-console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
+// The review eval suite (#59, #92) and its tier table. The graders are checked here against
+// canned replies, so each is proven able to fail without spending a model call; the generated
+// prompts are checked against the workflow, so the eval cannot drift from what orchestrate sends.
+console.log('\n== evals/, scripts/eval-build.mjs, eval-scaffold.mjs, eval-run.mjs and eval-tiers.mjs ==')
 {
   const c = (cond, msg) => (cond ? ok(`evals: ${msg}`) : bad(`evals: ${msg}`))
   const EV = join(ROOT, 'evals')
-  const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true }).filter((e) => e.isDirectory() && !['results', 'full'].includes(e.name)).map((e) => e.name).sort() : []
+  const BATCH_NAMES = ['batch-three-prs', 'per-pr-three-prs']
+  const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true })
+    .filter((e) => e.isDirectory() && !['results', 'full'].includes(e.name) && !BATCH_NAMES.includes(e.name)).map((e) => e.name).sort() : []
   const graderIn = (dir, file) => {
     const gp = join(dir, 'graders', file)
     if (!existsSync(gp)) return null
@@ -1639,85 +1646,186 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
     return fm.type === 'regex' ? new RegExp(fm.pattern, fm.flags || '') : null
   }
   const grader = (name) => graderIn(join(EV, name), name.startsWith('clean-') ? 'no-false-block.md' : 'found-seeded-defect.md')
+  const tagsOf = (dir) => {
+    const y = existsSync(join(dir, 'case.yaml')) ? readFileSync(join(dir, 'case.yaml'), 'utf8') : ''
+    return (/^tags:\s*\[([^\]]*)\]/m.exec(y)?.[1] || '').split(',').map((t) => t.trim()).filter(Boolean)
+  }
+  // A finding line in the reply format the generated prompts ask for.
+  const L = (loc, sev, conf, text, blocking = true) => `${loc} — ${sev} — ${conf} — ${blocking ? 'blocking' : 'non-blocking'} — ${text}`
   const VERDICT = '\nRecommendation: do not merge'
   const HIT = {
-    'seeded-sql-injection': 'src/routes/users.js:16 — high — SQL injection: name is concatenated into the query; use a parameterized query',
-    'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — high — getInvoice ignores tenantId, so any tenant can read another tenant\'s invoice (IDOR)',
-    'seeded-auth-bypass': 'src/middleware/auth.js:6 — critical — a request with no token now calls next(), so unauthenticated requests pass',
-    'seeded-secret-logged': 'src/auth/login.js:7 — high — the login attempt logs req.body, so every password is written to the log in plain text',
-    'seeded-secret-committed': 'src/payments/client.js:5 — critical — a live payment API key is hardcoded and committed; rotate it and read it from the environment',
-    'seeded-off-by-one': 'src/lib/paginate.js:4 — high — slice() end is exclusive, so every page returns pageSize - 1 items (off by one)',
-    'seeded-unhandled-null': 'src/routes/users.js:15 — high — findById returns null for an unknown id, so user.email throws a TypeError and the route 500s instead of 404',
-    'seeded-race-shared-state': 'src/accounts/withdraw.js:5 — high — read-check-write with no transaction or lock: two concurrent withdrawals both pass the check (race, lost update)',
-    'seeded-n-plus-one': 'src/routes/orders.js:9 — medium — N+1: one order_items query per order inside the loop; load them with one whereIn query',
-    'seeded-test-cannot-fail': 'test/billing.test.js:11 — high — the test calls its own mock and asserts on the mock\'s return value; chargeOrder is never called, so it cannot fail',
-    'seeded-wrong-branch-coverage': 'test/coupons.test.js:8 — medium — the new expired-coupon branch is untested; both tests use a coupon that has not expired',
-    'seeded-unmet-requirement': 'src/routes/export.js:3 — high — the acceptance criterion for the from/to date range is not met: the query ignores both parameters',
+    'seeded-sql-injection': L('src/routes/users.js:16', 'high', 90, 'SQL injection: name is concatenated into the query; use a parameterized query'),
+    'seeded-missing-tenant-scope': L('src/invoices/repository.ts:9', 'high', 90, 'getInvoice ignores tenantId, so any tenant can read another tenant\'s invoice (IDOR)'),
+    'seeded-auth-bypass': L('src/middleware/auth.js:6', 'critical', 95, 'a request with no token now calls next(), so unauthenticated requests pass'),
+    'seeded-secret-logged': L('src/auth/login.js:7', 'high', 90, 'the login attempt logs req.body, so every password is written to the log in plain text'),
+    'seeded-secret-committed': L('src/payments/client.js:5', 'critical', 95, 'a live payment API key is hardcoded and committed; rotate it and read it from the environment'),
+    'seeded-off-by-one': L('src/lib/paginate.js:4', 'high', 90, 'slice() end is exclusive, so every page returns pageSize - 1 items (off by one)'),
+    'seeded-unhandled-null': L('src/routes/users.js:15', 'high', 90, 'findById returns null for an unknown id, so user.email throws a TypeError and the route 500s instead of 404'),
+    'seeded-race-shared-state': L('src/accounts/withdraw.js:5', 'high', 85, 'read-check-write with no transaction or lock: two concurrent withdrawals both pass the check (race, lost update)'),
+    'seeded-n-plus-one': L('src/routes/orders.js:9', 'medium', 80, 'N+1: one order_items query per order inside the loop; load them with one whereIn query'),
+    'seeded-test-cannot-fail': L('test/billing.test.js:11', 'high', 90, 'the test calls its own mock and asserts on the mock\'s return value; chargeOrder is never called, so it cannot fail'),
+    'seeded-wrong-branch-coverage': L('test/coupons.test.js:8', 'medium', 80, 'the new expired-coupon branch is untested; both tests use a coupon that has not expired'),
+    'seeded-unmet-requirement': L('src/routes/export.js:3', 'high', 90, 'the acceptance criterion for the from/to date range is not met: the query ignores both parameters'),
+    'seeded-invariant-violation': L('src/refunds/partial.js:6', 'high', 85, 'order.total * (percent / 100) is fractional for most totals, but src/ledger.js requires integer cents; round before posting'),
+    'seeded-authz-moved': L('src/routes/reports.js:14', 'critical', 90, 'the payouts export moved under /reports, which src/app.js mounts with requireAuth only: any signed-in seller can download every seller\'s bank details; it lost the admin role check'),
+    'seeded-race-lock-helper': L('src/inventory/reserve.js:9', 'high', 85, 'withLock returns fn() without awaiting it, so the lock is released as soon as the async callback returns a promise; the read-check-write is not serialised'),
+    'seeded-migration-breaks-query': L('migrations/002_orders_total_cents.sql:2', 'high', 90, 'renaming total to total_cents breaks src/reports/revenue.js, which still runs SUM(total) on orders'),
+    'seeded-fixture-hides-bug': L('src/users/dedupe.js:7', 'high', 80, 'findDuplicates compares raw emails, but emails are stored mixed-case and must go through normaliseEmail(); the fixture only has lower-case duplicates'),
+    'seeded-issue-only-requirement': L('src/routes/password-reset.js:11', 'high', 90, 'returning 404 for an unknown email lets anyone enumerate which emails have accounts; the issue requires an identical response either way'),
+    'seeded-quadratic-helper': L('src/reports/order-summaries.js:10', 'high', 85, 'findById is a linear list.find inside the map over every order: O(n*m), about 12 billion comparisons; keep indexById'),
+    'seeded-wrong-library-api': L('src/fx/rates.js:6', 'high', 95, 'ttl-memo maxAge is in milliseconds, so maxAge: 300 caches for 0.3 s, not five minutes'),
+    'seeded-large-diff': L('src/refunds/service.js:44', 'high', 85, 'approveRefund never checks refund.requested_by against the approver, so a finance user can approve their own refund; docs/refunds.md rule 6 (four-eyes) forbids it'),
   }
   for (const k of Object.keys(HIT)) HIT[k] += VERDICT
   // A reply that names the defect's words but dismisses it and approves must not score.
+  const D = (loc, text, sev = 'nit') => `${L(loc, sev, 30, text, false)}\nRecommendation: merge`
   const DISMISS = {
-    'seeded-sql-injection': 'src/routes/users.js:16 — nit — no SQL injection concern noted here, the query is concatenated but admin-only\nRecommendation: merge',
-    'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — nit — tenant handling is not a concern in this change\nRecommendation: merge',
-    'seeded-auth-bypass': 'src/middleware/auth.js:6 — nit — health checks with no token are now allowed through; fine for the load balancer\nRecommendation: merge',
-    'seeded-secret-logged': 'src/auth/login.js:7 — nit — the log line includes the request body; no password concern since logs are internal\nRecommendation: merge',
-    'seeded-secret-committed': 'src/payments/client.js:5 — nit — the API key is hardcoded as a temporary measure, acceptable for now\nRecommendation: merge',
-    'seeded-off-by-one': 'src/lib/paginate.js:4 — nit — slice end is exclusive, pageSize - 1 looks intentional\nRecommendation: merge',
-    'seeded-unhandled-null': 'src/routes/users.js:15 — nit — findById may return null but callers pass valid ids\nRecommendation: merge',
-    'seeded-race-shared-state': 'src/accounts/withdraw.js:5 — nit — no transaction, but a race is unlikely at this volume\nRecommendation: merge',
-    'seeded-n-plus-one': 'src/routes/orders.js:9 — nit — an N+1 query in a loop, fine for small accounts\nRecommendation: merge',
-    'seeded-test-cannot-fail': 'test/billing.test.js:11 — nit — the test uses a mock; consider naming it chargeMock\nRecommendation: merge',
-    'seeded-wrong-branch-coverage': 'test/coupons.test.js:8 — low — the expired branch has no test, a follow-up at most\nRecommendation: merge',
-    'seeded-unmet-requirement': 'src/routes/export.js:3 — nit — the date range is not applied, which can come later\nRecommendation: merge',
+    'seeded-sql-injection': D('src/routes/users.js:16', 'no SQL injection concern noted here, the query is concatenated but admin-only'),
+    'seeded-missing-tenant-scope': D('src/invoices/repository.ts:9', 'tenant handling is not a concern in this change'),
+    'seeded-auth-bypass': D('src/middleware/auth.js:6', 'health checks with no token are now allowed through; fine for the load balancer'),
+    'seeded-secret-logged': D('src/auth/login.js:7', 'the log line includes the request body; no password concern since logs are internal'),
+    'seeded-secret-committed': D('src/payments/client.js:5', 'the API key is hardcoded as a temporary measure, acceptable for now'),
+    'seeded-off-by-one': D('src/lib/paginate.js:4', 'slice end is exclusive, pageSize - 1 looks intentional'),
+    'seeded-unhandled-null': D('src/routes/users.js:15', 'findById may return null but callers pass valid ids'),
+    'seeded-race-shared-state': D('src/accounts/withdraw.js:5', 'no transaction, but a race is unlikely at this volume'),
+    'seeded-n-plus-one': D('src/routes/orders.js:9', 'an N+1 query in a loop, fine for small accounts'),
+    'seeded-test-cannot-fail': D('test/billing.test.js:11', 'the test uses a mock; consider naming it chargeMock'),
+    'seeded-wrong-branch-coverage': D('test/coupons.test.js:8', 'the expired branch has no test, a follow-up at most', 'low'),
+    'seeded-unmet-requirement': D('src/routes/export.js:3', 'the date range is not applied, which can come later'),
+    'seeded-invariant-violation': D('src/refunds/partial.js:6', 'the amount may be fractional, fine since the ledger stores numerics'),
+    'seeded-authz-moved': D('src/routes/reports.js:14', 'the export moved to reports; admin access looks unchanged'),
+    'seeded-race-lock-helper': D('src/inventory/reserve.js:9', 'withLock is not awaited but that is fine here'),
+    'seeded-migration-breaks-query': D('migrations/002_orders_total_cents.sql:2', 'the revenue report may need the new column name later'),
+    'seeded-fixture-hides-bug': D('src/users/dedupe.js:7', 'consider lower-casing emails some day', 'low'),
+    'seeded-issue-only-requirement': D('src/routes/password-reset.js:11', 'the 404 reveals whether an account exists, acceptable for now'),
+    'seeded-quadratic-helper': D('src/reports/order-summaries.js:10', 'findById is a linear scan in the loop; fine at this size', 'low'),
+    'seeded-wrong-library-api': D('src/fx/rates.js:6', 'maxAge is in milliseconds; 300 might be short'),
+    'seeded-large-diff': D('src/refunds/service.js:44', 'approveRefund could also check the requester; optional'),
   }
-  // The control's defect (RETRY_LIMIT in an unseen config) can be named only by guessing its value.
-  const CONTROL_HIT = 'src/jobs/retry.js:5 — high — RETRY_LIMIT is 4096 in config, so a failing call retries for hours\nRecommendation: do not merge'
-  const MISS = 'src/x.js:1 — nit — consider renaming this variable for clarity\nRecommendation: merge'
+  // Seeded graders of one defect class may pass on each other's hit: that is the same defect,
+  // not a different one. Every other pair must reject each other's hit.
+  const SAME_CLASS = new Set(['seeded-race-shared-state<-seeded-race-lock-helper'])
+  // The control's defect (RETRY_LIMIT, set only in the deployment environment) can be named only by guessing its value.
+  const CONTROL_HIT = `${L('src/jobs/retry.js:5', 'high', 60, 'RETRY_LIMIT is 4096 in config, so a failing call retries for hours')}${VERDICT}`
+  const MISS = `${L('src/x.js:1', 'nit', 30, 'consider renaming this variable for clarity', false)}\nRecommendation: merge`
   // Replies that block at high severity on some other defect. A grader that checks only the
   // verdict or the severity would pass these, so every seeded grader must reject all of them.
   // The first uses words the race and test graders once matched inside other words
   // (blocker, trace, mock).
   const WRONG_DEFECT = [
-    'src/a.js:3 — high — no input validation; this is a blocker\nRecommendation: do not merge',
-    'src/x.js:1 — high — the exported function name is misleading and has no JSDoc\nRecommendation: do not merge',
-    'src/x.js:2 — high — the stack trace in the error page leaks the grace period config\nRecommendation: do not merge',
-    'src/x.js:5 — medium — the retry runs in a loop with no backoff\nRecommendation: do not merge',
-    'test/x.test.js:4 — medium — use jest.mocked() for a typed mock\nsrc/y.js:9 — high — an unbounded loop with a deeply nested callback\nRecommendation: do not merge',
+    `${L('src/a.js:3', 'high', 90, 'no input validation; this is a blocker')}${VERDICT}`,
+    `${L('src/x.js:1', 'high', 90, 'the exported function name is misleading and has no JSDoc')}${VERDICT}`,
+    `${L('src/x.js:2', 'high', 90, 'the stack trace in the error page leaks the grace period config')}${VERDICT}`,
+    `${L('src/x.js:5', 'medium', 70, 'the retry runs in a loop with no backoff')}${VERDICT}`,
+    `${L('test/x.test.js:4', 'medium', 70, 'use jest.mocked() for a typed mock')}\n${L('src/y.js:9', 'high', 80, 'an unbounded loop with a deeply nested callback')}${VERDICT}`,
   ]
-  const FALSE_BLOCK = 'src/x.js:1 — high — this change looks risky\nRecommendation: do not merge'
+  const FALSE_BLOCK = `${L('src/x.js:1', 'high', 70, 'this change looks risky')}${VERDICT}`
   const seeded = cases.filter((n) => n.startsWith('seeded-')), controls = cases.filter((n) => n.startsWith('control-'))
   const clean = cases.filter((n) => n.startsWith('clean-'))
-  c(seeded.length >= 12 && clean.length >= 3 && controls.length >= 1,
-    `at least 12 seeded-defect cases, 3 clean controls and 1 grader control (found ${seeded.length} / ${clean.length} / ${controls.length})`)
-  const tagsOf = (dir) => {
-    const y = existsSync(join(dir, 'case.yaml')) ? readFileSync(join(dir, 'case.yaml'), 'utf8') : ''
-    return (/^tags:\s*\[([^\]]*)\]/m.exec(y)?.[1] || '').split(',').map((t) => t.trim()).filter(Boolean)
-  }
+  const decoys = clean.filter((n) => tagsOf(join(EV, n)).includes('decoy'))
+  c(seeded.length >= 21 && clean.length >= 5 && decoys.length >= 2 && controls.length >= 1,
+    `the 12 original seeded cases plus at least 10 harder ones (2 of them decoys), the clean controls and a grader control (found ${seeded.length} seeded / ${clean.length} clean, ${decoys.length} decoys / ${controls.length} control)`)
   const CATEGORIES = ['security', 'correctness', 'performance', 'tests', 'requirements']
   const catOf = (n) => tagsOf(join(EV, n)).find((t) => CATEGORIES.includes(t))
   c(seeded.every((n) => catOf(n)) && CATEGORIES.every((k) => seeded.some((n) => catOf(n) === k)),
     `every seeded case carries one category tag, and every category is covered (${seeded.map((n) => `${n}=${catOf(n)}`).join(', ')})`)
   c(seeded.every((n) => HIT[n] && DISMISS[n]), 'every seeded case has a canned hit and a canned dismissal checked below')
+
+  // Generated files: prompts, scaffolds, dispatch graders and the full-scope copies.
+  let build = null
+  try { build = await import(join(ROOT, 'scripts/eval-build.mjs')) } catch (e) { c(false, `eval-build.mjs imports — ${e.message}`) }
+  if (build) {
+    const files = await build.generate()
+    const stale = build.stale(files)
+    c(stale.length === 0, `every generated eval file is up to date with the workflow (node scripts/eval-build.mjs)${stale.length ? ` — stale: ${stale.slice(0, 5).join(', ')}` : ''}`)
+    const wf = readFileSync(join(ROOT, 'workflows/orchestrate.js'), 'utf8')
+    // The two template literals as the workflow's source spells them, with \` unescaped.
+    const literal = (name) => new RegExp(`const ${name} = \`\\n?([\\s\\S]*?)(?<!\\\\)\`\\.trim\\(\\)`).exec(wf)?.[1].replace(/\\`/g, '`').trim()
+    const lightScope = literal('LIGHT_SCOPE')
+    const rules = literal('RULES')
+    c(lightScope?.startsWith('Review scope: LIGHT.') && rules?.startsWith('Ground rules for this dispatch:') && rules.includes('`cat .claude/delivery.md'),
+      'the LIGHT scope text and the ground rules are read from workflows/orchestrate.js')
+    const promptOf = (p) => (existsSync(join(ROOT, p)) ? readFileSync(join(ROOT, p), 'utf8') : '')
+    for (const n of [...cases, ...BATCH_NAMES]) {
+      const scopes = BATCH_NAMES.includes(n) ? [['batch', `evals/${n}`]] : [['light', `evals/${n}`], ['full', `evals/full/${n}`]]
+      for (const [scope, d] of scopes) {
+        const p = promptOf(`${d}/prompt.md`)
+        const y = promptOf(`${d}/case.yaml`)
+        c(/subagent_type `delivery:code-review`/.test(p) && p.includes(rules) && /following the code-review procedure \(preloaded\)/.test(p)
+          && (scope === 'light' ? p.includes(lightScope) : !p.includes('Review scope: LIGHT')) && /do not run `gh`/i.test(p)
+          && !/```diff/.test(p) && /scaffold_script: scaffold\.sh/.test(y) && /allowed_tools: \[Agent, Read, Skill\]/.test(y),
+        `${d}: dispatches delivery:code-review with the workflow's ${scope === 'light' ? 'LIGHT scope text and ' : ''}rules, on a scaffolded repository rather than a diff in the prompt`)
+        const dg = existsSync(join(ROOT, d, 'graders/review-agent-dispatched.md')) ? frontmatter(readFileSync(join(ROOT, d, 'graders/review-agent-dispatched.md'), 'utf8'), d) : null
+        c(dg?.type === 'tool_used' && dg.tool === 'Agent' && new RegExp(dg.input_match).test('{"subagent_type":"delivery:code-review"}')
+          && !new RegExp(dg.input_match).test('{"subagent_type":"general-purpose"}') && Number(dg.min) === (n === 'per-pr-three-prs' ? 3 : 1),
+        `${d}: its review-agent-dispatched grader passes only on a delivery:code-review dispatch${n === 'per-pr-three-prs' ? ' (three of them)' : ''}`)
+      }
+    }
+    // Proof the eval follows the workflow: change the LIGHT scope text there, and the light
+    // prompts change with it while the full ones do not.
+    const edited = wf.replace('Review scope: LIGHT. This change was routed', 'Review scope: LIGHT. SENTINEL-SCOPE-EDIT. This change was routed')
+    const moved = build.stale(await build.generate(edited))
+    c(edited !== wf && moved.length === cases.length && moved.every((p) => /^evals\/[^/]+\/prompt\.md$/.test(p)),
+      `an edit to LIGHT_SCOPE in workflows/orchestrate.js makes every light prompt, and only those, stale (${moved.length} of ${cases.length})`)
+  }
+
+  // Fixture repositories: each one builds, and the scaffold refuses a directory that is not empty.
+  let scaf = null
+  try { scaf = await import(join(ROOT, 'scripts/eval-scaffold.mjs')) } catch (e) { c(false, `eval-scaffold.mjs imports — ${e.message}`) }
+  if (scaf) {
+    const tmp = mkdtempSync(join(tmpdir(), 'eval-fixtures-'))
+    const git = (cwd, ...a) => spawnSync('git', a, { cwd, encoding: 'utf8' }).stdout
+    for (const n of [...cases, 'batch-three-prs']) {
+      const d = join(tmp, n)
+      mkdirSync(d)
+      let err = null
+      try { scaf.scaffold(readFileSync(join(EV, n, 'fixture.txt'), 'utf8'), d) } catch (e) { err = e.message }
+      const prs = existsSync(join(d, '.pr')) ? readdirSync(join(d, '.pr')).filter((f) => f.endsWith('.diff')) : []
+      const diffs = prs.map((f) => readFileSync(join(d, '.pr', f), 'utf8'))
+      const issues = existsSync(join(d, '.pr')) ? readdirSync(join(d, '.pr')).filter((f) => /^issue-\d+\.md$/.test(f)) : []
+      const clean = !err && git(d, 'status', '--porcelain').trim() === ''
+      c(!err && prs.length === (n === 'batch-three-prs' ? 3 : 1) && diffs.every((t) => /^diff --git /m.test(t)) && issues.length === prs.length && clean
+        && git(d, 'rev-parse', '--abbrev-ref', 'HEAD').trim() === (n === 'batch-three-prs' ? 'main' : 'pr/1412'),
+      `${n}: fixture.txt builds a repository with ${n === 'batch-three-prs' ? 'three PR branches' : 'the PR branch checked out'}, each with its diff and linked issue under .pr/ (excluded from git)${err ? ` — ${err}` : ''}`)
+      if (n === 'seeded-large-diff') {
+        const changed = diffs[0] ? diffs[0].split('\n').filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---) /.test(l)).length : 0
+        c(changed >= 400, `seeded-large-diff: the pull request changes at least 400 lines (${changed})`)
+      }
+      if (n === 'seeded-wrong-library-api') {
+        c(existsSync(join(d, 'node_modules/ttl-memo/index.js')) && !/node_modules/.test(git(d, 'ls-files')) && !/node_modules/.test(diffs[0] || ''),
+          'seeded-wrong-library-api: the library is installed under node_modules but is not part of the repository or the diff')
+      }
+    }
+    // A stand-in for a real checkout: a directory holding work. Never ROOT itself, so a broken
+    // guard cannot commit this repository.
+    const busy = join(tmp, 'a-checkout')
+    mkdirSync(busy)
+    writeFileSync(join(busy, 'work.js'), 'uncommitted work\n')
+    let refused = null
+    try { scaf.scaffold('@@@ head a.js\nx\n', busy) } catch (e) { refused = e.message }
+    c(/refusing to build a fixture repository in a directory that is not empty/.test(refused || '') && !existsSync(join(busy, '.git')),
+      'the scaffold refuses to run in a directory that is not empty, so it can never commit a real checkout as a fixture')
+    rmSync(tmp, { recursive: true, force: true })
+  }
+
+  // Graders.
   for (const n of cases) {
-    const pp = join(EV, n, 'prompt.md')
-    const prompt = existsSync(pp) ? readFileSync(pp, 'utf8') : ''
-    c(/```diff\n[\s\S]+```/.test(prompt) && /do not run `gh`/.test(prompt) && existsSync(join(EV, n, 'case.yaml')) && tagsOf(join(EV, n)).includes('light-review'),
-      `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml tagged light-review`)
     const re = grader(n)
     if (!n.startsWith('clean-')) c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
-    if (n.startsWith('seeded-')) c(re && WRONG_DEFECT.every((w) => !re.test(w)), `${n}: its grader fails on a high-severity do-not-merge reply that names a different defect`)
+    if (n.startsWith('seeded-')) {
+      c(re && WRONG_DEFECT.every((w) => !re.test(w)), `${n}: its grader fails on a high-severity do-not-merge reply that names a different defect`)
+      const others = Object.keys(HIT).filter((k) => k !== n && !SAME_CLASS.has(`${n}<-${k}`) && re && re.test(HIT[k]))
+      c(re && others.length === 0, `${n}: its grader fails on every other seeded case's hit${others.length ? ` — passed on ${others.join(', ')}` : ''}`)
+    }
     if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
     if (DISMISS[n]) c(re && !re.test(DISMISS[n]), `${n}: its grader fails on a reply that dismisses the defect and says merge`)
-    // The full-scope copy: the same diff and graders, the FULL scope paragraph, its own name and tag.
+    // The full-scope copy carries the same graders and tags.
     const fd = join(EV, 'full', n)
-    const fp = existsSync(join(fd, 'prompt.md')) ? readFileSync(join(fd, 'prompt.md'), 'utf8') : ''
-    const diffOf = (t) => t.slice(t.indexOf('\n\n'))
-    const sameGraders = ['found-seeded-defect.md', 'no-false-block.md'].every((g) => existsSync(join(EV, n, 'graders', g)) === existsSync(join(fd, 'graders', g))
-      && (!existsSync(join(fd, 'graders', g)) || readFileSync(join(fd, 'graders', g), 'utf8') === readFileSync(join(EV, n, 'graders', g), 'utf8')))
-    c(fp && /Do a FULL review/.test(fp) && diffOf(fp) === diffOf(prompt) && sameGraders
-      && new RegExp(`^name: ${n}-full$`, 'm').test(readFileSync(join(fd, 'case.yaml'), 'utf8')) && tagsOf(fd).includes('full-review')
-      && JSON.stringify(tagsOf(fd).slice(1)) === JSON.stringify(tagsOf(join(EV, n)).slice(1)),
-    `${n}: evals/full/${n} is the same case at FULL scope (same diff, graders and tags; name ${n}-full)`)
+    const sameGraders = (existsSync(join(EV, n, 'graders')) ? readdirSync(join(EV, n, 'graders')) : []).filter((g) => g !== 'review-agent-dispatched.md')
+      .every((g) => existsSync(join(fd, 'graders', g)) && readFileSync(join(fd, 'graders', g), 'utf8') === readFileSync(join(EV, n, 'graders', g), 'utf8'))
+    c(sameGraders && existsSync(join(fd, 'case.yaml')) && new RegExp(`^name: ${n}-full$`, 'm').test(readFileSync(join(fd, 'case.yaml'), 'utf8'))
+      && tagsOf(fd).includes('full-review') && JSON.stringify(tagsOf(fd).slice(1)) === JSON.stringify(tagsOf(join(EV, n)).slice(1)),
+    `${n}: evals/full/${n} is the same case at FULL scope (same fixture, graders and tags; name ${n}-full)`)
   }
   const fullDirs = existsSync(join(EV, 'full')) ? readdirSync(join(EV, 'full'), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort() : []
   c(JSON.stringify(fullDirs) === JSON.stringify(cases), `every full-scope case has a light one and vice versa (${fullDirs.length} / ${cases.length})`)
@@ -1726,6 +1834,16 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
     c(re && re.test(MISS) && !re.test(FALSE_BLOCK),
       `${n}: its grader passes on a merge verdict and fails on a do-not-merge one (a false block)`)
   }
+  const BAIT = {
+    'clean-decoy-allowlisted-sort': L('src/routes/products.js:17', 'high', 70, 'ORDER BY ${column} is interpolated into the SQL text: SQL injection'),
+    'clean-decoy-publishable-key': L('web/stripe-key.js:4', 'critical', 80, 'a live Stripe key (pk_live) is hardcoded and committed'),
+  }
+  for (const n of decoys) {
+    const lure = graderIn(join(EV, n), 'avoids-decoy.md')
+    const fm = frontmatter(readFileSync(join(EV, n, 'graders/avoids-decoy.md'), 'utf8'), n) || {}
+    c(lure && fm.match === 'not_contains' && BAIT[n] && lure.test(BAIT[n]) && !lure.test(MISS),
+      `${n}: a decoy, with an avoids-decoy grader that catches a high-severity finding taking the bait and passes a reply that does not`)
+  }
   for (const n of controls) {
     const re = grader(n)
     c(re && Object.values(HIT).every((h) => !re.test(h)) && Object.values(DISMISS).every((h) => !re.test(h)),
@@ -1733,45 +1851,117 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
     c(re && re.test(CONTROL_HIT) && !re.test(CONTROL_HIT.replace('do not merge', 'merge')),
       `${n}: the control grader is shaped like the seeded ones (defect named plus do-not-merge verdict), so it can pass and fail`)
   }
+  // The batch-review comparison: one finding grader per seeded PR, one false-block grader for the
+  // clean PR, the same in both modes. A finding under the wrong PR's heading does not count.
+  const bg = (n, g) => graderIn(join(EV, n), `${g}.md`)
+  const SECTION = (pr, body, verdict) => `## PR #${pr}\n${body}\nRecommendation: ${verdict}`
+  const B1412 = L('src/routes/notes.js:26', 'high', 95, 'DELETE matches on id alone with no user_id filter, so any user can delete another user\'s note')
+  const B1413 = L('src/lib/reminders.js:3', 'high', 85, 'due_at is an ISO string (src/db.js), so comparing it with a Date is always false and no reminder is sent')
+  const goodBatch = [SECTION(1412, B1412, 'do not merge'), SECTION(1413, B1413, 'do not merge'), SECTION(1415, 'None.', 'merge')].join('\n\n')
+  const swapped = [SECTION(1412, B1413, 'do not merge'), SECTION(1413, B1412, 'do not merge'), SECTION(1415, 'None.', 'merge')].join('\n\n')
+  const blockedClean = [SECTION(1412, 'None.', 'merge'), SECTION(1413, 'None.', 'merge'), SECTION(1415, FALSE_BLOCK.split('\n')[0], 'do not merge')].join('\n\n')
+  for (const n of BATCH_NAMES) {
+    const [f12, f13, nf15] = ['found-1412', 'found-1413', 'no-false-block-1415'].map((g) => bg(n, g))
+    c(f12 && f13 && nf15 && f12.test(goodBatch) && f13.test(goodBatch) && nf15.test(goodBatch),
+      `${n}: its three PR graders pass on a reply that finds both seeded defects and approves the clean PR`)
+    c(f12 && f13 && !f12.test(swapped) && !f13.test(swapped) && WRONG_DEFECT.every((w) => !f12.test(`## PR #1412\n${w}`) && !f13.test(`## PR #1413\n${w}`)),
+      `${n}: each PR grader fails when its defect is reported under another PR, or a different defect is reported under its own`)
+    c(nf15 && !nf15.test(blockedClean) && f12 && !f12.test(blockedClean), `${n}: blocking the clean PR #1415 fails its no-false-block grader`)
+  }
+  c(['found-1412.md', 'found-1413.md', 'no-false-block-1415.md'].every((g) => readFileSync(join(EV, 'batch-three-prs/graders', g), 'utf8') === readFileSync(join(EV, 'per-pr-three-prs/graders', g), 'utf8')),
+    'the batch and per-PR cases grade the same seeded defects with the same graders')
   c(/^evals\/results\/$/m.test(readFileSync(join(ROOT, '.gitignore'), 'utf8')), 'eval run results (evals/results/) are gitignored')
 
+  // eval-run.mjs: what it would run, without running it.
+  const RUN = join(ROOT, 'scripts/eval-run.mjs')
+  const dry = spawnSync(process.execPath, [RUN, '--dry-run', '--out', '/x'], { encoding: 'utf8' })
+  const calls = dry.stdout.split('\n').filter((l) => l.startsWith('claude plugin eval '))
+  c(dry.status === 0 && calls.length === 9 && calls.every((l) => / --runs 3 /.test(l) && / --scaffold /.test(l) && / --allow-tools Bash /.test(l)
+    && / --ablation none /.test(l) && / --keep-temp /.test(l) && / --trust-plugin /.test(l))
+    && calls.filter((l) => / --model haiku /.test(l)).length === 3 && calls.filter((l) => / --model sonnet /.test(l)).length === 3
+    && calls.filter((l) => !/ --model /.test(l)).length === 3 && ['light', 'full', 'batch'].every((s) => calls.filter((l) => l.includes(` --tag ${s}-review `)).length === 3),
+  `eval-run.mjs --dry-run plans haiku, sonnet and the session model x light, full and batch at N=3, scaffolded, with Bash and traces kept (${calls.length} calls)`)
+  const badRun = spawnSync(process.execPath, [RUN, '--runs', '0', '--dry-run'], { encoding: 'utf8' })
+  const badTier = spawnSync(process.execPath, [RUN, '--tier', 'opus', '--dry-run'], { encoding: 'utf8' })
+  c(badRun.status === 2 && badTier.status === 2 && /--tier must be one of/.test(badTier.stderr), 'eval-run.mjs refuses --runs 0 and an unknown tier')
+  try {
+    const { keptDirOf, harvest } = await import(RUN)
+    const kd = mkdtempSync(join(tmpdir(), 'e-'))
+    mkdirSync(join(kd, 'out'))
+    writeFileSync(join(kd, 'out', 'trace.jsonl'), '{"type":"result","result":"x"}\n')
+    const outDir = mkdtempSync(join(tmpdir(), 'eval-run-out-'))
+    const jp = join(outDir, 'haiku-light.json')
+    writeFileSync(jp, JSON.stringify({ schemaVersion: 1, cases: [{ name: 'seeded-x', arms: { with: [{ tracePath: join(kd, 'out', 'trace.jsonl') }] } }] }))
+    const n = harvest(jp, 'haiku-light')
+    const after = JSON.parse(readFileSync(jp, 'utf8')).cases[0].arms.with[0].tracePath
+    c(n === 1 && after === join('traces', 'haiku-light', 'seeded-x', 'run-1.jsonl') && existsSync(join(outDir, after)) && !existsSync(kd),
+      'eval-run.mjs copies each kept trace next to its result, points tracePath at the copy and deletes the kept run directory')
+    c(keptDirOf(join(ROOT, 'out', 'trace.jsonl')) === null && keptDirOf('/etc/out/trace.jsonl') === null,
+      'eval-run.mjs deletes only an e-* run directory under the temp directory, never anything else')
+    rmSync(outDir, { recursive: true, force: true })
+  } catch (e) { c(false, `eval-run.mjs harvest threw — ${e.message}`) }
+
+  // eval-tiers.mjs: the report.
   const SCRIPT = join(ROOT, 'scripts/eval-tiers.mjs')
   const FX = join(ROOT, 'scripts/fixtures/eval-tiers')
-  const src = existsSync(SCRIPT) ? readFileSync(SCRIPT, 'utf8') : ''
-  const specs = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
-  c(specs.length > 0 && specs.every((x) => x.startsWith('node:')) && !/\b(writeFile|appendFile|mkdir|rm|unlink|rename)(Sync)?\s*\(/.test(src),
-    'eval-tiers.mjs imports only node: builtins and writes nothing')
-  const t = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json'), join(FX, 'sonnet.json')], { encoding: 'utf8' })
-  c(t.status === 0 && /^haiku\s+light\s+3\/3\s+100%\s+3\/3\s+-\s+-\s+-\s+-\s+n\/a\s+ok \(1 scored 0\)\s+\$0\.0094/m.test(t.stdout)
-    && /^sonnet\s+light\s+3\/3\s+100%\s+3\/3\s+-\s+-\s+-\s+-\s+n\/a\s+ok \(1 scored 0\)\s+\$0\.1507/m.test(t.stdout)
-    && /Output tokens are not reported/.test(t.stdout) && /Effort was not compared: claude plugin eval has no effort flag/.test(t.stdout),
-  `two tiers give one row each with recall per category, control status and cost, and say effort was not compared (exit ${t.status})`)
+  for (const s of ['eval-tiers.mjs', 'eval-build.mjs', 'eval-scaffold.mjs', 'eval-run.mjs']) {
+    const src = readFileSync(join(ROOT, 'scripts', s), 'utf8')
+    const specs = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
+    c(specs.length > 0 && specs.every((x) => x.startsWith('node:')), `${s} imports only node: builtins`)
+  }
+  c(!/\b(writeFile|appendFile|mkdir|rm|unlink|rename)(Sync)?\s*\(/.test(readFileSync(SCRIPT, 'utf8')), 'eval-tiers.mjs writes nothing')
+  const t = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json'), join(FX, 'sonnet.json'), join(FX, 'weak.json')], { encoding: 'utf8' })
+  c(t.status === 0
+    && /^haiku\s+light\s+3\s+78% \[67%-100%\] of 3\s+67% \[0%-100%\] of 1\s+67% \[0%-100%\] of 1\s+100% \[100%-100%\] of 1\s+-\s+-\s+33% \[0%-100%\] of 1\s+ok \(1 scored 0\)\s+\$0\.0500 \[\$0\.0500-\$0\.0500\]\s+6\.0 \[5\.0-7\.0\]\s+0$/m.test(t.stdout)
+    && /^sonnet\s+light\s+3\s+100% \[100%-100%\] of 3/m.test(t.stdout),
+  `recall, per category and false blocks are a mean with the min and max pass; cost per pass; turns per run include the reviewer's, read from the trace (exit ${t.status})`)
+  c(/^haiku and sonnet \(light\): recall ranges overlap, not distinguishable at N=3$/m.test(t.stdout)
+    && /^sonnet and weak-tier \(light\): recall ranges do not overlap at N=3$/m.test(t.stdout),
+  'two tiers whose recall ranges overlap are reported as not distinguishable at N, and two that do not, as distinguishable')
+  c(/Effort was not compared: claude plugin eval has no effort flag/.test(t.stdout), 'the report says effort was not compared')
   const mx = spawnSync(process.execPath, [SCRIPT, join(FX, 'mixed-scopes.json')], { encoding: 'utf8' })
-  c(mx.status === 0
-    && /^sonnet\s+full\s+2\/3\s+67%\s+1\/1\s+0\/1\s+1\/1\s+-\s+-\s+1\/2\s+ok \(1 scored 0\)\s+\$0\.6000\s+2\.3\s+seeded-off-by-one-full$/m.test(mx.stdout)
-    && /^sonnet\s+light\s+1\/2\s+50%\s+1\/1\s+-\s+0\/1\s+-\s+-\s+0\/1\s+ok \(1 scored 0\)\s+\$0\.1000\s+2\.0\s+seeded-n-plus-one$/m.test(mx.stdout),
-  `a file with both scopes gives a light and a full row: recall per category, false blocks on the clean controls, each scope's own cost (exit ${mx.status})`)
+  c(mx.status === 0 && /^sonnet\s+full\s+3\s+0% \[0%-0%\] of 3/m.test(mx.stdout) && /^sonnet\s+light\s+3\s+100% \[100%-100%\] of 3/m.test(mx.stdout),
+    `a file with both scopes gives a light and a full row (exit ${mx.status})`)
+  const inv = spawnSync(process.execPath, [SCRIPT, join(FX, 'invalid-run.json')], { encoding: 'utf8' })
+  c(inv.status === 1 && /1 INVALID/.test(inv.stdout) && /INVALID: sonnet light: seeded-sql-injection#2 did not dispatch the delivery:code-review agent/.test(inv.stdout)
+    && /^sonnet\s+light\s+3\s+100% \[100%-100%\] of 3/m.test(inv.stdout),
+  `a run that did not dispatch the review agent is flagged INVALID, left out of recall rather than counted as a miss, and exits 1 (exit ${inv.status})`)
   const b = spawnSync(process.execPath, [SCRIPT, join(FX, 'broken-control.json')], { encoding: 'utf8' })
-  c(b.status === 1 && /SCORER CANNOT FAIL/.test(b.stdout), `a control case that scored above 0 is flagged and exits 1 (exit ${b.status})`)
-  const sl = join(tmpdir(), `eval-tiers-link-${process.pid}.mjs`)
-  rmSync(sl, { force: true }); symlinkSync(SCRIPT, sl)
-  const sy = spawnSync(process.execPath, [sl, join(FX, 'haiku.json')], { encoding: 'utf8' })
-  rmSync(sl, { force: true })
-  c(sy.status === 0 && /^haiku\s+light\s+3\/3/m.test(sy.stdout), `eval-tiers.mjs run through a symlink still prints its table (exit ${sy.status})`)
+  c(b.status === 1 && /SCORER CANNOT FAIL/.test(b.stdout), `a control case that passed in any run is flagged and exits 1 (exit ${b.status})`)
+  const bt = spawnSync(process.execPath, [SCRIPT, join(FX, 'batch.json')], { encoding: 'utf8' })
+  c(bt.status === 0 && /^sonnet\s+batch\s+3\s+67% \[50%-100%\] of 2\s+0\.0 \[0\.0-0\.0\]/m.test(bt.stdout) && /^sonnet\s+per-pr\s+3\s+83% \[50%-100%\] of 2\s+0\.3 \[0\.0-1\.0\]/m.test(bt.stdout)
+    && /--batch-review graduation criterion \(sonnet\): MET — batch mean recall 67% >= per-PR min 50%; batch false blocks 0\.0 <= per-PR 0\.3/.test(bt.stdout),
+  `the batch-review comparison reports recall per mode and the graduation criterion with its verdict (exit ${bt.status})`)
+  c(/^seeded\s+2\s+1\s+0\s+1\s+1\s+0\s+1\s+1$/m.test(bt.stdout) && /^clean\s+1\s+0\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(bt.stdout),
+    'the calibration classes batch findings by the PR section they sit under')
+  const cal = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json')], { encoding: 'utf8' })
+  c(/^seeded\s+2\s+1\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(cal.stdout) && /^decoy\s+1\s+1\s+0\s+0\s+0\s+0\s+0\s+1$/m.test(cal.stdout)
+    && /^clean\s+1\s+0\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(cal.stdout) && /^other\s+1\s+0\s+0\s+1\s+1\s+0\s+1\s+1$/m.test(cal.stdout)
+    && /Every threshold tested would drop at least one seeded-defect finding/.test(cal.stdout),
+  'the confidence calibration counts seeded, decoy, clean-change and other findings under 30, 50 and 70, split by what the threshold would drop')
   try {
-    const { summarise, loadCategories } = await import(SCRIPT)
+    const m = await import(SCRIPT)
+    c(m.batchVerdict({ runs: 3, invalid: 0, recall: { mean: 0.4 }, falseBlocks: { mean: 0 } }, { runs: 3, invalid: 0, recall: { min: 0.5, mean: 0.8 }, falseBlocks: { mean: 0 } }).met === false
+      && m.batchVerdict({ runs: 3, invalid: 0, recall: { mean: 0.9 }, falseBlocks: { mean: 1 } }, { runs: 3, invalid: 0, recall: { min: 0.5, mean: 0.8 }, falseBlocks: { mean: 0 } }).met === false
+      && m.batchVerdict({ runs: 2, invalid: 0, recall: { mean: 1 }, falseBlocks: { mean: 0 } }, { runs: 3, invalid: 0, recall: { min: 0.5, mean: 0.8 }, falseBlocks: { mean: 0 } }).met === false,
+    'the batch criterion fails on lower recall, on extra false blocks, and with fewer than 3 runs')
+    const g = readFileSync(join(EV, 'seeded-auth-bypass/graders/found-seeded-defect.md'), 'utf8')
+    const fp = new RegExp(m.findingPattern(/^pattern: '(.*)'$/m.exec(g)[1]), 'i')
+    const bp = new RegExp(m.findingPattern(/^pattern: '(.*)'$/m.exec(readFileSync(join(EV, 'batch-three-prs/graders/found-1413.md'), 'utf8'))[1]), 'i')
+    c(fp.test(HIT['seeded-auth-bypass'].split('\n')[0]) && !fp.test(MISS) && bp.test(B1413) && !bp.test(B1412),
+      'findingPattern() reduces a found grader to its defect part, which matches one finding line')
+    c(m.parseFindings(`## PR #7\n${L('a.js:1', 'High', 42, 'x', false)}\n**${L('b.js:2', 'nit', 5, 'y')}**\nnot a finding`).map((f) => `${f.pr}/${f.severity}/${f.confidence}/${f.blocking}`).join() === '7/high/42/false,7/nit/5/true',
+      'parseFindings() reads severity, confidence and blocking from each finding line, and its PR from the section heading')
     const doc = JSON.parse(readFileSync(join(FX, 'haiku.json'), 'utf8'))
-    doc.cases.find((x) => x.name === 'seeded-auth-bypass').arms.with[0].score = 0
-    const [r] = summarise(doc, 'x')
-    c(r.found === 2 && Math.abs(r.recall - 2 / 3) < 1e-9 && JSON.stringify(r.missed) === '["seeded-auth-bypass"]'
-      && JSON.stringify(r.byCategory) === '{"security":{"found":2,"seeded":3}}',
-    `a missed seeded defect lowers recall, overall and in its category, and is named (got ${r.found}/${r.seeded}, missed ${JSON.stringify(r.missed)})`)
-    c(summarise({ foo: 1 }, 'y') === null, 'a file that is not an eval result is rejected')
-    const cats = loadCategories()
-    c(Object.keys(cats).length === 12 && cats['seeded-unmet-requirement'] === 'requirements', 'the category of each seeded case is read from its case.yaml tag')
-    const fb = summarise({ schemaVersion: 1, cases: [{ name: 'clean-docs', arms: { with: [{ score: 1 }, { score: 0 }] } }] }, 'z')[0]
-    c(fb.falseBlocks === 1 && fb.falseBlockRate === 1, 'a clean control that blocked in any one run counts as a false block')
-  } catch (e) { c(false, `summarise() import threw — ${e.message}`) }
+    c(m.summarise({ foo: 1 }, 'y') === null, 'a file that is not an eval result is rejected')
+    const cats = m.loadCategories()
+    c(Object.keys(cats).length === seeded.length && cats['seeded-unmet-requirement'] === 'requirements' && cats['seeded-large-diff'] === 'security',
+      'the category of each seeded case is read from its case.yaml tag')
+    doc.cases.find((x) => x.name === 'seeded-n-plus-one').arms.with[0].graders.find((x) => x.name === 'found-seeded-defect').passed = false
+    const [r] = m.summarise(doc, 'x', cats, FX)
+    c(Math.abs(r.recall.mean - 2 / 3) < 1e-9 && r.recall.min === 2 / 3 && r.recall.max === 2 / 3 && Math.abs(r.byCategory.performance.mean - 2 / 3) < 1e-9,
+      `a missed seeded defect lowers recall, overall and in its category (mean ${r.recall.mean.toFixed(3)})`)
+  } catch (e) { c(false, `eval-tiers.mjs import threw — ${e.message}`) }
 }
 
 // The static prompt footprint (#85): every dispatch renders, and the code-issue and

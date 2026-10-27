@@ -1,0 +1,62 @@
+@@@ base README.md
+# inventory
+
+Stock levels for the warehouse service.
+
+## Install
+
+Requires Node 20.
+
+```
+npm install
+```
+
+## Running the tests
+
+Run `npm test`.
+
+## License
+
+MIT
+@@@ head README.md
+# inventory
+
+Stock levels for the warehouse service.
+
+## Install
+
+Requires Node 20.
+
+```
+npm install
+```
+
+## Running the tests
+
+Run `npm test` for the unit suite. The integration suite needs a local database:
+
+    docker compose up -d db
+    npm run test:integration
+
+## License
+
+MIT
+@@@ base package.json
+{
+  "name": "inventory",
+  "private": true,
+  "scripts": { "test": "jest", "test:integration": "jest -c jest.integration.config.js" }
+}
+@@@ base docker-compose.yml
+services:
+  db:
+    image: postgres:16
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+@@@ issue
+Document how to run the integration tests
+
+New contributors cannot find how to run the integration suite.
+@@@ pr
+Documents the integration suite in the README. Closes #412.

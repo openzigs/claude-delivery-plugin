@@ -1,0 +1,42 @@
+@@@ base package.json
+{
+  "name": "shop-api",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0", "knex": "^3.1.0" }
+}
+@@@ base src/db.js
+const knex = require('knex')
+
+exports.db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/routes/orders.js
+const express = require('express')
+const { db } = require('../db')
+const requireAuth = require('../middleware/auth')
+
+const router = express.Router()
+
+module.exports = router
+@@@ head src/routes/orders.js
+const express = require('express')
+const { db } = require('../db')
+const requireAuth = require('../middleware/auth')
+
+const router = express.Router()
+
+// Order history for the signed-in user; power users have thousands of orders.
+router.get('/orders', requireAuth, async (req, res) => {
+  const orders = await db('orders').where({ user_id: req.user.id })
+  for (const order of orders) {
+    order.items = await db('order_items').where({ order_id: order.id })
+  }
+  res.json(orders)
+})
+
+module.exports = router
+@@@ issue
+Order history endpoint
+
+GET /orders returns the signed-in user's orders, each with its line items.
+@@@ pr
+Adds GET /orders with each order's items. Closes #412.

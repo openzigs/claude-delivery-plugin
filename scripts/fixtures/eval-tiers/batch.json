@@ -1,0 +1,285 @@
+{
+ "schemaVersion": 1,
+ "costUsd": 0.6,
+ "partial": false,
+ "suite": {
+  "modelOverride": "sonnet",
+  "ablation": "none"
+ },
+ "cases": [
+  {
+   "name": "batch-three-prs",
+   "dir": "evals/batch-three-prs",
+   "graders": [
+    {
+     "name": "found-1412",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1412\\b(?:(?!## PR #)[\\s\\S])*?(user_id|owner|another user|other users|any user|someone else|not scoped|unscoped|IDOR|authori[sz])(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "found-1413",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1413\\b(?:(?!## PR #)[\\s\\S])*?((string|ISO|NaN|type|coerc|parse)[^\\n]{0,160}(due_at|due date|Date|compar)|(due_at|due date|compar)[^\\n]{0,160}(string|ISO|NaN|coerc|never|always false|parse))(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "no-false-block-1415",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1415\\b(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*merge\\b",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": "traces/batch/batch-1.jsonl",
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": true
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": false
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": false
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "per-pr-three-prs",
+   "dir": "evals/per-pr-three-prs",
+   "graders": [
+    {
+     "name": "found-1412",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1412\\b(?:(?!## PR #)[\\s\\S])*?(user_id|owner|another user|other users|any user|someone else|not scoped|unscoped|IDOR|authori[sz])(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "found-1413",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1413\\b(?:(?!## PR #)[\\s\\S])*?((string|ISO|NaN|type|coerc|parse)[^\\n]{0,160}(due_at|due date|Date|compar)|(due_at|due date|compar)[^\\n]{0,160}(string|ISO|NaN|coerc|never|always false|parse))(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "no-false-block-1415",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "## PR #1415\\b(?:(?!## PR #)[\\s\\S])*?Recommendation:\\W*merge\\b",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": true
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": true
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-1412",
+        "passed": true
+       },
+       {
+        "name": "found-1413",
+        "passed": false
+       },
+       {
+        "name": "no-false-block-1415",
+        "passed": false
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

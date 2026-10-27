@@ -1,0 +1,31 @@
+@@@ base package.json
+{
+  "name": "receipts",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "jest" }
+}
+@@@ base src/format.js
+export function formatLine(line) {
+  return `${line.name}: ${(line.cents / 100).toFixed(2)}`
+}
+
+export function formatTotal(cents) {
+  return `Total: ${(cents / 100).toFixed(2)}`
+}
+@@@ head src/format.js
+const money = (cents) => (cents / 100).toFixed(2)
+
+export function formatLine(line) {
+  return `${line.name}: ${money(line.cents)}`
+}
+
+export function formatTotal(cents) {
+  return `Total: ${money(cents)}`
+}
+@@@ issue
+Deduplicate receipt money formatting
+
+formatLine and formatTotal each format cents by hand. Extract one helper; no behaviour change.
+@@@ pr
+Extracts a `money` helper; output is unchanged. Closes #412.

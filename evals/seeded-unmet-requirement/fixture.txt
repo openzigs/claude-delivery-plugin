@@ -1,0 +1,39 @@
+@@@ base package.json
+{
+  "name": "shop-api",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0", "knex": "^3.1.0" }
+}
+@@@ base src/routes/export.js
+const { db } = require('../db')
+
+const router = require('express').Router()
+const requireAuth = require('../middleware/auth')
+
+module.exports = router
+@@@ head src/routes/export.js
+const { db } = require('../db')
+
+const router = require('express').Router()
+const requireAuth = require('../middleware/auth')
+
+router.get('/orders/export', requireAuth, async (req, res) => {
+  const rows = await db('orders').where({ user_id: req.user.id }).orderBy('created_at')
+  const lines = ['id,created_at,total']
+  for (const r of rows) {
+    lines.push([r.id, new Date(r.created_at).toISOString(), r.total].join(','))
+  }
+  res.type('text/csv').send(lines.join('\n'))
+})
+
+module.exports = router
+@@@ issue
+Export orders as CSV
+
+Acceptance criteria:
+- [ ] GET /orders/export returns text/csv with a header row
+- [ ] dates are ISO 8601
+- [ ] the export honours the `from` and `to` query parameters (an inclusive date range)
+@@@ pr
+Adds GET /orders/export as CSV. Closes #412.

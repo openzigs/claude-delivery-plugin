@@ -1,0 +1,31 @@
+@@@ base package.json
+{
+  "name": "wallet-service",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "vitest run" },
+  "dependencies": { "knex": "^3.1.0" }
+}
+@@@ base src/db.js
+import knex from 'knex'
+
+export const db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/accounts/withdraw.js
+import { db } from '../db'
+
+@@@ head src/accounts/withdraw.js
+import { db } from '../db'
+
+// Called by POST /accounts/:id/withdraw; clients may retry or submit in parallel.
+export async function withdraw(accountId, amount) {
+  const { balance } = await db('accounts').where({ id: accountId }).first()
+  if (balance < amount) throw new Error('insufficient funds')
+  await db('accounts').where({ id: accountId }).update({ balance: balance - amount })
+  return balance - amount
+}
+@@@ issue
+Withdrawals
+
+POST /accounts/:id/withdraw debits the account. A withdrawal must never take the balance below zero.
+@@@ pr
+Adds `withdraw(accountId, amount)`. Closes #412.

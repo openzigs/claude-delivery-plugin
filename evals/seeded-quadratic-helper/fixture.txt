@@ -1,0 +1,61 @@
+@@@ base package.json
+{
+  "name": "reporting",
+  "private": true,
+  "scripts": { "test": "jest" }
+}
+@@@ base src/lib/collections.js
+// The item with the given id, or undefined.
+function findById(list, id) {
+  return list.find((item) => item.id === id)
+}
+
+// A Map from id to item, for repeated lookups.
+function indexById(list) {
+  return new Map(list.map((item) => [item.id, item]))
+}
+
+module.exports = { findById, indexById }
+@@@ base src/reports/order-summaries.js
+const { indexById } = require('../lib/collections')
+
+// Nightly export: every order of the day with its customer's name. Runs over the whole
+// table, about 200,000 orders and 60,000 customers.
+function buildOrderSummaries(orders, customers) {
+  const customersById = indexById(customers)
+  return orders.map((order) => ({
+    id: order.id,
+    total: order.total,
+    customer: customersById.get(order.customerId).name,
+  }))
+}
+
+module.exports = { buildOrderSummaries }
+@@@ head src/reports/order-summaries.js
+const { findById } = require('../lib/collections')
+
+// Nightly export: every order of the day with its customer's name. Runs over the whole
+// table, about 200,000 orders and 60,000 customers.
+function buildOrderSummaries(orders, customers) {
+  return orders.map((order) => ({
+    id: order.id,
+    total: order.total,
+    // A deleted customer has no row any more: show "unknown" rather than crash.
+    customer: findById(customers, order.customerId)?.name ?? 'unknown',
+  }))
+}
+
+module.exports = { buildOrderSummaries }
+@@@ head test/order-summaries.test.js
+const { buildOrderSummaries } = require('../src/reports/order-summaries')
+
+test('a deleted customer shows as unknown', () => {
+  const rows = buildOrderSummaries([{ id: 1, total: 500, customerId: 9 }], [{ id: 2, name: 'Ana' }])
+  expect(rows[0].customer).toBe('unknown')
+})
+@@@ issue
+Nightly order export crashes on a deleted customer
+
+When an order's customer has been deleted, buildOrderSummaries throws and the nightly export fails. Show the customer as "unknown" instead.
+@@@ pr
+Handles a missing customer in `buildOrderSummaries` and adds a regression test. Closes #412.
