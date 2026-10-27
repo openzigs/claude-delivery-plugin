@@ -233,6 +233,32 @@ workflow scripts ([plugins reference, "Reference a saved value"](https://code.cl
 [workflows, "Edit a saved script"](https://code.claude.com/docs/en/workflows)). A `userConfig`
 option nothing could read would be a setting that silently does nothing.
 
+### Comparing tiers before changing them: `evals/`
+
+Before moving a review tier, compare the candidates on the same inputs. `evals/` holds a small
+[`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) suite (Claude Code
+v2.1.269+): three synthetic PR diffs with a seeded defect each (SQL injection, a query missing
+its tenant scope, an auth bypass), each graded by a free regex grader on whether the reply
+names the defect, and one **control** whose defect is outside the diff (the value of a config constant the diff
+never shows), so a real reply should score 0. Each seeded grader also requires the
+`Recommendation: do not merge` verdict, so a reply that dismisses the defect and approves does
+not count. What proves a grader can fail is `scripts/verify-plugin.mjs`, which runs every
+grader against canned replies that miss or dismiss the defect; the control is a runtime check
+that a tier is not scoring by chance.
+
+```
+claude plugin eval . --model haiku  --ablation none --runs 3 --json haiku.json
+claude plugin eval . --model sonnet --ablation none --runs 3 --json sonnet.json
+node scripts/eval-tiers.mjs haiku.json sonnet.json
+```
+
+`eval-tiers.mjs` prints one row per tier: seeded-defect recall, whether the control scored 0
+(it exits 1 if not), list-price cost and turns. With `--runs` above 1, a case counts as
+found only if it was found in every run, so 2 of 3 runs reads as missed. It does not print output tokens: the eval
+result records none. The cases put the diff in the prompt and run in one turn, so they measure
+a tier on the light-review task itself, not the full `code-review` procedure, which needs a
+real PR. `--model` changes the model only; the eval CLI has no effort flag.
+
 Each PR's result records `reviewScope`, `reviewRouting` and `models`; every routing decision
 is logged with its reason. To change the policy, edit the constants at the top of
 `workflows/orchestrate.js` (`SMALL_POINTS`, `RISKY_LABEL`, `LIGHT_REVIEW_MAX_FILES`,

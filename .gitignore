@@ -23,3 +23,6 @@ package-lock.json.bak
 # Scratch
 tmp/
 *.log
+
+# claude plugin eval output (per-run results and reports)
+evals/results/

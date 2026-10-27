@@ -1,0 +1,75 @@
+{
+ "schemaVersion": 1,
+ "claudeVersion": "2.1.311",
+ "durationSeconds": 8,
+ "costUsd": 0.0094,
+ "partial": false,
+ "suite": {
+  "ablation": "none",
+  "modelOverride": "broken-scorer"
+ },
+ "cases": [
+  {
+   "name": "control-unseeable-defect",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 1,
+      "costUsd": 0.0025,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-auth-bypass",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 1,
+      "costUsd": 0.0024,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-missing-tenant-scope",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 1,
+      "costUsd": 0.0022,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-sql-injection",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 1,
+      "costUsd": 0.0024,
+      "error": null
+     }
+    ]
+   }
+  }
+ ],
+ "aggregates": {
+  "casesTotal": 4,
+  "casesPassed": 3,
+  "overallScore": 0.75,
+  "overallPassRate": 0.75
+ }
+}
