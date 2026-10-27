@@ -71,7 +71,7 @@ Use the `playwright` MCP server's `browser_*` tools:
 | `browser_type` | Type text into an input by `ref` |
 | `browser_press_key` | Enter, Tab, Escape, and so on |
 | `browser_select_option` | Select a dropdown option by `ref` |
-| `browser_go_back` / `browser_go_forward` | History navigation |
+| `browser_navigate_back` | Go back in history. There is no forward tool: re-open a page with `browser_navigate` |
 | `browser_close` | Close the browser when done |
 
 **If the Playwright MCP server is not configured, stop and say so.** There is no fallback

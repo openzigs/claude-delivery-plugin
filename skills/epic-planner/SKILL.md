@@ -123,8 +123,7 @@ summary), use that summary. When invoked interactively and no research summary w
 whether to research first; do not run a research menu of your own here. Research is
 `/delivery:research-gather`'s job, and `/delivery:plan-epic` runs it and this skill in one step.
 
-For anything more than a couple of URLs, run `/delivery:research-gather` (or dispatch the
-`delivery:research` agent) and use its summary as the input to Step 1. Carry its **Open
+For anything more than a couple of URLs, run `/delivery:research-gather` and use its summary as the input to Step 1. Carry its **Open
 Questions** and **Could Not Confirm** sections forward — an unresolved question belongs in the
 epic body. A wrong claim in a research summary is copied into an epic and then into every
 sub-issue below it before anyone checks it.

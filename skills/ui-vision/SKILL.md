@@ -305,11 +305,10 @@ If bugs were found during the walkthrough:
      ```
    - Confirm a label exists before using it; `gh` fails the whole command on an unknown label.
      `gh label list` tells you what the repo has.
-2. **Call the `delivery:code-issue` agent** to fix the bugs:
-   - Pass the bug issues as a batch, with reproduction steps and expected behaviour
-   - That agent will create a feature branch, fix the bugs test-first, run the project's gates,
-     and open a PR
-   - Wait for it to report back with the PR number
+2. **Recommend the fix; do not dispatch it.** This agent has no `Agent` tool. Report that the
+   filed issues are ready for `/delivery:orchestrate <issue numbers>` (or the
+   `delivery:code-issue` agent), which fixes them test-first, runs the project's gates and opens
+   a PR, with the bug issues as one batch.
 3. **If called by another agent**, report the issue numbers and the PR number back rather than
    proceeding. The caller routes through its own Review → Fix → Re-Review cycle before calling
    back for re-testing.

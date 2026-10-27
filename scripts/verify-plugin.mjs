@@ -146,6 +146,35 @@ for (const file of agentFiles) {
     `agents/orchestrator.md points at /delivery:orchestrate and lists only phases the workflow runs (${agentPhases.join(', ')}${extra.length ? `; not in the workflow: ${extra.join(', ')}` : ''})`)
 }
 
+// An instruction must be something the agent can do (#61): a skill or agent body may tell
+// its agent to hand off to, call or dispatch only an agent in that agent's Agent(...)
+// allowlist; anything else is a recommendation the agent reports.
+{
+  const SKILL_AGENT = { 'code-issue': 'code-issue', 'code-review': 'code-review', 'ui-vision': 'ui-vision', 'e2e-test': 'e2e-test',
+    'epic-planner': 'code-planner', 'research-gather': 'research' }
+  const DISPATCH = /\b(hands? (?:it |the work |the findings |them )?(?:off |over )?to|call|dispatch(?:es|ing)?|invoke|delegate to|run)\s+(?:the\s+)?\*{0,2}`delivery:([a-z-]+)`/gi
+  const impossible = []
+  for (const [skill, agentName] of Object.entries(SKILL_AGENT)) {
+    const agentSrc = readFileSync(join(ROOT, 'agents', `${agentName}.md`), 'utf8')
+    const allow = ((/Agent\(([^)]*)\)/.exec(frontmatter(agentSrc, `${agentName}.md`)?.tools || '') || [])[1] || '')
+      .split(',').map((x) => x.trim().replace(/^delivery:/, '')).filter(Boolean)
+    const text = squash([agentSrc, ...readdirSync(join(ROOT, 'skills', skill)).filter((f) => f.endsWith('.md'))
+      .map((f) => readFileSync(join(ROOT, 'skills', skill, f), 'utf8'))].join('\n'))
+    for (const m of text.matchAll(DISPATCH)) if (!allow.includes(m[2])) impossible.push(`${agentName} (skill ${skill}): "${m[0]}"`)
+  }
+  ;(impossible.length === 0 ? ok : bad)(`no skill or agent tells its agent to dispatch an agent outside its Agent(...) allowlist${impossible.length ? ` (${impossible.join('; ')})` : ''}`)
+  const texts = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.flatMap((d) => readdirSync(join(ROOT, 'skills', d)).filter((f) => f.endsWith('.md')).map((f) => `skills/${d}/${f}`))]
+  const hits = (re) => texts.filter((f) => re.test(readFileSync(join(ROOT, f), 'utf8')))
+  const stalePw = hits(/browser_go_(back|forward)|browser_navigate_forward/)
+  ;(stalePw.length === 0 ? ok : bad)(`no agent or skill names a Playwright MCP tool that does not exist (browser_go_back/forward, browser_navigate_forward)${stalePw.length ? ` (${stalePw.join(', ')})` : ''}`)
+  const noTool = hits(/\bTodoWrite\b|execution subagent/)
+  ;(noTool.length === 0 ? ok : bad)(`no agent or skill relies on TodoWrite or an "execution subagent" no agent has${noTool.length ? ` (${noTool.join(', ')})` : ''}`)
+  const ciSrc = readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8')
+  const wt = ciSrc.slice(ciSrc.indexOf('### Step 2: Branch Setup'), ciSrc.indexOf('### Step 3'))
+  ;(/Under a workflow, the workflow decides isolation/.test(wt) && /When invoked interactively\*\* and the checkout may be\s+shared[\s\S]*git worktree add/.test(wt) ? ok : bad)(
+    'code-issue creates its own worktree only when invoked interactively; under a workflow the workflow decides isolation')
+}
+
 // No agent sets `model:` (#56). Since Claude Code v2.1.251 an explicit frontmatter model,
 // `inherit` included, outranks CLAUDE_CODE_SUBAGENT_MODEL; omitting it lets the variable
 // apply. Model routing is the workflow's job, per call. An agent that genuinely needs a pin
