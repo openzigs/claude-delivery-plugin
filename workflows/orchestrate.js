@@ -321,12 +321,13 @@ const IMPLEMENT_SCHEMA = {
           },
           filesChanged: { type: ['integer', 'null'], description: 'The PR\'s changedFiles, from gh pr view' },
           linesChanged: { type: ['integer', 'null'], description: 'The PR\'s additions + deletions, from gh pr view' },
+          headRefName: { type: ['string', 'null'], description: 'The PR\'s head branch, from gh pr view --json headRefName; null if you opened no PR' },
           report: {
             type: 'string',
             description: 'What you built, coverage before/after, the mutations that proved your tests can fail, defects found, anything deferred',
           },
         },
-        required: ['issue', 'pr', 'storyPoints', 'labels', 'filesChanged', 'linesChanged', 'report'],
+        required: ['issue', 'pr', 'storyPoints', 'labels', 'filesChanged', 'linesChanged', 'headRefName', 'report'],
       },
     },
   },
@@ -430,8 +431,8 @@ const implementPrompt = (lane, rules) => {
     `- its labels and the number on its "Story Points" line, from ` +
     `\`gh issue view <issue> --json labels,body\` — exactly as written, null if there is no ` +
     `such line; do not estimate, the review is routed on these;\n` +
-    `- the PR's size, from \`gh pr view <pr> --json changedFiles,additions,deletions\`: ` +
-    `changedFiles, and additions + deletions as linesChanged.`
+    `- the PR's size and branch, from \`gh pr view <pr> --json changedFiles,additions,deletions,headRefName\`: ` +
+    `changedFiles, additions + deletions as linesChanged, and headRefName.`
   )
 }
 
@@ -508,8 +509,16 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
         `, re-review on ${modelName(models.rereview)}` +
         (route.light ? ' (escalated: a light review found blocking findings, so cycle 2 is full scope).' : '.'),
     )
+    // The fix pushes to the PR that exists. Its branch comes from the implementer's gh
+    // read; if that was not reported, the agent is told to read it, never to guess one.
+    const head = it.headRefName
+      ? `The PR's head branch is \`${it.headRefName}\`.`
+      : `Read the PR's head branch with \`gh pr view ${it.pr} --json headRefName\` before you start.`
     ;[fixed, outputTokens.fix] = await metered(() => agent(
-      `Fix the blocking findings from this code review of PR #${it.pr} for ${subject}.\n\n` +
+      `Fix the blocking findings from this code review of PR #${it.pr} for ${subject}, ` +
+        `following the Fix mode section of the code-issue procedure (preloaded). ` +
+        `${head} Push your fixes to that existing branch. Do not create a new branch or a ` +
+        `new PR, and skip the steps Fix mode skips.\n\n` +
         `${reviewText}\n\n${rules}\n\n` +
         `Address every BLOCKING finding, and prove each fix with a test you have seen fail ` +
         `without it. For non-blocking ones, either take them or say why not — do not ` +

@@ -412,7 +412,7 @@ function runner(body) {
         if (o.schema?.properties?.issues) {
           if (implement !== undefined) return typeof implement === 'function' ? implement(o) : implement
           const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
-          return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `${REPORT_SENTINEL} ${n}` })) }
+          return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, headRefName: `feature/issue-${n}-stub`, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `${REPORT_SENTINEL} ${n}` })) }
         }
         // The fix schema must get a fix-shaped answer, not the review stub: a
         // review object here would let the phase checks pass for the wrong reason.
@@ -610,6 +610,30 @@ for (const file of workflowFiles) {
     'the re-review prompt points at the batched orient call')
   check((r.dispatches.find((d) => d.label === 'rereview:412')?.prompt || '').includes('files the findings name'),
     'a non-escalated re-review reads only the files the findings name')
+
+  // --- the fix pushes to the existing PR branch in Fix mode, never a new branch or PR
+  r = await run({ review: BLOCKING_REVIEW })
+  const fixPrompt = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+  check(fixPrompt.includes('head branch is `feature/issue-412-stub`') && fixPrompt.includes('Push your fixes to that existing branch'),
+    'the fix prompt names the PR head branch the implementer reported, and says to push to it')
+  check(/Do not create a new branch or a new PR/.test(fixPrompt), 'the fix prompt says not to create a branch or a PR')
+  check(fixPrompt.includes('Fix mode section of the code-issue procedure (preloaded)'),
+    'the fix prompt points at the Fix mode section by name, not by a slash skill')
+  r = await run({ review: BLOCKING_REVIEW, facts: { 412: { headRefName: null } } })
+  const noHead = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+  check(noHead.includes('gh pr view 1412 --json headRefName') && !/head branch is `/.test(noHead),
+    'with no reported head branch the fix is told to read it from gh, not given a guess')
+  check(r.dispatches.find((d) => d.label === 'implement:412')?.prompt.includes('headRefName')
+    && r.dispatches.find((d) => d.label === 'implement:412')?.schema?.properties?.issues?.items?.required?.includes('headRefName'),
+    'the implementer is asked for each PR\'s headRefName as required structured output')
+  {
+    const issueSkill = readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8')
+    const fm = sectionOf(issueSkill, '## Fix mode')
+    check(fm && fm.trim().split('\n').length <= 40 && /headRefName/.test(fm) && /no new branch and no new PR/i.test(fm)
+      && /only the listed findings/i.test(fm) && /test and lint gates/i.test(fm)
+      && ['security scan', 'living documents', 'PR creation'].every((t) => fm.includes(t)),
+      'skills/code-issue has a Fix mode section of at most 40 lines naming the branch, what it skips and what it still runs')
+  }
 
   // --- the fix returns structured output, and the re-reviewer sees it
   r = await run({ review: BLOCKING_REVIEW })

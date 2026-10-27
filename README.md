@@ -146,8 +146,9 @@ conversation.
    any of `secur`, `auth`, `migrat`, `breaking`, `payment`, `billing`, `privacy`, `infra` or
    `data-loss`, so `Security`, `authentication`, `db-migration` and `infrastructure` all
    count. The match errs towards a full review: `author-feedback` counts too.
-3. **Fix** — only when the review flags a blocking finding. `delivery:code-issue` fixes or
-   declines each finding with a reason, re-runs the gates and pushes.
+3. **Fix** — only when the review flags a blocking finding. `delivery:code-issue`, in the
+   skill's *Fix mode*, fixes or declines each finding with a reason, re-runs the gates and
+   pushes to the PR's existing branch. It opens no new branch or PR.
 4. **Re-review** — `delivery:code-review` checks the fix. That is cycle 2 of a **maximum
    of 2**; anything still blocking after it is left for you, not a third automated pass.
 
