@@ -21,13 +21,10 @@ numbers here are defaults for a repository that names none. If the repository ha
 delivery-pipeline constraints such as branch naming, PR body shape and which gates block a merge.
 Step 1's batched call reads both, so do not spend a separate turn on either.
 
-If the project states no commands, infer them from the repository — `package.json` scripts,
+If the repository has neither file, or the project states no commands, infer them from the repository — `package.json` scripts,
 `Makefile`, `pyproject.toml`, `Cargo.toml`, `go.mod`, and above all the CI workflow under
 `.github/workflows/` — and **say in your report what you inferred**. An inferred command
 presented as a known one is how a "green" report gets made from a suite that never ran.
-
-GitHub work is done with the **`gh` CLI**. MCP servers are optional and may be absent — never make
-a step depend on one.
 
 ### Step 1: Planning
 

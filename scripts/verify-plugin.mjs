@@ -339,9 +339,36 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     const texts = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.map((d) => `skills/${d}/SKILL.md`)]
     const rereads = texts.filter((f) => /Read (the project's )?\*{0,2}`CLAUDE\.md`/.test(readFileSync(join(ROOT, f), 'utf8')))
     checkSkill(rereads.length === 0, `no agent or skill tells the agent to read CLAUDE.md unconditionally${rereads.length ? ` (found in ${rereads.join(', ')})` : ''}`)
-    for (const f of ['agents/code-planner.md', 'agents/research.md', 'agents/code-review.md', 'agents/code-issue.md']) {
-      checkSkill(/has neither/.test(readFileSync(join(ROOT, f), 'utf8')), `${f} says what to do when the repository has neither CLAUDE.md nor AGENTS.md`)
+    // #55: the CLAUDE.md / AGENTS.md / neither rule is kept once, in each skill's opening
+    // section, which every invocation reads; the agents and workflow prompts point at it.
+    for (const [f, h] of [['skills/code-issue/SKILL.md', '## Step 0'], ['skills/code-review/SKILL.md', '## Step 0'],
+      ['skills/research-gather/SKILL.md', '## Before You Start'], ['skills/epic-planner/SKILL.md', '## Before You Start']]) {
+      checkSkill(/has neither/.test(sectionOf(readFileSync(join(ROOT, f), 'utf8'), h)), `${f} ${h} says what to do when the repository has neither CLAUDE.md nor AGENTS.md`)
     }
+    const restated = ['code-planner', 'research', 'code-review', 'code-issue']
+      .filter((a) => /CLAUDE\.md` is (normally )?already in your context|CLAUDE\.md` is already in your context/.test(readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8')))
+    checkSkill(restated.length === 0, `no dispatchable agent restates the CLAUDE.md-in-context rule its skill states${restated.length ? ` (${restated.join(', ')})` : ''}`)
+    // #55: gh / no-MCP is a tools fact, kept in the agent files; the procedure skills do not repeat it.
+    checkSkill(['code-issue', 'code-review'].every((a) => /Assume you have no MCP tools/.test(readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8'))
+      && !/MCP servers are optional and may be absent/.test(readFileSync(join(ROOT, 'skills', a, 'SKILL.md'), 'utf8'))),
+      'the no-MCP / use-gh rule is stated in the code-issue and code-review agents, not again in their skills')
+    // #55: the canvas and filter rules live in the e2e-test and ui-vision skills only.
+    const A11Y = /(invisible to|does not appear in) the accessibility tree/g
+    const BEFORE_AFTER = /before and after/gi
+    const n = (t, re) => (t.match(re) || []).length
+    checkSkill(['e2e-test', 'ui-vision'].every((a) => {
+      const sk = readFileSync(join(ROOT, 'skills', a, 'SKILL.md'), 'utf8'), ag = readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8')
+      return n(sk, A11Y) === 1 && n(ag, A11Y) === 0 && n(sk, BEFORE_AFTER) === 1 && n(ag, BEFORE_AFTER) <= 1 && !/Screenshot \*\*before and after\*\*/.test(ag)
+    }),
+      'the canvas and filter rules exist once each, in the e2e-test and ui-vision skills, not in their agents')
+    // #55: the planner's report shape is the plan-epic prompt (dispatched) and epic-planner Step 7 (interactive).
+    checkSkill(!/## Output format/.test(readFileSync(join(ROOT, 'agents/code-planner.md'), 'utf8')),
+      'agents/code-planner.md does not define the planner output format a third time')
+    // #55: the durable-finding format is REVIEW_SCHEMA.durableFinding, not agent prose.
+    const orchSrc55 = readFileSync(join(ROOT, 'workflows/orchestrate.js'), 'utf8')
+    checkSkill(!/Durable finding:/.test(readFileSync(join(ROOT, 'agents/code-review.md'), 'utf8'))
+      && /durableFinding: \{[\s\S]*?could not derive by reading the code[\s\S]*?one-off finding/.test(orchSrc55),
+      'the durable-finding format is described by REVIEW_SCHEMA.durableFinding, not in agents/code-review.md prose')
     const ASK = /\bask(s)? (the user|clarifying|before|first)\b|\bAsk the user\b|Would you like me to/
     const unconditioned = []
     for (const f of ['agents/code-planner.md', 'agents/research.md', 'agents/code-review.md', 'agents/code-issue.md',
@@ -608,7 +635,7 @@ for (const file of workflowFiles) {
           && !/If \.claude\/delivery\.md exists, read it/.test(d.prompt))
           ? ok('plan-epic.js: every dispatch reads .claude/delivery.md inside its first batched call, not separately')
           : bad('plan-epic.js: a dispatch still reads .claude/delivery.md as a separate step')
-        dispatches.length === 2 && dispatches.every((d) => squash(d.prompt).includes(UNATTENDED) && /If it has neither/.test(d.prompt))
+        dispatches.length === 2 && dispatches.every((d) => squash(d.prompt).includes(UNATTENDED) && /a repository with neither/.test(d.prompt))
           ? ok('plan-epic.js: every dispatch carries the unattended-run rule and the neither-CLAUDE.md-nor-AGENTS.md case')
           : bad('plan-epic.js: a dispatch lacks the unattended-run rule or the neither-file case')
         dispatches.every((d) => !('effort' in d))
@@ -741,8 +768,8 @@ for (const file of workflowFiles) {
   check(lr.dispatches.length === 4 && lr.dispatches.every((d) => !/\/delivery:code-/.test(d.prompt)),
     'no light-route prompt (scope note, escalated re-review) names a /delivery:code-* slash skill')
 
-  check(r.dispatches.every((d) => /If it has neither/.test(d.prompt)),
-    'every dispatch says what to do when the repository has neither CLAUDE.md nor AGENTS.md')
+  check(r.dispatches.every((d) => /Step 0 says how to\s+treat CLAUDE\.md, AGENTS\.md and a repository with neither/.test(d.prompt)),
+    'every dispatch points at its procedure\'s Step 0 for CLAUDE.md, AGENTS.md and a repository with neither')
 
   // --- orientation is batched in every dispatch, with no separate delivery.md read
   check(r.dispatches.every((d) => d.prompt.includes('cat .claude/delivery.md 2>/dev/null')

@@ -13,15 +13,11 @@ do not plan issues and you do not write code — you research.
 
 ## First: learn this project's rules
 
-**The project's `CLAUDE.md` is normally already in your context; read it only if it is not.**
-Obey it exactly. If there is no `CLAUDE.md`, read `AGENTS.md`. If `.claude/delivery.md` exists,
-read it too. If the repository has neither `CLAUDE.md` nor `AGENTS.md`, infer the commands and
-conventions from the repository itself (manifests, CI workflow) and say in your report what you
-inferred. In particular, note any **protected paths or data-handling
-rules** it states: a research agent reads widely by nature, and reading restricted material is
-itself a disclosure that cannot be undone once it is in a transcript. If neither file exists,
-read nothing outside the repository that the request does not name (when invoked
-interactively, ask first).
+Your skill's "Before You Start" section says how to treat `CLAUDE.md`, `AGENTS.md` and a
+repository with neither. Note any **protected paths or data-handling rules** the project
+states: a research agent reads widely by nature, and reading restricted material is itself a
+disclosure that cannot be undone once it is in a transcript. Read nothing outside the
+repository that the request does not name (when invoked interactively, ask first).
 
 **Unattended runs.** When a workflow or another agent dispatched you, no user is present:
 never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a

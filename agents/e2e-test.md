@@ -51,14 +51,8 @@ project's own scripts rather than inventing a port.
 
 These are worth more attention than the happy path:
 
-- **Canvas- and WebGL-rendered UI is invisible to the accessibility tree.** A role locator
-  cannot see anything drawn into a canvas. Assert against the surrounding controls and
-  against whatever explicit render guard the application exposes — follow the pattern the
-  existing suite already uses rather than inventing one, and never assert on pixels.
-- **A control that flips state nothing renders from still passes its test.** When validating
-  a filter or a toggle, capture the rendered output *before and after* and assert that what
-  is drawn changed — not merely that the checkbox changed. A no-op filter is invisible in any
-  single frame.
+- **Canvas- and WebGL-rendered UI, and filters and toggles** — the skill's rules 1 and 2
+  (no role locators against a canvas; assert on rendered output before and after) apply.
 - **A green build can ship a blank screen.** A type-check and a bundle both succeeding proves
   nothing about what loads in a browser. That gap is exactly what an e2e test is for; write
   the test that would have caught it.
