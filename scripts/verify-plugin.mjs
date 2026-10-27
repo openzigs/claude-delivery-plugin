@@ -2165,12 +2165,20 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     const at = (re) => stepSrc.search(re)
     c(at(/resetScratch\(repo,/) > 0 && at(/resetScratch\(repo,/) < at(/'push'/) && at(/resetScratch\(repo,/) < at(/'issue', 'create'/) && /isolation, calls/.test(stepSrc),
       'each step resets its scratch repository before it pushes or files anything, and records the isolation in meta.json')
-    // #98: the plugin under test is a worktree of this repository, which holds the planted
-    // defects (bench/) and their description (docs/benchmarks.md); both go before any agent runs.
-    c(at(/rmSync\(join\(pluginDir, 'bench'\)/) > 0 && at(/rmSync\(join\(pluginDir, 'docs', 'benchmarks\.md'\)/) > 0
-      && Math.max(at(/rmSync\(join\(pluginDir, 'bench'\)/), at(/rmSync\(join\(pluginDir, 'docs', 'benchmarks\.md'\)/)) < at(/spawnSync\('claude'/)
+    // #98: the plugin under test is exported from this repository, which holds the planted
+    // defects and their descriptions; the export must carry none of them, nor git history.
+    c(at(/exportPlugin\(sha, pluginDir\)/) > 0 && at(/exportPlugin\(sha, pluginDir\)/) < at(/spawnSync\('claude'/)
       && /planted: c\.planted \?\? null/.test(stepSrc),
-    'each step removes bench/ and docs/benchmarks.md from the plugin worktree before any claude call, and records each call\'s planted defect in meta.json')
+    'each step exports the plugin before any claude call, and records each call\'s planted defect in meta.json')
+    const exp = mkdtempSync(join(tmpdir(), 'bench-export-'))
+    try {
+      run.exportPlugin('HEAD', exp)
+      const leaks = []
+      const walk = (d) => { for (const e of readdirSync(d, { withFileTypes: true })) { const f = join(d, e.name); if (e.isDirectory()) walk(f); else if (/reorderLines|reorder\.js|planted defect/i.test(readFileSync(f, 'latin1'))) leaks.push(f.slice(exp.length + 1)) } }
+      walk(exp)
+      c(existsSync(join(exp, '.claude-plugin', 'plugin.json')) && !existsSync(join(exp, '.git')) && !existsSync(join(exp, 'bench')) && leaks.length === 0,
+        `the exported plugin has its manifest, no .git and no file naming a planted defect (leaks: ${JSON.stringify(leaks)})`)
+    } finally { rmSync(exp, { recursive: true, force: true }) }
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
       'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')

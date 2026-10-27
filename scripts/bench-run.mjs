@@ -20,7 +20,7 @@
 // issues are filed. That is why --reset-scratch must be passed to say so. Nothing else on
 // GitHub is touched.
 //
-// For each ref and run: a detached git worktree of this repository at the ref is the plugin
+// For each ref and run: an export of this repository at the ref is the plugin
 // (`claude --plugin-dir`, which takes precedence over an installed `delivery` plugin); a fresh
 // temporary copy of bench/fixture-repo is the project. Scenario `orchestrate` runs four
 // separate `claude -p` calls -- small (--points 1: sonnet implement, light review), medium
@@ -28,8 +28,8 @@
 // obvious implementation misses, which now measures the implementer) and caller (--points 3; a
 // planted defect in an unchanged caller that the natural implementation breaks, to draw a
 // blocking finding, a fix and a re-review). A planted defect is described in its issue file's
-// front matter, which is never filed, and bench/ and docs/benchmarks.md are removed from the
-// plugin worktree, so no agent can read it. Scenario `plan-epic` runs one, on
+// front matter, which is never filed. The plugin is exported without git history and without
+// the files that describe planted defects (HIDDEN_FROM_AGENTS), so no agent can read it. Scenario `plan-epic` runs one, on
 // bench/topics/plan-epic.md. The calls run with
 // --dangerously-skip-permissions. That is NOT confined: the agents have an unrestricted shell
 // and whatever `gh` credentials you are logged in with. Run it with a GH_TOKEN that can reach
@@ -139,6 +139,23 @@ const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', 
 // open pull request (GitHub cannot delete one; `gh issue list` never lists a PR), and delete
 // every branch but the default. `gh(args)` runs gh and returns its stdout; the verifier passes a
 // fake. Throws if anything is left, so a step never starts on a repository it could not reset.
+// Files that describe a planted defect: the scenarios, their documentation, the bench scripts
+// and the verifier with its fixtures. None of them is part of the plugin, so the agents under
+// test never see them.
+export const HIDDEN_FROM_AGENTS = [
+  'bench', 'docs/benchmarks.md', 'scripts/verify-plugin.mjs', 'scripts/bench-run.mjs',
+  'scripts/bench-report.mjs', 'scripts/fixtures/bench',
+]
+
+// Exports the plugin at `sha` into `dir` with `git archive`: a plain tree with no .git, so no
+// agent can recover a hidden file from history either.
+export function exportPlugin(sha, dir) {
+  mkdirSync(dir, { recursive: true })
+  const tar = execFileSync('git', ['-C', ROOT, 'archive', '--format=tar', sha], { maxBuffer: 1 << 30 })
+  execFileSync('tar', ['-x', '-C', dir], { input: tar })
+  for (const p of HIDDEN_FROM_AGENTS) rmSync(join(dir, p), { recursive: true, force: true })
+}
+
 export function resetScratch(repo, gh) {
   const list = (args) => JSON.parse(gh(args) || '[]').map((x) => x.number)
   const issues = () => list(['issue', 'list', '--repo', repo, '--state', 'all', '--limit', '1000', '--json', 'number'])
@@ -164,12 +181,9 @@ function runStep(step, o) {
   const tmp = mkdtempSync(join(tmpdir(), 'delivery-bench-'))
   const pluginDir = join(tmp, 'plugin')
   const work = join(tmp, 'work')
-  sh('git', ['-C', ROOT, 'worktree', 'add', '--detach', pluginDir, sha])
-  // The plugin is a worktree of this repository: drop the planted defects and their description.
-  rmSync(join(pluginDir, 'bench'), { recursive: true, force: true })
-  rmSync(join(pluginDir, 'docs', 'benchmarks.md'), { force: true })
   const repo = step.repo
   try {
+    exportPlugin(sha, pluginDir)
     const isolation = { mode: o.isolation, repo, ...resetScratch(repo, (args) => sh('gh', args, ROOT)) }
     cpSync(join(BENCH, 'fixture-repo'), work, { recursive: true })
     sh('git', ['init', '-q', '-b', 'main'], work)
@@ -213,7 +227,6 @@ function runStep(step, o) {
     })
     writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls }, null, 2) + '\n')
   } finally {
-    spawnSync('git', ['-C', ROOT, 'worktree', 'remove', '--force', pluginDir])
     if (!o.keep) rmSync(tmp, { recursive: true, force: true })
   }
 }
@@ -233,7 +246,7 @@ if (isMain) {
     'Expect a few million tokens for both scenarios on two refs.')
   for (const s of steps) {
     console.log(`${s.ref} / ${s.scenario} / run ${s.run} -> ${s.out}  [reset ${s.repo} first]`)
-    for (const c of s.calls) console.log(`  claude ${claudeArgs(c.prompt, '<worktree of ' + s.ref + '>').map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`)
+    for (const c of s.calls) console.log(`  claude ${claudeArgs(c.prompt, '<export of ' + s.ref + '>').map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`)
   }
   if (o.dryRun) process.exit(0)
   clearResults(steps)

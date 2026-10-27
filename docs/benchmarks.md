@@ -307,8 +307,11 @@ temporary directory, resets the scratch repository (see Isolation above) and for
   **Planted defects are hidden from the agents.** A planted defect is described in its issue
   file's front matter (`defect`, a note for maintainers; `defectLocations`, files with an
   optional `:start-end` line range; `defectKeywords`). Only the title, labels and body are
-  filed, so no agent reads the front matter. The plugin under test is a worktree of this
-  repository, so `bench-run.mjs` deletes `bench/` and this file from it before any call.
+  filed, so no agent reads the front matter. The plugin under test is exported with `git
+  archive`, so it has no git history, and `bench-run.mjs` leaves out every file that describes a
+  planted defect (`HIDDEN_FROM_AGENTS`: `bench/`, this file, the bench scripts, and the verifier and its bench
+  fixtures). The
+  verifier exports the plugin and fails if any file in it still names one.
   `bench-run.mjs` records each call's planted defect in `meta.json`, where the report reads it.
 - **Scenario 4, `plan-epic`.** It runs `claude -p "/delivery:plan-epic ./PLAN-TOPIC.md"` on
   `bench/topics/plan-epic.md`, which files issues in the scratch repository.
