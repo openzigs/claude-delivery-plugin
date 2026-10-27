@@ -194,6 +194,40 @@ widen to the full skill if the diff touches auth, secrets, payments, migrations 
 destructive. Lines are GitHub's additions + deletions, so a lockfile or a generated file
 counts towards the limit — that errs towards the full review, which is the direction to err.
 
+### The small tier's model: `--small-model`
+
+Everything in the table above that says `sonnet` — a small issue's implementer, the light
+review, the fix after a full review and the confirming re-review — is the **small tier**, and
+`--small-model` picks its model for the whole run:
+
+| Value | Small tier runs on |
+|---|---|
+| `sonnet` (default) | the `sonnet` alias — exactly what a run without the flag does |
+| `inherit` | the session model (and `CLAUDE_CODE_SUBAGENT_MODEL`, if set) |
+| `haiku` | the `haiku` alias. A haiku implementation that fails review escalates its fix to the session model, as a sonnet one does |
+
+```
+/delivery:orchestrate 412 --small-model inherit
+```
+
+Any other value, or the flag with no value, stops the run before anything is dispatched — it
+never falls back to a default silently. The full review and an escalated re-review always
+stay on the session model.
+
+**Why it exists: aliases resolve per provider.** The `sonnet` alias resolves to the newest
+Sonnet only on the Anthropic API. On Amazon Bedrock and Google Cloud's Agent Platform it
+resolves to **Sonnet 4.5** (and `haiku` to Haiku 4.5); on Microsoft Foundry `sonnet` is also
+Sonnet 4.5 ([model configuration, alias table](https://code.claude.com/docs/en/model-config),
+read for Claude Code with Opus 5.5, v2.1.280+). On those providers, `--small-model inherit`
+keeps the small tier on the session model, or pin the alias with
+`ANTHROPIC_DEFAULT_SONNET_MODEL`.
+
+**Why a flag and not a plugin `userConfig` option.** A workflow script can read only its
+`args`: `${user_config.KEY}` is substituted in skill, agent, hook, MCP and LSP content, not in
+workflow scripts ([plugins reference, "Reference a saved value"](https://code.claude.com/docs/en/plugins-reference);
+[workflows, "Edit a saved script"](https://code.claude.com/docs/en/workflows)). A `userConfig`
+option nothing could read would be a setting that silently does nothing.
+
 Each PR's result records `reviewScope`, `reviewRouting` and `models`; every routing decision
 is logged with its reason. To change the policy, edit the constants at the top of
 `workflows/orchestrate.js` (`SMALL_POINTS`, `RISKY_LABEL`, `LIGHT_REVIEW_MAX_FILES`,

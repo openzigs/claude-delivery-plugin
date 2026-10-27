@@ -24,6 +24,7 @@ If you want a phase to definitely happen, run the workflow.
 /delivery:orchestrate <issue> <issue> <issue>          (one batch: one implementer, one PR per issue)
 /delivery:orchestrate <issues> ; <issues>              (independent batches, run concurrently)
 /delivery:orchestrate <issue...> --points N | --small  (size hint for that batch's implementation)
+/delivery:orchestrate <issue...> --small-model sonnet|inherit|haiku  (the small tier's model, whole run)
 /delivery:orchestrate <a description of what you want done>
 /delivery:orchestrate                                  (uses what you described in conversation)
 ```
