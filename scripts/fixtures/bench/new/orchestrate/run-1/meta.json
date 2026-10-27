@@ -3,6 +3,13 @@
  "sha": "bbbb",
  "scenario": "orchestrate",
  "run": 1,
+ "isolation": {
+  "mode": "reset",
+  "repo": "a/b",
+  "issuesDeleted": 0,
+  "prsClosed": 0,
+  "branchesDeleted": 0
+ },
  "calls": [
   {
    "wallMs": 30000

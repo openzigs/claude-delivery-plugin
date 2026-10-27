@@ -252,16 +252,33 @@ node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/delivery-bench-
 # 3. run it (expensive; see the cost note at the top), then report
 node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch
 node scripts/bench-report.mjs            # or --json
+# or give each ref its own scratch repository, in --ref order
+node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/bench-a --repo <you>/bench-b --reset-scratch
 ```
 
-Options: `--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
+Options: `--repo` once (every ref shares it) or once per `--ref` (each ref gets its own),
+`--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
 `--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
+
+**Isolation.** A step is one ref, one run and one scenario. Before every step, `bench-run.mjs`
+resets that step's scratch repository: it deletes every issue, open or closed, closes every open
+pull request, and deletes every branch but the default. Then it force-pushes the fixture. So no
+step sees an issue, PR or branch an earlier ref, run or scenario left behind. Without this, the
+second ref's plan-epic found the epic the first ref had just filed, and correctly filed nothing.
+Issues are deleted, not closed, because the epic planner searches `--state all` for a
+duplicate. GitHub cannot delete a pull request, so PRs are closed; `gh issue list` never lists
+one. Deleting an issue needs admin rights on the repository, so the token must have them. If the
+reset cannot delete an issue, or anything is left afterwards, the run stops before the step
+starts. The isolation mode is recorded in each run's `meta.json` and printed by the report:
+- **`reset`**: one `--repo`, shared by every ref.
+- **`repo-per-ref`**: one `--repo` per ref. Each ref's repository is still reset before each of
+  its steps, so its runs and scenarios do not see each other either.
 
 **What it runs.** For each ref and run, `bench-run.mjs` checks the ref out as a detached git
 worktree of this repository and uses it as the plugin (`claude --plugin-dir`, which takes
 precedence over an installed `delivery` plugin). It copies `bench/fixture-repo/` — a tiny
 Node module with a `CLAUDE.md`, a test suite and a CI workflow that runs `npm test` — to a
-temporary directory, and force-pushes it as the scratch repository's `main`. That is why
+temporary directory, resets the scratch repository (see Isolation above) and force-pushes the copy as its `main`. That is why
 `--reset-scratch` must be passed: it says you know the scratch repository is reset. Then:
 
 - **Scenario 3, `orchestrate`.** It files the three canned issues in `bench/issues/` and runs
@@ -269,8 +286,11 @@ temporary directory, and force-pushes it as the scratch repository's `main`. Tha
   - **small**: 1 point, no risk label. This exercises the sonnet implementer and the light
     review.
   - **medium**: 3 points. This exercises the full review on the session model.
-  - **trap**: 3 points, with a requirement planted outside the acceptance criteria that the
-    obvious implementation misses. It should draw a blocking finding, a fix and a re-review.
+  - **trap**: 3 points. A planted requirement that the obvious implementation breaks: an
+    emptied SKU's key must be deleted, not left at 0. It sits inside the acceptance criteria, as
+    a trailing clause of the "subtracts `qty`" bullet, where a reviewer checking each criterion
+    against the diff catches it. It used to sit only in a Notes paragraph, and no review caught
+    it there. It should draw a blocking finding, a fix and a re-review.
 - **Scenario 4, `plan-epic`.** It runs `claude -p "/delivery:plan-epic ./PLAN-TOPIC.md"` on
   `bench/topics/plan-epic.md`, which files issues in the scratch repository.
 
@@ -284,13 +304,15 @@ holding secrets. Each call's JSON output and wall time are copied to
 `bench/results/<ref>/<scenario>/`, so stale sessions are never read again; two `--ref` values
 that map to the same directory name (`HEAD~1`, `HEAD^1`) are refused. The session is read from
 `$CLAUDE_CONFIG_DIR` or `~/.claude`. So is the session Claude Code persisted under
-`~/.claude/projects/`: the workflow results and every subagent transcript. Issues and PRs from
-earlier runs stay in the scratch repository; delete and recreate it to start clean.
+`~/.claude/projects/`: the workflow results and every subagent transcript. Closed PRs from
+earlier steps stay in the scratch repository; everything else is reset before each step.
 
 **Scenario 5: what the report shows.** `bench-report.mjs` reads only the results tree. Per ref
 and scenario, averaged over runs, it reports:
 - total subagent tokens (input, cache writes, cache reads and output, from the transcripts)
 - output tokens per phase
+- the isolation the runs used (`reset`, `repo-per-ref`, or `none` for results recorded before
+  `bench-run.mjs` reset the repository; `none` also prints a warning)
 - wall time
 - list-price cost (`total_cost_usd`, summed over calls)
 - review findings by severity (from each result's `findingCounts`)
@@ -298,9 +320,16 @@ and scenario, averaged over runs, it reports:
 - for plan-epic, whether an epic was filed: the scratch repository gained issues across the
   call (the planner's own reply is free text and proves nothing)
 
+A second table splits the same tokens by type: input, cache write, cache read and output, per
+ref, scenario and phase, plus an `all` row. Read it to tell two kinds of change apart. A smaller
+prompt footprint shows as fewer cache writes and cache reads. An effort change shows in output.
+The totals in the first table mix the two.
+
 A run whose call exited non-zero, timed out, or whose session could not be found is reported
 with a `WARNING ... INCOMPLETE` line under the tables: its numbers are lower or vacuous, not
-better.
+better. An orchestrate ref in which no run reached the Fix phase also gets a warning. In that
+case the trap drew no blocking finding, so fix, re-review and the #49 check went unexercised,
+and their `n/a` proves nothing.
 
 Then come the behaviour checks, read from the transcripts. A check passes only if it passed in
 every run it applied to:
@@ -322,8 +351,8 @@ number can be traced to the agent that produced it.
 
 **What it does not prove.** How the plugin performs on your repository. A small fixture has a
 small CLAUDE.md and small files, so it understates the per-dispatch cost a large project pays.
-At N=1, one run is one sample: the trap may or may not draw a blocking finding, and token
-counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
+At N=1, one run is one sample: the trap may or may not draw a blocking finding (the report
+warns when it did not), and token counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
 reads fields (`findingCounts`, recorded effort) that may be missing from an older ref's
 results; where one is missing it says `n/a` rather than guessing. 0.7.1 already returns
 `findingCounts` and `reviewScope`, so its full reviews are checked by #48 and will show FAIL
