@@ -50,7 +50,11 @@ for (const it of built.issues.filter((i) => i.pr))
 ```
 
 The review phase cannot be skipped, because skipping it would require the script not to
-execute a line. That is why this plugin is packaged as workflows that dispatch agents: the
+execute a line. One opt-in flag weakens the *per-PR* part of that guarantee:
+**`--batch-review`** (experimental, off by default) reviews a batch of PRs in one review
+instead of one each. It is cheaper, but one reviewer's attention is spread over several
+changes, so a defect is likelier to be missed; it is ignored for a batch with a risk label,
+and a PR it blocks still gets its own fix and re-review. That is why this plugin is packaged as workflows that dispatch agents: the
 agents are the workers the workflows dispatch, and the skills are the procedures those
 workers follow.
 
@@ -126,6 +130,7 @@ command on the same line.
 /delivery:orchestrate 412 413 ; 500 501       two batches, run concurrently in separate worktrees
 /delivery:orchestrate 412 --points 2          size hint for that batch (or --small)
 /delivery:orchestrate 412 --small-model haiku the small tier's model: sonnet (default), inherit or haiku
+/delivery:orchestrate 412 413 --batch-review  experimental cheap mode: one review for the whole batch
 /delivery:orchestrate make the audit filter honour a date range
                                               a description: the implementer files the issue first
 ```
@@ -164,7 +169,9 @@ conversation.
 
 **Batches.** Space-separated issues are one batch for one implementer — use it for related
 issues that touch the same code. Each issue still gets its own branch and PR, and its own
-review. Separate batches with `;` and they run **concurrently**, every agent in its own git
+review — unless you pass `--batch-review`, which reviews a batch with no risk label once.
+The result then records `cheapMode: true` and each batch's `reviewMode` (`batch` or
+`per-pr`, with the reason). Separate batches with `;` and they run **concurrently**, every agent in its own git
 worktree. A size hint belongs to the batch it is written in.
 
 **Stacked PRs and merge order.** When an issue in a batch depends on an earlier one that is
@@ -290,6 +297,7 @@ entry records:
 | `effort` | The effort passed to each phase that ran (`high` or `medium`; runs from before 0.8.0 show `inherit`) |
 | `outputTokens` | Output tokens of `review`, and of `fix` / `rereview` when they ran; `null` when the runtime gave no budget |
 | `findingCounts` | `{ review, rereview }`, each a count per severity: `critical`, `high`, `medium`, `low`, `nit` |
+| `suppressedFindings` | Non-blocking findings dropped for a confidence below 50; blocking findings are never dropped |
 | `stillBlocking` | After a re-review: `true` if blocking findings remain, `false` if not; `null` when no re-review ran |
 
 Also present: `reviewScope` (`light` or `full`) with its `reviewRouting` reason, the review,
@@ -477,9 +485,10 @@ scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
   cost-report.mjs      # the report /delivery:cost-report runs
   eval-tiers.mjs       # tier table over `claude plugin eval` results
+  footprint.mjs        # fixed prompt bytes per dispatch, for any git ref
   fixtures/            # synthetic inputs for the verifier
-evals/                 # light-review eval cases (seeded defects + a control) for A/B-ing model tiers
-docs/                  # installation, usage, configuration, gotchas, customising, templates
+evals/                 # review eval cases (seeded defects, clean controls), light scope; full/ holds the full-scope copies
+docs/                  # installation, usage, configuration, gotchas, customising, benchmarks, templates
 ```
 
 ## Contributing

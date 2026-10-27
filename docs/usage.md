@@ -25,6 +25,7 @@ If you want a phase to definitely happen, run the workflow.
 /delivery:orchestrate <issues> ; <issues>              (independent batches, run concurrently)
 /delivery:orchestrate <issue...> --points N | --small  (size hint for that batch's implementation)
 /delivery:orchestrate <issue...> --small-model sonnet|inherit|haiku  (the small tier's model, whole run)
+/delivery:orchestrate <issue> <issue> --batch-review   (experimental: one review per batch, whole run)
 /delivery:orchestrate <a description of what you want done>
 /delivery:orchestrate                                  (uses what you described in conversation)
 ```
@@ -42,6 +43,21 @@ If you want a phase to definitely happen, run the workflow.
 review: each PR gets its own review, its own fix and its own re-review, capped at two
 cycles. An issue the implementer did not finish, or that has no PR, is named in the log and
 the result reports `reviewCompleted: false`.
+
+**Cheap mode: `--batch-review` (experimental, off by default).** For a batch of two or more
+PRs, one `delivery:code-review` dispatch reviews them all, at full scope on the session model
+and `high` effort, publishes a separate review on each PR, and returns one structured entry
+per PR. Each PR is then routed on its own entry: a PR it blocks gets its own fix and
+re-review; a PR it returned nothing for is reported as not reviewed. The trade-off is
+independence: one reviewer splits its attention across several changes, so it is likelier to
+miss a defect than a review per PR. So the flag is **ignored** — the batch is reviewed per PR,
+and the log says why — when any issue in the batch carries a risk label (the same match as
+the light-review rule), when any issue's labels are unknown, or when the batch has one PR. The
+result records `cheapMode` for the run and `reviewMode` (`batch` or `per-pr`) with
+`reviewModeWhy` per batch; the batch review's output tokens are `outputTokens.batchReview` on
+the batch, and each PR it covered has `reviewedInBatch: true`. The cost-report marks the run as
+cheap mode and shows the batch review as its own row. It stays experimental until an eval
+compares its recall with per-PR review.
 
 **How each step picks its model.** There is no separate sizing agent; the implementer reads
 the issue anyway and reports what the later steps route on.
@@ -87,7 +103,8 @@ rather than assumed:
 | `models` | each PR | The model of each phase that ran (`session model` when inherited) |
 | `effort` | each PR | The effort passed to each phase that ran: `implement`, `review`, and `fix` / `rereview` when they ran. Always `high` or `medium`; results from before 0.8.0 show `inherit` where no effort was set |
 | `outputTokens` | each PR: `review`, `fix`, `rereview`; each batch: `implement` | Output tokens per phase, as the difference in `budget.spent()` around that agent call. `null` when the runtime provides no `budget` |
-| `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output. `rereview` is `null` when no re-review ran |
+| `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output, after low-confidence findings are dropped. `rereview` is `null` when no re-review ran |
+| `suppressedFindings` | each PR | How many non-blocking findings the review and re-review rated below confidence 50 and the workflow dropped before the fix pass. A blocking finding is never dropped, whatever its confidence. The cost-report shows it on the PR's Review row and in its totals |
 
 **Suggested project notes.** The run's result also carries `suggestedProjectNotes`: every
 `durableFinding` a review or re-review returned — a lesson a future reviewer could not derive

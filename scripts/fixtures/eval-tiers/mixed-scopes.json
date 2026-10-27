@@ -1,0 +1,163 @@
+{
+ "schemaVersion": 1,
+ "claudeVersion": "2.1.311",
+ "durationSeconds": 60,
+ "costUsd": 0.5,
+ "partial": false,
+ "suite": {
+  "ablation": "none",
+  "modelOverride": "sonnet"
+ },
+ "cases": [
+  {
+   "name": "control-unseeable-defect",
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-sql-injection",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.02,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-n-plus-one",
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.03,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "clean-docs",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.04,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "control-unseeable-defect-full",
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-sql-injection-full",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.1,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-n-plus-one-full",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.1,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "seeded-off-by-one-full",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.05,
+      "error": null
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.05,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "clean-refactor-full",
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 4,
+      "costUsd": 0.1,
+      "error": null
+     }
+    ]
+   }
+  },
+  {
+   "name": "clean-docs-full",
+   "arms": {
+    "with": [
+     {
+      "score": 1,
+      "passed": true,
+      "turns": 2,
+      "costUsd": 0.1,
+      "error": null
+     }
+    ]
+   }
+  }
+ ],
+ "aggregates": {
+  "casesTotal": 10
+ }
+}
