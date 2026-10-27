@@ -177,7 +177,11 @@ Scan all changed files for these OWASP Top 10 categories:
   publishing them cannot be undone by a later commit. A PR that forces past an ignore rule is
   blocking regardless of content.
 
-**Severity ratings:** Critical / High / Medium / Low / Informational.
+**Security blocking rule** (stated in `skills/code-issue/SKILL.md` Step 4; every other copy
+quotes it word for word): a `critical` or `high` security finding blocks the PR. A `medium`
+one is a follow-up, and blocks only if it is exploitable in the changed code; say which.
+`low` and `nit` never block. Dependency audits run at `--audit-level=high`. The severity
+scale is `critical | high | medium | low | nit`, the same words as the review's structured output.
 
 ### Step 5: Code Quality
 
@@ -318,8 +322,8 @@ ambiguous — it reads identically whether you found nothing, ran out of budget,
 the comments. If the review is genuinely clean, say what was examined and what was checked for. If
 it is truncated or partial, say that instead. Never publish a review whose emptiness is unexplained.
 
-**What makes a finding blocking** (→ `do not merge`): failing CI; any critical, high or medium
-security finding; missing requirements; broken or unfalsifiable tests; undocumented architectural
+**What makes a finding blocking** (→ `do not merge`): failing CI; a security finding that the
+security blocking rule (Step 4) says blocks; missing requirements; broken or unfalsifiable tests; undocumented architectural
 change; a missing changelog entry on a user-facing change. Everything else is a follow-up or a nit.
 
 **Review body structure:**

@@ -225,6 +225,39 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   checkSkill(g7 > 0 && g8 > g7 && DISPATCH_SKIP.test(gather.slice(g7, g8)),
     'research-gather Step 7 skips the user question when dispatched')
 
+  // One security blocking rule, stated once in code-issue Step 4 and quoted word for word
+  // by code-review and the orchestrator agent, so the implementer never ships a finding the
+  // reviewer then blocks on. One audit level everywhere, and one severity scale: the
+  // REVIEW_SCHEMA enum.
+  {
+    const orch = readFileSync(join(ROOT, 'agents/orchestrator.md'), 'utf8')
+    const norm = (t) => t.replace(/\s+/g, ' ')
+    const ruleOf = (t) => { const m = /\*\*Security blocking rule\*\*[\s\S]*?structured output\./.exec(t); return m ? norm(m[0]) : null }
+    const canon = ruleOf(sectionOf(issue, '### Step 4: Security Scan'))
+    checkSkill(canon && /`critical` or `high` security finding blocks/.test(canon),
+      'code-issue Step 4 states the security blocking rule (critical and high block)')
+    for (const [name, t] of [['code-review', review], ['agents/orchestrator.md', orch]]) {
+      checkSkill(canon && ruleOf(t) === canon, `${name} quotes the security blocking rule word for word`)
+    }
+    const walkText = (d) => readdirSync(join(ROOT, d), { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory() ? walkText(join(d, e.name)) : /\.(md|js)$/.test(e.name) ? [join(d, e.name)] : [])
+    const files = ['skills', 'agents', 'workflows'].flatMap(walkText)
+    const levels = new Set(files.flatMap((f) => [...readFileSync(join(ROOT, f), 'utf8').matchAll(/audit-level=(\w+)/g)].map((m) => m[1])))
+    const lvl = (t) => new Set([...t.matchAll(/audit-level=(\w+)/g)].map((m) => m[1]))
+    checkSkill(levels.size === 1 && JSON.stringify([...lvl(issue)]) === JSON.stringify([...lvl(orch)]),
+      `one --audit-level in skills, agents and workflows, the same in code-issue and the orchestrator (found ${JSON.stringify([...levels])})`)
+    const blocking = review.slice(review.indexOf('**What makes a finding blocking**'), review.indexOf('**Review body structure:**'))
+    const sevBlocks = (t) => ['critical', 'high', 'medium'].filter((s) => new RegExp(`\\b${s}\\b[^.]*security finding`, 'i').test(t))
+    checkSkill(sevBlocks(blocking).length === 0 && /security blocking rule/.test(blocking),
+      `code-review's blocking list defers to the security blocking rule rather than naming its own severities${sevBlocks(blocking).length ? ` (names ${sevBlocks(blocking)})` : ''}`)
+    const orchSrc = readFileSync(join(ROOT, 'workflows/orchestrate.js'), 'utf8')
+    const enumM = /severity: \{ type: 'string', enum: \[([^\]]*)\]/.exec(orchSrc)
+    const scale = enumM ? enumM[1].replace(/['\s]/g, '').split(',').join(' | ') : null
+    checkSkill(scale && canon?.includes(`\`${scale}\``), `the rule's severity scale is REVIEW_SCHEMA's enum (${scale})`)
+    const informational = files.filter((f) => /\bInformational\b/.test(readFileSync(join(ROOT, f), 'utf8')))
+    checkSkill(informational.length === 0, `"Informational" is not used as a severity in skills, agents or workflows${informational.length ? ` (found in ${informational})` : ''}`)
+  }
+
   for (const [name, src] of [['code-review', review], ['code-issue', issue]]) {
     checkSkill(!/0\. RULES[^\n]*delivery\.md/.test(src), `${name} overview box no longer lists a separate .claude/delivery.md read`)
     checkSkill(!/using `&&`\. Never open/.test(src) && /not `&&`|never `&&`|`;`/.test(sectionOf(src, '## Shell Execution Rules')),

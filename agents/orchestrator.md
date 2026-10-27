@@ -93,6 +93,12 @@ cargo audit                           # Rust
 govulncheck ./...                     # Go
 ```
 
+**Security blocking rule** (stated in `skills/code-issue/SKILL.md` Step 4; every other copy
+quotes it word for word): a `critical` or `high` security finding blocks the PR. A `medium`
+one is a follow-up, and blocks only if it is exploitable in the changed code; say which.
+`low` and `nit` never block. Dependency audits run at `--audit-level=high`. The severity
+scale is `critical | high | medium | low | nit`, the same words as the review's structured output.
+
 Plus a static pass over the diff for the OWASP classes that actually recur: injection
 (SQL, shell, template), path traversal, missing authorization on a new route, secrets in
 code or logs, unsafe deserialization, and SSRF on any new outbound request.

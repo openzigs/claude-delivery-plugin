@@ -231,7 +231,7 @@ If any validation fails or unexpected behaviour occurs, log a bug:
 - **Screenshot**: {reference to the screenshot taken}
 - **Console errors**: {any JS errors captured, or "None"}
 - **Network errors**: {any failed API calls, or "None"}
-- **Severity**: Critical | High | Medium | Low
+- **Severity**: critical | high | medium | low | nit
   - Critical: app crash, data loss, security issue
   - High: feature broken, blocking workflow
   - Medium: wrong behaviour but a workaround exists
