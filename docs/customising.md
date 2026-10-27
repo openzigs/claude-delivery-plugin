@@ -44,10 +44,12 @@ Three things to keep when you edit it:
    Edit` is load-bearing: it makes "just fix the code under review" stop being the
    near-at-hand move.
 4. **Keep or tune `maxTurns`.** The `research`, `ui-vision` and `code-review` agents set a turn
-   ceiling (60, 80 and 50), so a runaway agent stops and returns partial output rather than
-   running on. The values are provisional — no run has recorded turn counts yet — so raise one
-   if a legitimate run is cut short. No other agent sets it, and `cacheTtl` is left at its
-   default.
+   ceiling (30, 80 and 30), so a runaway agent stops and returns partial output rather than
+   running on. `research` and `code-review` are set with headroom over the highest turns the
+   benchmark replay observed (8 and 7, on a small fixture); `ui-vision` has no data yet and
+   keeps its conservative 80. Raise one if a legitimate run is cut short; see
+   [benchmarks](benchmarks.md) for how to re-derive them. No other agent sets it, and
+   `cacheTtl` is left at its default.
 
 **Remember this file exists.** A forgotten project override is the single most common cause
 of "my plugin changes are not taking effect" — see

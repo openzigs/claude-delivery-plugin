@@ -4,8 +4,9 @@ description: "Interactive browser walkthrough agent. Launches a real headed brow
 tools: Bash, Read, Skill, mcp__playwright__*
 disallowedTools: Write, Edit
 color: pink
-# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
-# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
+# maxTurns (#97): no data yet. The bench replay on #86 has no browser scenario, so no run
+# records this agent's turns; 80 stays as #58's conservative ceiling until one does. Raise it
+# if a legitimate walkthrough is cut short. To re-derive: docs/benchmarks.md.
 maxTurns: 80
 ---
 

@@ -356,8 +356,22 @@ every run it applied to:
 | #51 no CLAUDE.md read | any agent's `Read` of `CLAUDE.md`, or a `cat`/`head`/`sed`… of it (it is already in context) |
 | #51 no ask-user | any agent calling `AskUserQuestion` |
 
-The last table is the highest turn count per agent type. That is the number the provisional
-`maxTurns` ceilings (#58) should be set from, at about twice the highest observed.
+The last table is the highest turn count per agent type, per ref and scenario. The `maxTurns`
+ceilings in `agents/*.md` are set from it (#97).
+
+**Re-deriving `maxTurns`.** Run the replay with `--runs 3`, then `bench-report.mjs`, and take
+the largest number in an agent's column across every row of that table. The current values
+come from the N=3 replay recorded on #86 (6 runs per scenario): code-issue 13, code-review 7,
+code-planner 9, research 8. `code-review` and `research` are set to 30, not to #58's twice
+the highest observed (14 and 16). The fixture's PRs and topic are small, so real reviews
+and research take more turns, and an agent cut off by its cap returns nothing, which costs
+more than a few extra turns. `ui-vision` stays at 80 because no scenario drives a browser,
+so there is no data for it. When you change a value, update the comment above it in the
+agent's frontmatter: the verifier wants it to name the replay (`bench replay on #<issue>`)
+and either `highest observed <n>` or `no data yet`, and fails one that still says
+provisional. Lower a
+ceiling only on runs from real repositories: a fixture's maximum is a floor for real work,
+not an estimate of it.
 
 **What it proves.** On this fixture, with these three issues and this topic, how many tokens
 each ref spent per delivered issue and per phase, what its reviews found, and whether the
