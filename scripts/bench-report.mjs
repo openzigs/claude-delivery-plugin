@@ -66,13 +66,16 @@ export function readTranscript(text) {
 
 const bashOf = (t) => (t.name === 'Bash' && typeof t.input.command === 'string' ? t.input.command : '')
 const CLAUDE_MD_READ = /(^|[\s/'"])CLAUDE\.md\b/
-const SHELL_READ = /\b(cat|head|tail|less|more|sed|awk|grep|bat)\b[^|;&\n]*\bCLAUDE\.md\b/
+// A shell read starts a command (the start of the string or after ; & | or a subshell paren) and
+// takes the file as an argument. Unanchored, prose in a heredoc ("head: 74 tests ... CLAUDE.md")
+// matched. less and more are left out: they page, and an agent has no terminal to page in.
+const SHELL_READ = /(?:^|[;&|(]\s*)(?:cat|head|tail|sed|awk|grep|bat)\s[^|;&\n]*\bCLAUDE\.md\b/
 export const readsClaudeMd = (t) =>
   (t.name === 'Read' && typeof t.input.file_path === 'string' && /(^|\/)CLAUDE\.md$/.test(t.input.file_path))
   || (t.name === 'Bash' && SHELL_READ.test(bashOf(t)))
-  || ((t.name === 'Grep' || t.name === 'Glob') && CLAUDE_MD_READ.test(String(t.input.path || t.input.pattern || '')))
+  || (t.name === 'Grep' && CLAUDE_MD_READ.test(String(t.input.path || t.input.pattern || '')))
 export const asksUser = (t) => t.name === 'AskUserQuestion'
-const NEW_BRANCH = /\bgit\s+(?:checkout\s+(?:-b|-B)|switch\s+(?:-c|-C|--create)|branch\s+(?!-)[\w./-]+|worktree\s+add\s+(?:\S+\s+)*?-b)\b|\bgh\s+pr\s+create\b/
+const NEW_BRANCH = /\bgit\s+(?:checkout\s+(?:-b|-B)|switch\s+(?:-c|-C|--create)|branch\s+(?!-)[\w./-]+|worktree\s+add\s+(?:[^\s;&|]+\s+)*?-b)\b|\bgh\s+pr\s+create\b/
 export const createsBranchOrPr = (t) => NEW_BRANCH.test(bashOf(t))
 
 function agentsOf(sessionDir) {
@@ -96,6 +99,14 @@ function resultsOf(sessionDir) {
       if (typeof r === 'string') { try { r = JSON.parse(r) } catch { r = null } }
       return { workflowName: w.workflowName || null, durationMs: num(w.durationMs) || null, result: r }
     })
+}
+
+// A call that crashed, timed out or whose session could not be found contributes fewer tokens
+// and vacuous checks, which would read as an improvement; so it is flagged.
+const incompleteOf = (calls) => (Array.isArray(calls) ? calls.filter((c) => ('exit' in c && c.exit !== 0) || c.sessionFound === false).length : 0)
+function epicFiledOf(calls) {
+  const c = Array.isArray(calls) ? calls[0] : null
+  return c && typeof c.issuesBefore === 'number' && typeof c.issuesAfter === 'number' ? c.issuesAfter > c.issuesBefore : null
 }
 
 export function analyseRun(runDir) {
@@ -136,7 +147,11 @@ export function analyseRun(runDir) {
     outputByPhase,
     findings,
     fixCycles: fixAgents.length,
-    epicFiled: meta.scenario === 'plan-epic' ? results.some((r) => r.workflowName === 'plan-epic' && r.result && r.result.plan) : null,
+    // The planner's reply is free text, so a reply proves nothing: an epic was filed only if the
+    // scratch repository gained issues across the call (counted by bench-run.mjs). Unknown if
+    // the counts were not recorded.
+    epicFiled: meta.scenario === 'plan-epic' ? epicFiledOf(meta.calls) : null,
+    incomplete: incompleteOf(meta.calls),
     checks: {
       fullReviewHigh: fullReviews.length ? fullReviews.every((a) => a.efforts.length > 0 && a.efforts.every((e) => e === 'high')) : null,
       fixNoNewBranchOrPr: fixAgents.length ? count(createsBranchOrPr, fixAgents) === 0 : null,
@@ -188,7 +203,8 @@ export function aggregate(runs) {
       costUsd: mean(nums((r) => r.costUsd)),
       findings: withFindings.length ? Object.fromEntries(SEVERITIES.map((s) => [s, mean(withFindings.map((r) => r.findings[s]))])) : null,
       fixCycles: mean(rs.map((r) => r.fixCycles)),
-      epicFiled: rs[0].scenario === 'plan-epic' ? rs.every((r) => r.epicFiled) : null,
+      epicFiled: rs[0].scenario === 'plan-epic' ? (rs.some((r) => r.epicFiled === false) ? false : rs.every((r) => r.epicFiled === true) ? true : null) : null,
+      incompleteRuns: rs.filter((r) => r.incomplete > 0).length,
       checks,
       maxTurns: turns,
     }
@@ -211,7 +227,7 @@ export function render(groups) {
       phasesFor(g).map((p) => `${p} ${fmt(g.outputByPhase[p] ?? 0)}`).join(', '),
       g.wallMs == null ? 'n/a' : `${fmt(g.wallMs / 60000, 1)} min`, g.costUsd == null ? 'n/a' : `$${g.costUsd.toFixed(2)}`,
       g.findings ? SEVERITIES.map((s) => fmt(g.findings[s], 1)).join('/') : 'n/a', fmt(g.fixCycles, 1),
-      g.epicFiled === null ? '-' : g.epicFiled ? 'yes' : 'NO'])))
+      g.scenario !== 'plan-epic' ? '-' : g.epicFiled === null ? 'n/a' : g.epicFiled ? 'yes' : 'NO'])))
   out.push('')
   out.push(table(['ref', 'scenario', '#48 full review at high', '#49 fix: no new branch/PR', '#51 no CLAUDE.md read', '#51 no ask-user'],
     groups.map((g) => [g.ref, g.scenario, ck(g.checks.fullReviewHigh), ck(g.checks.fixNoNewBranchOrPr), ck(g.checks.noClaudeMdRead), ck(g.checks.noAskUser)])))
@@ -220,6 +236,9 @@ export function render(groups) {
   const types = [...new Set(groups.flatMap((g) => Object.keys(g.maxTurns)))].sort()
   out.push(table(['ref', 'scenario', ...types], groups.map((g) => [g.ref, g.scenario, ...types.map((t) => g.maxTurns[t] ?? '-')])))
   out.push('')
+  for (const g of groups.filter((x) => x.incompleteRuns)) {
+    out.push(`WARNING: ${g.ref} / ${g.scenario}: ${g.incompleteRuns} of ${g.runs} run(s) INCOMPLETE (a call exited non-zero, timed out, or its session was not found). Its numbers are not comparable.`)
+  }
   out.push('Numbers are means over runs; a check passes only if it passed in every run it applied to (n/a: nothing to check).')
   return out.join('\n')
 }

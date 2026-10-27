@@ -1,0 +1,10 @@
+{
+ "workflowName": "plan-epic",
+ "durationMs": 1,
+ "result": {
+  "topic": "t",
+  "research": "r",
+  "plan": "Which area did you mean?",
+  "implemented": false
+ }
+}

@@ -5,7 +5,11 @@
  "run": 1,
  "calls": [
   {
-   "wallMs": 90000
+   "wallMs": 90000,
+   "exit": 0,
+   "sessionFound": true,
+   "issuesBefore": 0,
+   "issuesAfter": 3
   }
  ]
 }

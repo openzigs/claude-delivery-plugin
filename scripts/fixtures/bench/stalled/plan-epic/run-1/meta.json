@@ -1,0 +1,15 @@
+{
+ "ref": "stalled",
+ "sha": "cccc",
+ "scenario": "plan-epic",
+ "run": 1,
+ "calls": [
+  {
+   "wallMs": 1000,
+   "exit": 0,
+   "sessionFound": true,
+   "issuesBefore": 4,
+   "issuesAfter": 4
+  }
+ ]
+}

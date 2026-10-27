@@ -38,7 +38,7 @@
 //      dispatches stay under their stored byte ceiling
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync, realpathSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join, basename, dirname, sep } from 'node:path'
@@ -1690,6 +1690,17 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       'no canned issue carries a risk label, so the small one is eligible for the light review')
     c(/delete the key/.test(issues.trap.body) && /## Notes/.test(issues.trap.body), 'the trap issue plants its requirement outside the acceptance criteria')
     c(existsSync(join(ROOT, 'bench/topics/plan-epic.md')), 'the plan-epic topic file is committed')
+    c(run.parseIssue(readFileSync(join(ROOT, 'bench/issues/small.md'), 'utf8').replace(/\n/g, '\r\n')).title === issues.small.title, 'an issue file with CRLF line endings parses')
+    const tmpR = mkdtempSync(join(tmpdir(), 'bench-stale-'))
+    const steps = run.plan(run.parseArgs(['--ref', 'HEAD', '--repo', 'a/b', '--dry-run', '--runs', '2', '--out', tmpR]))
+    mkdirSync(join(steps[0].out, 'sessions', 'old-session'), { recursive: true })
+    mkdirSync(join(tmpR, 'HEAD', 'orchestrate', 'run-9'), { recursive: true })
+    run.clearResults(steps)
+    c(!existsSync(join(tmpR, 'HEAD', 'orchestrate')) && !existsSync(join(tmpR, 'HEAD', 'orchestrate', 'run-9')), 'a rerun clears the ref and scenario results first, so a stale session or run-N is not read again')
+    rmSync(tmpR, { recursive: true, force: true })
+    let collide = ''
+    try { run.parseArgs(['--ref', 'HEAD~1', '--ref', 'HEAD^1', '--repo', 'a/b', '--dry-run']) } catch (e) { collide = e.message }
+    c(/same results directory/.test(collide), 'two refs that map to one results directory are refused')
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
       'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
@@ -1724,6 +1735,15 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       && JSON.stringify(neu.findings) === '{"critical":0,"high":1.5,"medium":0,"low":0,"nit":1}'
       && JSON.stringify(neu.outputByPhase) === '{"Implement":400,"Review":185,"Fix":20,"Re-review":5}',
     `numbers are means over runs: tokens, wall time, cost, findings by severity, output per phase (got ${JSON.stringify({ t: neu.tokens, w: neu.wallMs, c: neu.costUsd, f: neu.findings })})`)
+    c(neu.costUsd === 1.5, 'cost is summed over every claude call of a run (1 + 2 split over two calls)')
+    // An epic counts as filed only if the scratch repo gained issues: a planner that replied
+    // but filed nothing (or asked a question) must read as not filed.
+    const stalled = g('stalled', 'plan-epic')
+    c(stalled && stalled.epicFiled === false && /^stalled\s+plan-epic\s.*\sNO$/m.test(rep.render(groups)) && epic.epicFiled === true,
+      'a plan-epic whose planner replied but filed no issue reads as epic NOT filed')
+    const crashed = g('crashed', 'orchestrate')
+    c(crashed && crashed.incompleteRuns === 1 && neu.incompleteRuns === 0 && old.incompleteRuns === 0 && /WARNING: crashed \/ orchestrate: 1 of 1 run\(s\) INCOMPLETE/.test(rep.render(groups)),
+      'a run with a non-zero exit or a missing session is flagged incomplete, and complete runs are not')
     const runs = rep.collect(join(ROOT, 'scripts/fixtures/bench'))
     const mixed = rep.aggregate([runs.find((x) => x.ref === 'old'), ...runs.filter((x) => x.ref === 'new' && x.scenario === 'orchestrate')].map((x) => ({ ...x, ref: 'm' })))
     c(mixed.length === 1 && mixed[0].runs === 3 && Object.values(mixed[0].checks).every((v) => v === false),
@@ -1738,6 +1758,11 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     c(['git checkout -b x', 'git switch -c x', 'git branch topic', 'gh pr create --fill', 'cd w && git checkout -B y'].every((x) => rep.createsBranchOrPr(B(x)))
       && !['gh pr checkout 5 --detach', 'git push origin HEAD:feature/x', 'git checkout --detach', 'git branch -D old', 'git branch --show-current'].some((x) => rep.createsBranchOrPr(B(x))),
     'the new-branch-or-PR detector matches creation and not checkout, push or deletion')
+    c(!rep.readsClaudeMd(B('gh pr comment 1 --body "head: 74 tests.\n- CLAUDE.md sets"')) && !rep.readsClaudeMd(B('gh pr comment 1 --body "the agents cat CLAUDE.md again"'))
+      && rep.readsClaudeMd(B('cd w && head -20 CLAUDE.md')) && rep.readsClaudeMd(B('ls | cat CLAUDE.md')) && !rep.readsClaudeMd({ name: 'Glob', input: { pattern: '**/CLAUDE.md' } }),
+    'the CLAUDE.md-read detector is anchored to a command: prose that names it, and a Glob, do not count')
+    c(!rep.createsBranchOrPr(B('git worktree add $W x && git log -b')) && rep.createsBranchOrPr(B('git worktree add $W abc123 -b scratch')),
+      'the worktree-add alternative of the new-branch detector does not span past && into a later command')
     c(rep.readsClaudeMd({ name: 'Read', input: { file_path: '/w/CLAUDE.md' } }) && rep.readsClaudeMd(B('cat CLAUDE.md'))
       && !rep.readsClaudeMd({ name: 'Read', input: { file_path: '/w/docs/templates/CLAUDE.md.bak' } }) && !rep.readsClaudeMd(B('git add CLAUDE.md')),
     'the CLAUDE.md-read detector matches a Read or a cat of it and not other commands that name it')

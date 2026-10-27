@@ -144,7 +144,7 @@ node scripts/bench-report.mjs            # or --json
 ```
 
 Options: `--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
-`--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
+`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
 
 **What it runs.** For each ref and run, `bench-run.mjs` checks the ref out as a detached git
 worktree of this repository and uses it as the plugin (`claude --plugin-dir`, which takes
@@ -164,9 +164,15 @@ temporary directory, and force-pushes it as the scratch repository's `main`. Tha
   `bench/topics/plan-epic.md`, which files issues in the scratch repository.
 
 Every call runs with `--dangerously-skip-permissions`, because a non-interactive run cannot
-answer a permission prompt. It runs in the temporary copy, and its GitHub writes go to the
-scratch repository. Each call's JSON output and wall time are copied to
-`bench/results/<ref>/<scenario>/run-<n>/`. So is the session Claude Code persisted under
+answer a permission prompt. Nothing confines it: the agents have an unrestricted shell and
+whatever `gh` credentials you are logged in with. It is *meant* to work in the temporary copy
+and write to the scratch repository, but that is the task, not a sandbox. Run it with a
+fine-grained `GH_TOKEN` that can reach only the scratch repository, and not on a machine
+holding secrets. Each call's JSON output and wall time are copied to
+`bench/results/<ref>/<scenario>/run-<n>/`. A rerun first deletes
+`bench/results/<ref>/<scenario>/`, so stale sessions are never read again; two `--ref` values
+that map to the same directory name (`HEAD~1`, `HEAD^1`) are refused. The session is read from
+`$CLAUDE_CONFIG_DIR` or `~/.claude`. So is the session Claude Code persisted under
 `~/.claude/projects/`: the workflow results and every subagent transcript. Issues and PRs from
 earlier runs stay in the scratch repository; delete and recreate it to start clean.
 
@@ -178,7 +184,12 @@ and scenario, averaged over runs, it reports:
 - list-price cost (`total_cost_usd`, summed over calls)
 - review findings by severity (from each result's `findingCounts`)
 - fix cycles
-- for plan-epic, whether an epic was filed
+- for plan-epic, whether an epic was filed: the scratch repository gained issues across the
+  call (the planner's own reply is free text and proves nothing)
+
+A run whose call exited non-zero, timed out, or whose session could not be found is reported
+with a `WARNING ... INCOMPLETE` line under the tables: its numbers are lower or vacuous, not
+better.
 
 Then come the behaviour checks, read from the transcripts. A check passes only if it passed in
 every run it applied to:
@@ -201,6 +212,12 @@ number can be traced to the agent that produced it.
 **What it does not prove.** How the plugin performs on your repository. A small fixture has a
 small CLAUDE.md and small files, so it understates the per-dispatch cost a large project pays.
 At N=1, one run is one sample: the trap may or may not draw a blocking finding, and token
-counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The 0.7.1
-results predate some of the fields the report reads (`findingCounts`, recorded effort), and
-where one is missing the report says `n/a` rather than guessing.
+counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
+reads fields (`findingCounts`, recorded effort) that may be missing from an older ref's
+results; where one is missing it says `n/a` rather than guessing. 0.7.1 already returns
+`findingCounts` and `reviewScope`, so its full reviews are checked by #48 and will show FAIL
+there if they did not run at `high`.
+
+The report reads results from `bench-run.mjs`'s own results tree and the persisted transcripts
+rather than through `cost-report.mjs`: it needs per-agent turns, effort and tool calls, which
+the result JSON does not carry.

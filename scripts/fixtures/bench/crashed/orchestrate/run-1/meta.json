@@ -1,0 +1,13 @@
+{
+ "ref": "crashed",
+ "sha": "dddd",
+ "scenario": "orchestrate",
+ "run": 1,
+ "calls": [
+  {
+   "wallMs": 1000,
+   "exit": 1,
+   "sessionFound": false
+  }
+ ]
+}
