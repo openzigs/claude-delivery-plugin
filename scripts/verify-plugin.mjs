@@ -31,6 +31,11 @@
 //      README's Skills section names every skill; the README names every /delivery:*
 //      command and every flag cost-report.mjs accepts; and docs/usage.md's "Reading the cost
 //      of a run" links "What the result measures" and repeats its caveats
+//  10. the review eval suite has 12+ seeded cases (every category), 3+ clean controls and a
+//      control, each grader proven able to fail on a canned reply, every case mirrored at FULL
+//      scope under evals/full/, and eval-tiers.mjs reports recall per category and false blocks
+//  11. scripts/footprint.mjs measures every dispatch, and the code-issue and code-review
+//      dispatches stay under their stored byte ceiling
 //
 // It exists because every one of those failures is silent at runtime.
 import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, symlinkSync, copyFileSync, realpathSync } from 'node:fs'
@@ -1481,18 +1486,28 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
 {
   const c = (cond, msg) => (cond ? ok(`evals: ${msg}`) : bad(`evals: ${msg}`))
   const EV = join(ROOT, 'evals')
-  const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'results').map((e) => e.name).sort() : []
-  const grader = (name) => {
-    const gp = join(EV, name, 'graders', 'found-seeded-defect.md')
+  const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true }).filter((e) => e.isDirectory() && !['results', 'full'].includes(e.name)).map((e) => e.name).sort() : []
+  const graderIn = (dir, file) => {
+    const gp = join(dir, 'graders', file)
     if (!existsSync(gp)) return null
-    const fm = frontmatter(readFileSync(gp, 'utf8'), `evals/${name}/graders/found-seeded-defect.md`) || {}
+    const fm = frontmatter(readFileSync(gp, 'utf8'), gp) || {}
     return fm.type === 'regex' ? new RegExp(fm.pattern, fm.flags || '') : null
   }
+  const grader = (name) => graderIn(join(EV, name), name.startsWith('clean-') ? 'no-false-block.md' : 'found-seeded-defect.md')
   const VERDICT = '\nRecommendation: do not merge'
   const HIT = {
     'seeded-sql-injection': 'src/routes/users.js:16 — high — SQL injection: name is concatenated into the query; use a parameterized query',
     'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — high — getInvoice ignores tenantId, so any tenant can read another tenant\'s invoice (IDOR)',
     'seeded-auth-bypass': 'src/middleware/auth.js:6 — critical — a request with no token now calls next(), so unauthenticated requests pass',
+    'seeded-secret-logged': 'src/auth/login.js:7 — high — the login attempt logs req.body, so every password is written to the log in plain text',
+    'seeded-secret-committed': 'src/payments/client.js:5 — critical — a live payment API key is hardcoded and committed; rotate it and read it from the environment',
+    'seeded-off-by-one': 'src/lib/paginate.js:4 — high — slice() end is exclusive, so every page returns pageSize - 1 items (off by one)',
+    'seeded-unhandled-null': 'src/routes/users.js:15 — high — findById returns null for an unknown id, so user.email throws a TypeError and the route 500s instead of 404',
+    'seeded-race-shared-state': 'src/accounts/withdraw.js:5 — high — read-check-write with no transaction or lock: two concurrent withdrawals both pass the check (race, lost update)',
+    'seeded-n-plus-one': 'src/routes/orders.js:9 — medium — N+1: one order_items query per order inside the loop; load them with one whereIn query',
+    'seeded-test-cannot-fail': 'test/billing.test.js:11 — high — the test calls its own mock and asserts on the mock\'s return value; chargeOrder is never called, so it cannot fail',
+    'seeded-wrong-branch-coverage': 'test/coupons.test.js:8 — medium — the new expired-coupon branch is untested; both tests use a coupon that has not expired',
+    'seeded-unmet-requirement': 'src/routes/export.js:3 — high — the acceptance criterion for the from/to date range is not met: the query ignores both parameters',
   }
   for (const k of Object.keys(HIT)) HIT[k] += VERDICT
   // A reply that names the defect's words but dismisses it and approves must not score.
@@ -1500,21 +1515,59 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
     'seeded-sql-injection': 'src/routes/users.js:16 — nit — no SQL injection concern noted here, the query is concatenated but admin-only\nRecommendation: merge',
     'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — nit — tenant handling is not a concern in this change\nRecommendation: merge',
     'seeded-auth-bypass': 'src/middleware/auth.js:6 — nit — health checks with no token are now allowed through; fine for the load balancer\nRecommendation: merge',
+    'seeded-secret-logged': 'src/auth/login.js:7 — nit — the log line includes the request body; no password concern since logs are internal\nRecommendation: merge',
+    'seeded-secret-committed': 'src/payments/client.js:5 — nit — the API key is hardcoded as a temporary measure, acceptable for now\nRecommendation: merge',
+    'seeded-off-by-one': 'src/lib/paginate.js:4 — nit — slice end is exclusive, pageSize - 1 looks intentional\nRecommendation: merge',
+    'seeded-unhandled-null': 'src/routes/users.js:15 — nit — findById may return null but callers pass valid ids\nRecommendation: merge',
+    'seeded-race-shared-state': 'src/accounts/withdraw.js:5 — nit — no transaction, but a race is unlikely at this volume\nRecommendation: merge',
+    'seeded-n-plus-one': 'src/routes/orders.js:9 — nit — an N+1 query in a loop, fine for small accounts\nRecommendation: merge',
+    'seeded-test-cannot-fail': 'test/billing.test.js:11 — nit — the test uses a mock; consider naming it chargeMock\nRecommendation: merge',
+    'seeded-wrong-branch-coverage': 'test/coupons.test.js:8 — low — the expired branch has no test, a follow-up at most\nRecommendation: merge',
+    'seeded-unmet-requirement': 'src/routes/export.js:3 — nit — the date range is not applied, which can come later\nRecommendation: merge',
   }
   // The control's defect (RETRY_LIMIT in an unseen config) can be named only by guessing its value.
   const CONTROL_HIT = 'src/jobs/retry.js:5 — high — RETRY_LIMIT is 4096 in config, so a failing call retries for hours\nRecommendation: do not merge'
   const MISS = 'src/x.js:1 — nit — consider renaming this variable for clarity\nRecommendation: merge'
+  const FALSE_BLOCK = 'src/x.js:1 — high — this change looks risky\nRecommendation: do not merge'
   const seeded = cases.filter((n) => n.startsWith('seeded-')), controls = cases.filter((n) => n.startsWith('control-'))
-  c(seeded.length >= 3 && controls.length >= 1, `at least 3 seeded-defect cases and 1 control (found ${seeded.length} / ${controls.length})`)
+  const clean = cases.filter((n) => n.startsWith('clean-'))
+  c(seeded.length >= 12 && clean.length >= 3 && controls.length >= 1,
+    `at least 12 seeded-defect cases, 3 clean controls and 1 grader control (found ${seeded.length} / ${clean.length} / ${controls.length})`)
+  const tagsOf = (dir) => {
+    const y = existsSync(join(dir, 'case.yaml')) ? readFileSync(join(dir, 'case.yaml'), 'utf8') : ''
+    return (/^tags:\s*\[([^\]]*)\]/m.exec(y)?.[1] || '').split(',').map((t) => t.trim()).filter(Boolean)
+  }
+  const CATEGORIES = ['security', 'correctness', 'performance', 'tests', 'requirements']
+  const catOf = (n) => tagsOf(join(EV, n)).find((t) => CATEGORIES.includes(t))
+  c(seeded.every((n) => catOf(n)) && CATEGORIES.every((k) => seeded.some((n) => catOf(n) === k)),
+    `every seeded case carries one category tag, and every category is covered (${seeded.map((n) => `${n}=${catOf(n)}`).join(', ')})`)
+  c(seeded.every((n) => HIT[n] && DISMISS[n]), 'every seeded case has a canned hit and a canned dismissal checked below')
   for (const n of cases) {
     const pp = join(EV, n, 'prompt.md')
     const prompt = existsSync(pp) ? readFileSync(pp, 'utf8') : ''
-    c(/```diff\n[\s\S]+```/.test(prompt) && /do not run `gh`/.test(prompt) && existsSync(join(EV, n, 'case.yaml')),
-      `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml`)
+    c(/```diff\n[\s\S]+```/.test(prompt) && /do not run `gh`/.test(prompt) && existsSync(join(EV, n, 'case.yaml')) && tagsOf(join(EV, n)).includes('light-review'),
+      `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml tagged light-review`)
     const re = grader(n)
-    c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
-    if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect and says do not merge`)
+    if (!n.startsWith('clean-')) c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
+    if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
     if (DISMISS[n]) c(re && !re.test(DISMISS[n]), `${n}: its grader fails on a reply that dismisses the defect and says merge`)
+    // The full-scope copy: the same diff and graders, the FULL scope paragraph, its own name and tag.
+    const fd = join(EV, 'full', n)
+    const fp = existsSync(join(fd, 'prompt.md')) ? readFileSync(join(fd, 'prompt.md'), 'utf8') : ''
+    const diffOf = (t) => t.slice(t.indexOf('\n\n'))
+    const sameGraders = ['found-seeded-defect.md', 'no-false-block.md'].every((g) => existsSync(join(EV, n, 'graders', g)) === existsSync(join(fd, 'graders', g))
+      && (!existsSync(join(fd, 'graders', g)) || readFileSync(join(fd, 'graders', g), 'utf8') === readFileSync(join(EV, n, 'graders', g), 'utf8')))
+    c(fp && /Do a FULL review/.test(fp) && diffOf(fp) === diffOf(prompt) && sameGraders
+      && new RegExp(`^name: ${n}-full$`, 'm').test(readFileSync(join(fd, 'case.yaml'), 'utf8')) && tagsOf(fd).includes('full-review')
+      && JSON.stringify(tagsOf(fd).slice(1)) === JSON.stringify(tagsOf(join(EV, n)).slice(1)),
+    `${n}: evals/full/${n} is the same case at FULL scope (same diff, graders and tags; name ${n}-full)`)
+  }
+  const fullDirs = existsSync(join(EV, 'full')) ? readdirSync(join(EV, 'full')).sort() : []
+  c(JSON.stringify(fullDirs) === JSON.stringify(cases), `every full-scope case has a light one and vice versa (${fullDirs.length} / ${cases.length})`)
+  for (const n of clean) {
+    const re = grader(n)
+    c(re && re.test(MISS) && !re.test(FALSE_BLOCK),
+      `${n}: its grader passes on a merge verdict and fails on a do-not-merge one (a false block)`)
   }
   for (const n of controls) {
     const re = grader(n)
@@ -1532,24 +1585,74 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
   c(specs.length > 0 && specs.every((x) => x.startsWith('node:')) && !/\b(writeFile|appendFile|mkdir|rm|unlink|rename)(Sync)?\s*\(/.test(src),
     'eval-tiers.mjs imports only node: builtins and writes nothing')
   const t = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json'), join(FX, 'sonnet.json')], { encoding: 'utf8' })
-  c(t.status === 0 && /^haiku\s+3\/3\s+100%\s+ok \(1 scored 0\)\s+\$0\.0094/m.test(t.stdout) && /^sonnet\s+3\/3\s+100%\s+ok \(1 scored 0\)\s+\$0\.1507/m.test(t.stdout)
-    && /Output tokens are not reported/.test(t.stdout), `two tiers give one row each with recall, control status and cost (exit ${t.status})`)
+  c(t.status === 0 && /^haiku\s+light\s+3\/3\s+100%\s+3\/3\s+-\s+-\s+-\s+-\s+n\/a\s+ok \(1 scored 0\)\s+\$0\.0094/m.test(t.stdout)
+    && /^sonnet\s+light\s+3\/3\s+100%\s+3\/3\s+-\s+-\s+-\s+-\s+n\/a\s+ok \(1 scored 0\)\s+\$0\.1507/m.test(t.stdout)
+    && /Output tokens are not reported/.test(t.stdout) && /Effort was not compared: claude plugin eval has no effort flag/.test(t.stdout),
+  `two tiers give one row each with recall per category, control status and cost, and say effort was not compared (exit ${t.status})`)
+  const mx = spawnSync(process.execPath, [SCRIPT, join(FX, 'mixed-scopes.json')], { encoding: 'utf8' })
+  c(mx.status === 0
+    && /^sonnet\s+full\s+2\/3\s+67%\s+1\/1\s+0\/1\s+1\/1\s+-\s+-\s+1\/2\s+ok \(1 scored 0\)\s+\$0\.6000\s+2\.3\s+seeded-off-by-one-full$/m.test(mx.stdout)
+    && /^sonnet\s+light\s+1\/2\s+50%\s+1\/1\s+-\s+0\/1\s+-\s+-\s+0\/1\s+ok \(1 scored 0\)\s+\$0\.1000\s+2\.0\s+seeded-n-plus-one$/m.test(mx.stdout),
+  `a file with both scopes gives a light and a full row: recall per category, false blocks on the clean controls, each scope's own cost (exit ${mx.status})`)
   const b = spawnSync(process.execPath, [SCRIPT, join(FX, 'broken-control.json')], { encoding: 'utf8' })
   c(b.status === 1 && /SCORER CANNOT FAIL/.test(b.stdout), `a control case that scored above 0 is flagged and exits 1 (exit ${b.status})`)
   const sl = join(tmpdir(), `eval-tiers-link-${process.pid}.mjs`)
   rmSync(sl, { force: true }); symlinkSync(SCRIPT, sl)
   const sy = spawnSync(process.execPath, [sl, join(FX, 'haiku.json')], { encoding: 'utf8' })
   rmSync(sl, { force: true })
-  c(sy.status === 0 && /^haiku\s+3\/3/m.test(sy.stdout), `eval-tiers.mjs run through a symlink still prints its table (exit ${sy.status})`)
+  c(sy.status === 0 && /^haiku\s+light\s+3\/3/m.test(sy.stdout), `eval-tiers.mjs run through a symlink still prints its table (exit ${sy.status})`)
   try {
-    const { summarise } = await import(SCRIPT)
+    const { summarise, loadCategories } = await import(SCRIPT)
     const doc = JSON.parse(readFileSync(join(FX, 'haiku.json'), 'utf8'))
     doc.cases.find((x) => x.name === 'seeded-auth-bypass').arms.with[0].score = 0
-    const r = summarise(doc, 'x')
-    c(r.found === 2 && Math.abs(r.recall - 2 / 3) < 1e-9 && JSON.stringify(r.missed) === '["seeded-auth-bypass"]',
-      `a missed seeded defect lowers recall and is named (got ${r.found}/${r.seeded}, missed ${JSON.stringify(r.missed)})`)
+    const [r] = summarise(doc, 'x')
+    c(r.found === 2 && Math.abs(r.recall - 2 / 3) < 1e-9 && JSON.stringify(r.missed) === '["seeded-auth-bypass"]'
+      && JSON.stringify(r.byCategory) === '{"security":{"found":2,"seeded":3}}',
+    `a missed seeded defect lowers recall, overall and in its category, and is named (got ${r.found}/${r.seeded}, missed ${JSON.stringify(r.missed)})`)
     c(summarise({ foo: 1 }, 'y') === null, 'a file that is not an eval result is rejected')
+    const cats = loadCategories()
+    c(Object.keys(cats).length === 12 && cats['seeded-unmet-requirement'] === 'requirements', 'the category of each seeded case is read from its case.yaml tag')
+    const fb = summarise({ schemaVersion: 1, cases: [{ name: 'clean-docs', arms: { with: [{ score: 1 }, { score: 0 }] } }] }, 'z')[0]
+    c(fb.falseBlocks === 1 && fb.falseBlockRate === 1, 'a clean control that blocked in any one run counts as a false block')
   } catch (e) { c(false, `summarise() import threw — ${e.message}`) }
+}
+
+// The static prompt footprint (#85): every dispatch renders, and the code-issue and
+// code-review dispatches stay under their stored ceiling, so a silent re-bloat fails here.
+console.log('\n== scripts/footprint.mjs ==')
+{
+  const c = (cond, msg) => (cond ? ok(`footprint: ${msg}`) : bad(`footprint: ${msg}`))
+  const SCRIPT = join(ROOT, 'scripts/footprint.mjs')
+  const src = readFileSync(SCRIPT, 'utf8')
+  const specs = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
+  c(specs.length > 0 && specs.every((x) => x.startsWith('node:')) && !/\b(writeFile|appendFile|mkdir|rm|unlink|rename)(Sync)?\s*\(/.test(src),
+    'footprint.mjs imports only node: builtins and writes nothing')
+  try {
+    const { measure, overCeiling, worktreeReader, CEILINGS } = await import(SCRIPT)
+    const read = worktreeReader(ROOT)
+    const m = await measure(read)
+    const names = ['implement', 'full review', 'light review', 'fix', 're-review', 'research', 'plan']
+    c(names.every((n) => m.rows.find((r) => r.dispatch === n)?.total > 0),
+      `all seven dispatches render with a measured footprint (${m.rows.map((r) => `${r.dispatch}=${r.total ?? r.missing}`).join(', ')})`)
+    const over = overCeiling(m)
+    c(over.length === 0 && Object.keys(CEILINGS).length === 5,
+      `the code-issue and code-review dispatches are within their stored ceilings${over.length ? ` — over: ${JSON.stringify(over)}` : ''}`)
+    // Proof the ceiling can fail: fold 4 KB back into the preloaded code-issue skill, and
+    // name the preloaded code-review skill as a slash skill in the workflow (a second load).
+    const bloated = await measure((p) => (p === 'skills/code-issue/SKILL.md' ? read(p) + 'x'.repeat(4096) : read(p)))
+    const bo = overCeiling(bloated).map((o) => o.dispatch).sort()
+    c(JSON.stringify(bo) === '["fix","implement"]', `4 KB added to the code-issue skill puts implement and fix over the ceiling (got ${JSON.stringify(bo)})`)
+    const twice = await measure((p) => (p === 'workflows/orchestrate.js'
+      ? read(p).replace('`Review pull request #', '`Follow the /delivery:code-review skill. Review pull request #') : read(p)))
+    c(overCeiling(twice).some((o) => o.dispatch === 'full review'), 'a prompt that loads code-review a second time puts the full review over the ceiling')
+    const gone = await measure((p) => (p === 'workflows/orchestrate.js' ? null : read(p)))
+    c(overCeiling(gone).length === 5, 'a dispatch that cannot be measured counts as over the ceiling, not as within it')
+  } catch (e) { c(false, `measure() threw — ${e.message}`) }
+  const run = spawnSync(process.execPath, [SCRIPT, '--ref', 'HEAD'], { encoding: 'utf8', cwd: ROOT })
+  c(run.status === 0 && /^\| implement\s+\| [\d,]+ B \/ ~[\d,]+ tok/m.test(run.stdout) && /blocking cycle/.test(run.stdout),
+    `--ref HEAD prints a per-dispatch table with the cycle sums (exit ${run.status})`)
+  const opt = spawnSync(process.execPath, [SCRIPT, '--ref', '--output=/dev/null'], { encoding: 'utf8', cwd: ROOT })
+  c(opt.status === 2 && /not a git ref/.test(opt.stderr), `a --ref that starts with "-" is refused, never passed to git (exit ${opt.status})`)
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)

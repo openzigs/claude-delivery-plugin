@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: clean-correct-fix
+tags: [light-review, clean]
+runs: 1
+execution:
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Skill]

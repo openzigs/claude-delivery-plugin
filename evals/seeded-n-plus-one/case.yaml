@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: seeded-n-plus-one
+tags: [light-review, seeded, performance]
+runs: 1
+execution:
+  max_turns: 30
+  timeout_seconds: 600
+  allowed_tools: [Skill]
