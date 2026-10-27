@@ -42,11 +42,11 @@
 //      dispatches stay under their stored byte ceiling
 //
 // It exists because every one of those failures is silent at runtime.
-import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, cpSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 import { join, basename, dirname, sep } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 let fails = 0
@@ -2050,6 +2050,8 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
   const doc = readFileSync(join(ROOT, 'docs/benchmarks.md'), 'utf8')
   c(/million tokens/.test(doc.split('\n').slice(0, 12).join('\n')) && /bench-run\.mjs/.test(doc) && /--reset-scratch/.test(doc),
     'docs/benchmarks.md states the cost of a full run at the top and how to run it')
+  c(/\*\*caller\*\*: 3 points/.test(doc) && /trap rate is measured only by a paid replay, never by CI/.test(doc) && /\*\*planted defect\*\*/.test(doc),
+    'docs/benchmarks.md explains the caller scenario, the planted-defect column, and that its trap rate is measured by a paid replay, not CI')
 
   // The fixture project and the canned issues.
   const FX = join(ROOT, 'bench/fixture-repo')
@@ -2061,7 +2063,7 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     const run = await import(RUN)
     const issues = Object.fromEntries(run.ISSUES.map((i) => [i.name, run.parseIssue(readFileSync(join(ROOT, 'bench/issues', `${i.name}.md`), 'utf8'))]))
     c(run.ISSUES.every((i) => issues[i.name].points === i.points && new RegExp(`^\\*\\*Story Points\\*\\*: ${i.points}$`, 'm').test(issues[i.name].body)),
-      'each canned issue\'s Story Points line matches the --points hint it is run with (small 1, medium 3, trap 3)')
+      'each canned issue\'s Story Points line matches the --points hint it is run with (small 1, medium 3, trap 3, caller 3)')
     c(Object.values(issues).every((i) => i.labels.length && !i.labels.some((l) => /secur|auth|migrat|breaking|payment|billing|privacy|infra|data-loss/i.test(l))),
       'no canned issue carries a risk label, so the small one is eligible for the light review')
     // #94: in the Notes alone the reviewer did not catch it, so the requirement is now in an
@@ -2069,6 +2071,32 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     const trapAc = issues.trap.body.split('## Acceptance criteria')[1]?.split('\n## ')[0] || ''
     c(/subtracts `qty`[^\n]*\n\s+[^\n]*key is deleted, not left at 0/.test(trapAc),
       'the trap issue states its planted requirement (an emptied SKU\'s key is deleted) inside the acceptance criteria, in the subtract bullet')
+    // #98: a scenario whose planted defect is in an unchanged caller, to drive review -> fix.
+    // Its matcher lives in front matter, which is never filed, so no agent sees it.
+    const cp = issues.caller?.planted
+    c(issues.caller?.points === 3 && cp && /never filed/.test(cp.note)
+      && JSON.stringify(cp.locations) === '["src/reorder.js"]' && JSON.stringify(cp.keywords) === '["reorderLines","reorder.js"]'
+      && issues.small.planted === null && issues.trap.planted === null,
+    `the caller scenario carries its planted defect (note, locations, keywords) in front matter; issues without one have none (got ${JSON.stringify(cp)})`)
+    const fxText = readdirSync(FX, { recursive: true }).filter((f) => statSync(join(FX, f)).isFile()).map((f) => readFileSync(join(FX, f), 'utf8')).join('\n')
+    c(!/reorder|defect|planted|object Object|NaN/i.test(issues.caller.title + issues.caller.body) && !/defect|planted|object Object|NaN/i.test(fxText),
+      'the planted defect is described nowhere the agents look: not in the filed title or body, nor in the fixture repository')
+    // The trap is real: the natural implementation keeps the fixture suite green and breaks the
+    // unchanged caller. Applied to a copy, never to the committed fixture.
+    const tmpF = mkdtempSync(join(tmpdir(), 'bench-caller-'))
+    try {
+      cpSync(FX, tmpF, { recursive: true })
+      const inv = join(tmpF, 'src/inventory.js'), invT = join(tmpF, 'test/inventory.test.js')
+      const src0 = readFileSync(inv, 'utf8'), test0 = readFileSync(invT, 'utf8')
+      const src1 = src0.replace('.filter((sku) => stock[sku] < threshold).sort()', '.filter((sku) => stock[sku] < threshold).sort().map((sku) => ({ sku, qty: stock[sku] }))')
+      const test1 = test0.replace("['a', 'c']", "[{ sku: 'a', qty: 0 }, { sku: 'c', qty: 1 }]")
+      writeFileSync(inv, src1); writeFileSync(invT, test1)
+      const suite = spawnSync(process.execPath, ['--test'], { cwd: tmpF, encoding: 'utf8' })
+      const before = (await import(pathToFileURL(join(FX, 'src/reorder.js')).href)).reorderLines({ a: 0, b: 9 }, 2)
+      const after = (await import(pathToFileURL(join(tmpF, 'src/reorder.js')).href)).reorderLines({ a: 0, b: 9 }, 2)
+      c(src1 !== src0 && test1 !== test0 && suite.status === 0 && JSON.stringify(before) === '["a,2"]' && JSON.stringify(after) === '["[object Object],NaN"]',
+        `the caller scenario's natural implementation passes the fixture suite and breaks the unchanged reorderLines (suite exit ${suite.status}, before ${JSON.stringify(before)}, after ${JSON.stringify(after)})`)
+    } finally { rmSync(tmpF, { recursive: true, force: true }) }
     c(existsSync(join(ROOT, 'bench/topics/plan-epic.md')), 'the plan-epic topic file is committed')
     c(run.parseIssue(readFileSync(join(ROOT, 'bench/issues/small.md'), 'utf8').replace(/\n/g, '\r\n')).title === issues.small.title, 'an issue file with CRLF line endings parses')
     const tmpR = mkdtempSync(join(tmpdir(), 'bench-stale-'))
@@ -2137,6 +2165,12 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     const at = (re) => stepSrc.search(re)
     c(at(/resetScratch\(repo,/) > 0 && at(/resetScratch\(repo,/) < at(/'push'/) && at(/resetScratch\(repo,/) < at(/'issue', 'create'/) && /isolation, calls/.test(stepSrc),
       'each step resets its scratch repository before it pushes or files anything, and records the isolation in meta.json')
+    // #98: the plugin under test is a worktree of this repository, which holds the planted
+    // defects (bench/) and their description (docs/benchmarks.md); both go before any agent runs.
+    c(at(/rmSync\(join\(pluginDir, 'bench'\)/) > 0 && at(/rmSync\(join\(pluginDir, 'docs', 'benchmarks\.md'\)/) > 0
+      && Math.max(at(/rmSync\(join\(pluginDir, 'bench'\)/), at(/rmSync\(join\(pluginDir, 'docs', 'benchmarks\.md'\)/)) < at(/spawnSync\('claude'/)
+      && /planted: c\.planted \?\? null/.test(stepSrc),
+    'each step removes bench/ and docs/benchmarks.md from the plugin worktree before any claude call, and records each call\'s planted defect in meta.json')
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
       'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
@@ -2147,12 +2181,13 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
   const before = existsSync(join(ROOT, 'bench/results'))
   const dry = cli('--ref', '6567d82', '--ref', 'HEAD', '--repo', 'no.such.owner/scratch', '--dry-run')
   const lines = dry.stdout.split('\n').filter((l) => /^\s+claude -p /.test(l))
-  c(dry.status === 0 && /DRY RUN — nothing will be executed/.test(dry.stdout) && lines.length === 8
+  c(dry.status === 0 && /DRY RUN — nothing will be executed/.test(dry.stdout) && lines.length === 10
     && lines.filter((l) => /\/delivery:orchestrate <#small> --points 1"/.test(l)).length === 2
+    && lines.filter((l) => /\/delivery:orchestrate <#caller> --points 3"/.test(l)).length === 2
     && lines.filter((l) => /\/delivery:plan-epic/.test(l)).length === 2 && lines.every((l) => /--plugin-dir/.test(l))
     && existsSync(join(ROOT, 'bench/results')) === before && /Isolation: reset \(one scratch repo, no\.such\.owner\/scratch, shared by every ref, reset before every step\)/.test(dry.stdout)
     && (dry.stdout.match(/\[reset no\.such\.owner\/scratch first\]/g) || []).length === 4,
-  `--dry-run prints 8 calls for two refs (3 orchestrate + 1 plan-epic each) and runs nothing, naming the isolation and the reset before each of the 4 steps (exit ${dry.status})`)
+  `--dry-run prints 10 calls for two refs (4 orchestrate + 1 plan-epic each) and runs nothing, naming the isolation and the reset before each of the 4 steps (exit ${dry.status})`)
   c(cli('--ref', 'HEAD', '--dry-run').status === 2, 'without --repo it refuses to start')
   const noAck = cli('--ref', 'HEAD', '--repo', 'no.such.owner/scratch')
   c(noAck.status === 2 && /--reset-scratch is required/.test(noAck.stderr), 'a real run without --reset-scratch refuses to start')
@@ -2202,6 +2237,27 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     const fixWarn = /WARNING: (\S+) \/ orchestrate: no run exercised the Fix phase/g
     c(JSON.stringify([...out.matchAll(fixWarn)].map((m) => m[1])) === '["crashed"]' && crashed.fixRan === false && neu.fixRan === true,
       'the report warns for each orchestrate ref in which no run reached the Fix phase, and only for those')
+    // #98: review outcome per scenario issue. new/orchestrate: #8 is the caller scenario; run 1's
+    // review blocks on a finding at src/reorder.js (a hit), run 2's blocks on an unrelated one and
+    // names reorder.js only in a non-blocking finding (a miss). #9 (small) never blocks and has
+    // no planted defect. old/orchestrate's #7 predates `review` and the call numbers: it blocked
+    // (a fix ran), and whether the planted defect was found is unknown.
+    const oc = (grp, issue) => grp?.reviewOutcomes?.find((x) => x.issue === issue)
+    c(JSON.stringify(oc(neu, 'caller')) === '{"issue":"caller","runs":2,"reviewed":2,"blocking":2,"planted":true,"plantedKnown":2,"plantedHits":1}'
+      && JSON.stringify(oc(neu, 'small')) === '{"issue":"small","runs":2,"reviewed":2,"blocking":0,"planted":false,"plantedKnown":0,"plantedHits":0}'
+      && JSON.stringify(oc(old, '#7')) === '{"issue":"#7","runs":1,"reviewed":1,"blocking":1,"planted":false,"plantedKnown":0,"plantedHits":0}'
+      && epic.reviewOutcomes.length === 0,
+    `per ref and scenario issue: runs whose first review blocked, and runs whose blocking findings named the planted defect (got ${JSON.stringify([neu?.reviewOutcomes, old?.reviewOutcomes])})`)
+    c(/^new\s+orchestrate\s+caller\s+2\s+2\/2 \(100%\)\s+1\/2 \(50%\)$/m.test(out) && /^new\s+orchestrate\s+small\s+2\s+0\/2 \(0%\)\s+-$/m.test(out)
+      && /^old\s+orchestrate\s+#7\s+1\s+1\/1 \(100%\)\s+-$/m.test(out) && !/^new\s+plan-epic\s+\S+\s+\d+\s+\d+\/\d+ \(/m.test(out),
+    'the report prints the blocking-finding rate and the planted-defect hit rate per ref and scenario issue')
+    const P = { locations: ['src/reorder.js:5-7', 'lib/x.js'], keywords: ['reorderLines'] }
+    const F = (location, summary = 'something else') => ({ location, summary, blocking: true })
+    c(rep.matchesPlanted(F('src/reorder.js:6'), P) && rep.matchesPlanted(F('./src/reorder.js:7'), P) && rep.matchesPlanted(F('reorder.js:5-9'), P)
+      && rep.matchesPlanted(F('pkg/lib/x.js:400'), P) && rep.matchesPlanted(F('src/inventory.js:14', 'breaks REORDERLINES'), P)
+      && !rep.matchesPlanted(F('src/reorder.js:9'), P) && !rep.matchesPlanted(F('src/reorder.js'), P) && !rep.matchesPlanted(F('src/notreorder.js:6'), P)
+      && !rep.matchesPlanted(F('general'), P) && !rep.matchesPlanted(F('src/inventory.js:14'), P) && !rep.matchesPlanted(F('x'), { locations: [], keywords: [''] }),
+    'the planted-defect matcher takes a file (and a line range when given) or a keyword, case-insensitively, and nothing else')
     c(epic.isolation === 'repo-per-ref' && crashed.isolation === 'none' && /^new\s+plan-epic\s.*\syes\s+repo-per-ref$/m.test(out)
       && /WARNING: stalled \/ plan-epic: no scratch-repo isolation recorded/.test(out) && !/WARNING: new \/ orchestrate: no scratch-repo isolation/.test(out),
     'the report names the isolation each ref ran with, and warns on results that recorded none')

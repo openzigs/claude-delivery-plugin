@@ -5,7 +5,7 @@
 > cents to dollars. Scenarios 3–5, the pipeline replay, are
 > **expensive**: one full run of both scenarios on two refs (0.7.1 and 0.8.0, N=1) is in the
 > order of **a few million tokens** — every issue goes through a real implement, review and,
-> for the trap issue, fix and re-review, on a real GitHub scratch repository. Each `--runs`
+> for the caller issue, fix and re-review, on a real GitHub scratch repository. Each `--runs`
 > multiplies that. They are opt-in and are never run by CI.
 
 Repeatable measurements of what the plugin costs, how well its review finds defects, and
@@ -281,7 +281,7 @@ Node module with a `CLAUDE.md`, a test suite and a CI workflow that runs `npm te
 temporary directory, resets the scratch repository (see Isolation above) and force-pushes the copy as its `main`. That is why
 `--reset-scratch` must be passed: it says you know the scratch repository is reset. Then:
 
-- **Scenario 3, `orchestrate`.** It files the three canned issues in `bench/issues/` and runs
+- **Scenario 3, `orchestrate`.** It files the four canned issues in `bench/issues/` and runs
   one `claude -p "/delivery:orchestrate <n> --points <p>"` per issue:
   - **small**: 1 point, no risk label. This exercises the sonnet implementer and the light
     review.
@@ -290,7 +290,26 @@ temporary directory, resets the scratch repository (see Isolation above) and for
     emptied SKU's key must be deleted, not left at 0. It sits inside the acceptance criteria, as
     a trailing clause of the "subtracts `qty`" bullet, where a reviewer checking each criterion
     against the diff catches it. It used to sit only in a Notes paragraph, and no review caught
-    it there. It should draw a blocking finding, a fix and a re-review.
+    it there. Since #94 moved it into the criteria, every implementer met it in all six runs of
+    the N=3 replay on two refs, so no review blocked on it. It now measures the implementer, not
+    review and fix.
+  - **caller**: 3 points. The scenario that drives review → fix (#98). The issue asks for
+    `lowStock` to return `[{ sku, qty }]` instead of a list of SKU strings. The natural change
+    passes the fixture suite, but the unchanged `src/reorder.js` still reads each entry as a SKU,
+    so the nightly reorder it builds for the supplier becomes `[object Object],NaN` lines. Its
+    one test uses a stock with nothing low, so `npm test` stays green and CI passes. An
+    implementer who checks the callers of the function it changes avoids it; a reviewer who
+    checks backwards compatibility against the repository, not just the diff, finds it and
+    blocks. It is a defect the PR introduces, not a pre-existing one, so the review procedure
+    does not exclude it. `verify-plugin.mjs` applies that natural change to a copy of the
+    fixture and checks both halves: the suite passes and `reorderLines` breaks.
+
+  **Planted defects are hidden from the agents.** A planted defect is described in its issue
+  file's front matter (`defect`, a note for maintainers; `defectLocations`, files with an
+  optional `:start-end` line range; `defectKeywords`). Only the title, labels and body are
+  filed, so no agent reads the front matter. The plugin under test is a worktree of this
+  repository, so `bench-run.mjs` deletes `bench/` and this file from it before any call.
+  `bench-run.mjs` records each call's planted defect in `meta.json`, where the report reads it.
 - **Scenario 4, `plan-epic`.** It runs `claude -p "/delivery:plan-epic ./PLAN-TOPIC.md"` on
   `bench/topics/plan-epic.md`, which files issues in the scratch repository.
 
@@ -317,6 +336,25 @@ and scenario, averaged over runs, it reports:
 - list-price cost (`total_cost_usd`, summed over calls)
 - review findings by severity (from each result's `findingCounts`)
 - fix cycles
+- per scenario issue (`small`, `medium`, `trap`, `caller`), a separate table with:
+  - **blocking**: how many runs' first review drew a blocking finding, of the runs reviewed
+  - **planted defect**: how many runs had a blocking finding that named the issue's planted
+    defect, of the runs whose findings were recorded. A finding names it when its location is
+    one of the defect's files (inside the line range, if one is given), or its location or
+    summary contains one of the keywords, ignoring case. `-` means the issue has no planted
+    defect. A result from a ref that does not return `review` shows blocking by whether a fix
+    ran, and the planted column as `n/a`.
+
+  A run that blocks on something else counts as blocking but not as a hit. So the two columns
+  together tell a review that found the planted defect from one that blocked for another
+  reason. A miss can also mean the implementer updated `src/reorder.js` and there was no defect
+  to find: read that run's PR diff before calling it a review miss.
+
+  **The caller issue's trap rate is measured only by a paid replay, never by CI.** CI
+  (`verify-plugin.mjs`) proves that the trap is real (the natural change passes the suite and
+  breaks the caller), that the report counts it correctly on a synthetic results tree, and that
+  the matcher can fail. How often an implementer falls into it and a review catches it is only
+  known by running `bench-run.mjs` and reading this table, at `--runs 3` or more.
 - for plan-epic, whether an epic was filed: the scratch repository gained issues across the
   call (the planner's own reply is free text and proves nothing)
 
@@ -328,7 +366,7 @@ The totals in the first table mix the two.
 A run whose call exited non-zero, timed out, or whose session could not be found is reported
 with a `WARNING ... INCOMPLETE` line under the tables: its numbers are lower or vacuous, not
 better. An orchestrate ref in which no run reached the Fix phase also gets a warning. In that
-case the trap drew no blocking finding, so fix, re-review and the #49 check went unexercised,
+case no issue drew a blocking finding, so fix, re-review and the #49 check went unexercised,
 and their `n/a` proves nothing.
 
 Then come the behaviour checks, read from the transcripts. A check passes only if it passed in
@@ -344,15 +382,15 @@ every run it applied to:
 The last table is the highest turn count per agent type. That is the number the provisional
 `maxTurns` ceilings (#58) should be set from, at about twice the highest observed.
 
-**What it proves.** On this fixture, with these three issues and this topic, how many tokens
+**What it proves.** On this fixture, with these four issues and this topic, how many tokens
 each ref spent per delivered issue and per phase, what its reviews found, and whether the
 behaviours 0.8.0 fixed stayed fixed. The transcripts are kept with the results, so every
 number can be traced to the agent that produced it.
 
 **What it does not prove.** How the plugin performs on your repository. A small fixture has a
 small CLAUDE.md and small files, so it understates the per-dispatch cost a large project pays.
-At N=1, one run is one sample: the trap may or may not draw a blocking finding (the report
-warns when it did not), and token counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
+At N=1, one run is one sample: the caller issue may or may not draw a blocking finding (the
+report warns when no issue did), and token counts vary run to run. Repeat with `--runs 3` before reading a difference as real. The report
 reads fields (`findingCounts`, recorded effort) that may be missing from an older ref's
 results; where one is missing it says `n/a` rather than guessing. 0.7.1 already returns
 `findingCounts` and `reviewScope`, so its full reviews are checked by #48 and will show FAIL

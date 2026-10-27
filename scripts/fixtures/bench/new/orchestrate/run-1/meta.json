@@ -12,7 +12,24 @@
  },
  "calls": [
   {
-   "wallMs": 30000
+   "wallMs": 30000,
+   "issue": "caller",
+   "number": 8,
+   "planted": {
+    "note": "synthetic",
+    "locations": [
+     "src/reorder.js"
+    ],
+    "keywords": [
+     "reorderLines",
+     "reorder.js"
+    ]
+   }
+  },
+  {
+   "issue": "small",
+   "number": 9,
+   "planted": null
   }
  ]
 }

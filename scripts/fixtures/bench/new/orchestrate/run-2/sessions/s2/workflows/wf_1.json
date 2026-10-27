@@ -28,7 +28,28 @@
         "nit": 0
        }
       },
-      "fix": {}
+      "fix": {},
+      "review": {
+       "recommendation": "do not merge",
+       "blocking": true,
+       "findings": [
+        {
+         "severity": "high",
+         "location": "src/inventory.js:14",
+         "summary": "lowStock sorts by quantity, not by SKU",
+         "blocking": true,
+         "confidence": 90
+        },
+        {
+         "severity": "high",
+         "location": "src/reorder.js:7",
+         "summary": "reorderLines reads entries as strings",
+         "blocking": false,
+         "confidence": 60
+        }
+       ]
+      },
+      "blockingFindings": true
      },
      {
       "issue": 9,
@@ -43,7 +64,21 @@
        },
        "rereview": null
       },
-      "fix": null
+      "fix": null,
+      "review": {
+       "recommendation": "merge with follow-ups",
+       "blocking": false,
+       "findings": [
+        {
+         "severity": "nit",
+         "location": "src/inventory.js:20",
+         "summary": "wording",
+         "blocking": false,
+         "confidence": 80
+        }
+       ]
+      },
+      "blockingFindings": false
      }
     ]
    }

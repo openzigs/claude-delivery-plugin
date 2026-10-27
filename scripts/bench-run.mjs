@@ -22,11 +22,15 @@
 //
 // For each ref and run: a detached git worktree of this repository at the ref is the plugin
 // (`claude --plugin-dir`, which takes precedence over an installed `delivery` plugin); a fresh
-// temporary copy of bench/fixture-repo is the project. Scenario `orchestrate` runs three
+// temporary copy of bench/fixture-repo is the project. Scenario `orchestrate` runs four
 // separate `claude -p` calls -- small (--points 1: sonnet implement, light review), medium
-// (--points 3: full review) and trap (--points 3; a planted requirement the obvious
-// implementation misses, to draw a blocking finding, a fix and a re-review). Scenario
-// `plan-epic` runs one, on bench/topics/plan-epic.md. The calls run with
+// (--points 3: full review), trap (--points 3; a requirement in the acceptance criteria the
+// obvious implementation misses, which now measures the implementer) and caller (--points 3; a
+// planted defect in an unchanged caller that the natural implementation breaks, to draw a
+// blocking finding, a fix and a re-review). A planted defect is described in its issue file's
+// front matter, which is never filed, and bench/ and docs/benchmarks.md are removed from the
+// plugin worktree, so no agent can read it. Scenario `plan-epic` runs one, on
+// bench/topics/plan-epic.md. The calls run with
 // --dangerously-skip-permissions. That is NOT confined: the agents have an unrestricted shell
 // and whatever `gh` credentials you are logged in with. Run it with a GH_TOKEN that can reach
 // only the scratch repository (a fine-grained token), and not on a machine holding secrets.
@@ -46,17 +50,26 @@ export const ISSUES = [
   { name: 'small', points: 1 },
   { name: 'medium', points: 3 },
   { name: 'trap', points: 3 },
+  { name: 'caller', points: 3 },
 ]
 
 // Claude Code's project directory for a working directory: its real path, every character
 // that is not a letter or digit replaced by '-'.
 export const projectSlug = (dir) => realpathSync(dir).replace(/[^A-Za-z0-9]/g, '-')
 
+// Only title, labels and body are filed. `defect` (a note for maintainers), `defectLocations`
+// (file or file:start-end, comma-separated) and `defectKeywords` describe a planted defect; they
+// stay in the front matter, are recorded in meta.json, and bench-report.mjs matches the review's
+// blocking findings against them.
 export function parseIssue(md) {
   const m = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(md.replace(/\r\n/g, '\n'))
   if (!m) throw new Error('issue file has no front matter')
   const fm = Object.fromEntries(m[1].split('\n').map((l) => /^(\w+):\s*(.*)$/.exec(l)).filter(Boolean).map((x) => [x[1], x[2].trim()]))
-  return { title: fm.title, labels: (fm.labels || '').split(',').map((s) => s.trim()).filter(Boolean), points: Number(fm.points), body: m[2].trim() + '\n' }
+  const list = (v) => (v || '').split(',').map((s) => s.trim()).filter(Boolean)
+  const planted = fm.defectLocations || fm.defectKeywords
+    ? { note: fm.defect || '', locations: list(fm.defectLocations), keywords: list(fm.defectKeywords) }
+    : null
+  return { title: fm.title, labels: list(fm.labels), points: Number(fm.points), body: m[2].trim() + '\n', planted }
 }
 
 export function parseArgs(argv) {
@@ -152,6 +165,9 @@ function runStep(step, o) {
   const pluginDir = join(tmp, 'plugin')
   const work = join(tmp, 'work')
   sh('git', ['-C', ROOT, 'worktree', 'add', '--detach', pluginDir, sha])
+  // The plugin is a worktree of this repository: drop the planted defects and their description.
+  rmSync(join(pluginDir, 'bench'), { recursive: true, force: true })
+  rmSync(join(pluginDir, 'docs', 'benchmarks.md'), { force: true })
   const repo = step.repo
   try {
     const isolation = { mode: o.isolation, repo, ...resetScratch(repo, (args) => sh('gh', args, ROOT)) }
@@ -170,7 +186,7 @@ function runStep(step, o) {
         const url = sh('gh', ['issue', 'create', '--repo', repo, '--title', is.title, '--body', is.body, ...is.labels.flatMap((l) => ['--label', l])], work)
         const n = Number(/\/issues\/(\d+)\s*$/.exec(url)?.[1])
         if (!n) throw new Error(`could not read the issue number from ${url}`)
-        return { ...c, number: n, prompt: c.prompt.replace(`<#${c.issue}>`, String(n)) }
+        return { ...c, number: n, planted: is.planted, prompt: c.prompt.replace(`<#${c.issue}>`, String(n)) }
       })
     } else {
       cpSync(join(BENCH, 'topics', 'plan-epic.md'), join(work, 'PLAN-TOPIC.md'))
@@ -192,7 +208,7 @@ function runStep(step, o) {
         const src = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects', projectSlug(work), sessionId)
         if (existsSync(src)) { cpSync(src, join(step.out, 'sessions', sessionId), { recursive: true }); sessionFound = true }
       }
-      calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
+      calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, planted: c.planted ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
       console.log(`  ${step.ref} ${step.scenario} run ${step.run}: ${c.prompt} — exit ${r.status}, ${(wallMs / 60000).toFixed(1)} min`)
     })
     writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls }, null, 2) + '\n')

@@ -13,7 +13,9 @@
 //
 // Per ref and scenario, averaged over runs: total subagent tokens (input + cache writes + cache
 // reads + output), output tokens per phase, wall time, list-price cost, review findings by
-// severity, fix cycles, and the scratch-repo isolation the run used. Then the same tokens split by
+// severity, fix cycles, and the scratch-repo isolation the run used. Then, per scenario issue, how
+// many runs' first review drew a blocking finding and how many named the issue's planted defect
+// (#98: the defect is described in meta.json, never to the agents). Then the same tokens split by
 // type and phase, so a prompt-footprint change (cache writes and reads) can be told apart from
 // an effort change (output). Then the behaviour checks, read from the transcripts, which pass only
 // if every run passes:
@@ -80,6 +82,48 @@ export const readsClaudeMd = (t) =>
 export const asksUser = (t) => t.name === 'AskUserQuestion'
 const NEW_BRANCH = /\bgit\s+(?:checkout\s+(?:-b|-B)|switch\s+(?:-c|-C|--create)|branch\s+(?!-)[\w./-]+|worktree\s+add\s+(?:[^\s;&|]+\s+)*?-b)\b|\bgh\s+pr\s+create\b/
 export const createsBranchOrPr = (t) => NEW_BRANCH.test(bashOf(t))
+
+// A planted defect is found when a finding's location names one of its files (inside the line
+// range, when one is given), or its location or summary contains one of its keywords, ignoring case.
+const parseLoc = (s) => {
+  const m = String(s).trim().match(/^(.*?)(?::(\d+)(?:-(\d+))?)?$/)
+  const from = m[2] ? Number(m[2]) : null
+  return { file: m[1].replace(/^\.\//, ''), from, to: m[3] ? Number(m[3]) : from }
+}
+const sameFile = (a, b) => Boolean(a && b) && (a === b || a.endsWith(`/${b}`) || b.endsWith(`/${a}`))
+export function matchesPlanted(f, spec) {
+  const text = `${f?.location ?? ''} ${f?.summary ?? ''}`.toLowerCase()
+  if ((spec?.keywords || []).some((k) => k && text.includes(String(k).toLowerCase()))) return true
+  const at = parseLoc(f?.location ?? '')
+  return (spec?.locations || []).some((l) => {
+    const want = parseLoc(l)
+    if (!sameFile(at.file, want.file)) return false
+    return want.from === null || (at.from !== null && at.from <= want.to && at.to >= want.from)
+  })
+}
+
+// Per scenario issue (named from the calls bench-run recorded, else `#<number>`): did the first
+// review block, and did a blocking finding name the issue's planted defect? A result without
+// `review` (an older ref) still shows whether it blocked by whether a fix ran; null is unknown.
+function reviewsOf(prs, calls) {
+  const byNumber = new Map((Array.isArray(calls) ? calls : []).filter((c) => c?.issue && Number.isInteger(c.number)).map((c) => [c.number, c]))
+  const seen = new Set()
+  const out = prs.filter((p) => p?.issue != null).map((p) => {
+    const call = byNumber.get(Number(p.issue))
+    if (call) seen.add(call.number)
+    const spec = call?.planted && typeof call.planted === 'object' ? call.planted : null
+    const findings = Array.isArray(p.review?.findings) ? p.review.findings : null
+    const blocking = typeof p.blockingFindings === 'boolean' ? p.blockingFindings
+      : findings ? Boolean(p.review.blocking || findings.some((f) => f?.blocking))
+        : p.reviewCompleted === false ? null
+          : 'fix' in p ? p.fix != null : null
+    const planted = spec && findings ? findings.some((f) => f?.blocking && matchesPlanted(f, spec)) : null
+    return { issue: call?.issue ?? `#${p.issue}`, blocking, planted, hasPlanted: Boolean(spec) }
+  })
+  // A call whose issue never reached a reviewed PR still counts as a run, with nothing known.
+  for (const c of byNumber.values()) if (!seen.has(c.number)) out.push({ issue: c.issue, blocking: null, planted: null, hasPlanted: Boolean(c.planted) })
+  return out
+}
 
 function agentsOf(sessionDir) {
   const out = []
@@ -156,6 +200,7 @@ export function analyseRun(runDir) {
     tokensByPhase,
     findings,
     fixCycles: fixAgents.length,
+    reviews: reviewsOf(prs, meta.calls),
     // The planner's reply is free text, so a reply proves nothing: an epic was filed only if the
     // scratch repository gained issues across the call (counted by bench-run.mjs). Unknown if
     // the counts were not recorded.
@@ -207,6 +252,16 @@ export function aggregate(runs) {
     const turns = {}
     for (const r of rs) for (const [t, n] of Object.entries(r.turnsByType)) turns[t] = Math.max(turns[t] || 0, n)
     const withFindings = rs.filter((r) => r.findings)
+    const outcomes = new Map()
+    for (const v of rs.flatMap((r) => r.reviews || [])) {
+      const o = outcomes.get(v.issue) || { issue: v.issue, runs: 0, reviewed: 0, blocking: 0, planted: false, plantedKnown: 0, plantedHits: 0 }
+      o.runs++
+      if (v.blocking !== null) o.reviewed++
+      if (v.blocking) o.blocking++
+      if (v.hasPlanted) o.planted = true
+      if (v.planted !== null) { o.plantedKnown++; if (v.planted) o.plantedHits++ }
+      outcomes.set(v.issue, o)
+    }
     return {
       ref: rs[0].ref, sha: rs[0].sha, scenario: rs[0].scenario, runs: rs.length,
       tokens: mean(nums((r) => r.tokens)),
@@ -217,6 +272,7 @@ export function aggregate(runs) {
       findings: withFindings.length ? Object.fromEntries(SEVERITIES.map((s) => [s, mean(withFindings.map((r) => r.findings[s]))])) : null,
       fixCycles: mean(rs.map((r) => r.fixCycles)),
       fixRan: rs.some((r) => r.fixCycles > 0),
+      reviewOutcomes: [...outcomes.values()],
       isolation: [...new Set(rs.map((r) => r.isolation ?? 'none'))].sort().join(', '),
       epicFiled: rs[0].scenario === 'plan-epic' ? (rs.some((r) => r.epicFiled === false) ? false : rs.every((r) => r.epicFiled === true) ? true : null) : null,
       incompleteRuns: rs.filter((r) => r.incomplete > 0).length,
@@ -244,6 +300,14 @@ export function render(groups) {
       g.findings ? SEVERITIES.map((s) => fmt(g.findings[s], 1)).join('/') : 'n/a', fmt(g.fixCycles, 1),
       g.scenario !== 'plan-epic' ? '-' : g.epicFiled === null ? 'n/a' : g.epicFiled ? 'yes' : 'NO', g.isolation])))
   out.push('')
+  const rate = (n, d) => (d ? `${n}/${d} (${Math.round((100 * n) / d)}%)` : 'n/a')
+  const outcomeRows = groups.flatMap((g) => g.reviewOutcomes.map((o) => [g.ref, g.scenario, o.issue, o.runs, rate(o.blocking, o.reviewed),
+    o.planted ? rate(o.plantedHits, o.plantedKnown) : '-']))
+  if (outcomeRows.length) {
+    out.push('Review outcome per scenario issue (blocking: runs whose first review drew a blocking finding, of runs reviewed; planted defect: runs in which a blocking finding named it, of runs whose findings were recorded; -: no planted defect)')
+    out.push(table(['ref', 'scenario', 'issue', 'runs', 'blocking', 'planted defect'], outcomeRows))
+    out.push('')
+  }
   out.push('Subagent tokens by type and phase (cache write and read move with the prompt footprint, output with effort)')
   const sum = (ts) => Object.fromEntries(TOKEN_TYPES.map((k) => [k, ts.reduce((n, t) => n + t[k], 0)]))
   out.push(table(['ref', 'scenario', 'phase', 'input', 'cache write', 'cache read', 'output'],
