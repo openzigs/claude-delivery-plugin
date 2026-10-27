@@ -431,6 +431,33 @@ To fork an agent, override one for a single project or add your own workflow, se
 refresh the same version in place, so without a bump two machines can report one version
 while running different code, and nobody can tell which copy produced a result.
 
+### What changed in 0.8.0
+
+Four defaults changed. Each is a behaviour change for a run that passes no new flag:
+
+- **Effort is explicit.** The implementer, the first review and an escalated re-review pass
+  `effort: 'high'`; the fix and the confirming re-review pass `medium`. Nothing inherits the
+  session's effort any more, because on Opus 5.5 that default is `medium`. A result's `effort`
+  now reads `high`/`medium`, never `inherit`.
+- **Agents no longer pin `model: inherit`.** No agent sets `model:` at all, so a
+  `CLAUDE_CODE_SUBAGENT_MODEL` you set now applies to them (an explicit `inherit` outranked it
+  since Claude Code v2.1.251). The workflow's per-call routing is unchanged.
+- **`--small-model sonnet|inherit|haiku`** chooses the model of the small tier (small
+  implementations, light reviews, fixes, confirming re-reviews). The default, `sonnet`, is the
+  0.7.x behaviour. It is a flag, not a plugin `userConfig` option, because a workflow script
+  cannot read plugin options. Useful where `sonnet` resolves to Sonnet 4.5 (Bedrock, Agent
+  Platform, Foundry).
+- **One security threshold.** `critical` and `high` block; `medium` is a follow-up unless it
+  is exploitable in the changed code; audits run at `--audit-level=high`. The implementer and
+  the reviewer now apply the same rule, so a medium finding no longer costs a fix cycle.
+
+Also in 0.8.0: the fix runs in the implementer's *Fix mode* on the PR's existing branch;
+dispatched agents never stop to ask; the preloaded `code-issue` and `code-review` skills are
+about 30–43% shorter, with detail in reference files read on demand; the light review reads
+only the files it needs; the `orchestrator` agent points at `/delivery:orchestrate`;
+`research`, `ui-vision` and `code-review` carry provisional `maxTurns` ceilings; and `evals/`
+holds a small `claude plugin eval` suite for comparing model tiers.
+
 ---
 
 ## Repository layout
