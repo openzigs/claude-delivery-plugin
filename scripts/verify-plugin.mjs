@@ -1094,6 +1094,58 @@ for (const file of workflowFiles) {
     'size hints apply to their own batch')
   check(r.result.batches.every((b) => b.prs.every((p) => p.reReview)), 'every PR in every batch gets its review cycles')
 
+  // --- --batch-review, the cheap mode (#66): off by default; with it, one review covers a batch
+  // with no risk label, and a PR it blocks still gets its own fix and re-review.
+  {
+    const reviewsOf = (x) => x.dispatches.filter((d) => d.agentType === 'delivery:code-review' && d.phase === 'Review')
+    r = await run({ argv: '412 413 415' })
+    check(JSON.stringify(reviewsOf(r).map((d) => d.label)) === '["review:412","review:413","review:415"]'
+      && r.result.cheapMode === false && r.result.batches[0].reviewMode === 'per-pr' && !r.logs.some((l) => /batch review/i.test(l)),
+    'without --batch-review a batch still gets one review per PR, and the result records cheapMode false')
+    const perPr = (o) => (o.label.startsWith('review:batch:') ? { reviews: [1412, 1413, 1415].map((pr) =>
+      ({ ...(pr === 1413 ? BLOCKING_REVIEW : CLEAN_REVIEW), pr })) } : o.label === 'review:413' ? BLOCKING_REVIEW : CLEAN_REVIEW)
+    r = await run({ argv: '412 413 415 --batch-review', review: perPr })
+    const one = reviewsOf(r)
+    check(one.length === 1 && one[0].label === 'review:batch:412+413+415' && one[0].schema?.properties?.reviews
+      && ['#1412', '#1413', '#1415'].every((n) => one[0].prompt.includes(`PR ${n}`)) && /Publish a separate review on EACH pull request/.test(one[0].prompt)
+      && one[0].effort === 'high' && one[0].model === undefined,
+    'with --batch-review one full-scope review on the session model covers every PR in the batch and publishes on each')
+    check(JSON.stringify(r.dispatches.filter((d) => /^(fix|rereview):/.test(d.label)).map((d) => d.label)) === '["fix:413","rereview:413"]'
+      && r.result.batches[0].prs.every((p) => p.reviewCompleted && p.reviewedInBatch)
+      && r.result.batches[0].prs.find((p) => p.issue === 413).stillBlocking === false,
+    'a PR the batch review blocks still gets its own fix and re-review; the others do not')
+    check(r.result.cheapMode === true && r.result.batches[0].reviewMode === 'batch' && /no risk label/.test(r.result.batches[0].reviewModeWhy),
+      'the result records that cheap mode was used, per run and per batch')
+    check(!r.dispatches.some((d) => d.prompt.includes('--batch-review')) && JSON.stringify(r.result.batches[0].issues) === '[412,413,415]',
+      '--batch-review is taken out of the issue list and no prompt')
+    r = await run({ argv: '412 413 415 --batch-review', review: perPr, facts: { 413: { labels: ['enhancement', 'Breaking'] } } })
+    check(reviewsOf(r).length === 3 && r.result.batches[0].reviewMode === 'per-pr' && /risk label Breaking on #413/.test(r.result.batches[0].reviewModeWhy)
+      && r.logs.some((l) => /--batch-review ignored: risk label Breaking on #413/.test(l)),
+    'a batch with any risk-labelled issue ignores --batch-review and reviews per PR')
+    r = await run({ argv: '412 413 --batch-review', review: perPr, facts: { 412: { labels: null } } })
+    check(reviewsOf(r).length === 2 && r.result.batches[0].reviewMode === 'per-pr', 'unknown labels in a batch also mean one review per PR')
+    r = await run({ argv: '412 --batch-review', review: perPr })
+    check(reviewsOf(r).map((d) => d.label).join() === 'review:412', 'a single PR is reviewed on its own even with --batch-review')
+    r = await run({ argv: '412 413 --batch-review', review: (o) => ({ reviews: [{ ...CLEAN_REVIEW, pr: 1412 }] }) })
+    const p413 = r.result.batches[0].prs.find((p) => p.issue === 413)
+    check(p413?.reviewCompleted === false && r.result.reviewCompleted === false && r.logs.some((l) => /#413: review did not complete/.test(l)),
+      'a PR the batch review returned nothing for is reported as not reviewed')
+    r = await run({ argv: '412 413 --batch-review', review: null })
+    check(r.result.batches[0].prs.every((p) => p.reviewCompleted === false) && !r.phases.includes('Fix'),
+      'a batch review that never returned marks every PR in the batch unreviewed')
+    r = await run({ argv: '412 413 --batch-review', review: perPr, budget: 'metered' })
+    check(r.result.batches[0].outputTokens.batchReview === 200 && r.result.batches[0].prs.every((p) => !('review' in p.outputTokens)),
+      'the batch review\'s output tokens are recorded once, on the batch, not split across its PRs')
+    const para = readFileSync(join(ROOT, 'README.md'), 'utf8').split(/\n\s*\n/).find((x) => x.includes('review phase cannot be skipped')) || ''
+    check(/--batch-review/.test(para) && /experimental/i.test(para) && /risk label/.test(para),
+      'the README states the --batch-review trade-off next to "the review phase cannot be skipped"')
+    const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
+    const out = cr.render(cr.summarise([{ id: 'cheap', data: r.result }]))
+    check(/cheap mode: one review per batch \(--batch-review\)/.test(out) && /^1\s+#412,#413\s+-\s+Batch review\s+200\s/m.test(out)
+      && /^1\s+#412\s+#1412\s+Review\s+n\/a\s.*in batch review$/m.test(out),
+    'the cost-report shows cheap mode, the batch review row and which reviews it covered', out.split('\n').slice(0, 7).join(' | '))
+  }
+
   r = await run({ argv: '412, 413' })
   check(r.dispatches.some((d) => d.label === 'implement:412+413'), 'comma-separated issues are a batch')
 

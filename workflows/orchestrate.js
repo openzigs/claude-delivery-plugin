@@ -2,7 +2,7 @@ export const meta = {
   name: 'orchestrate',
   description: 'Run GitHub issues through implement -> review -> fix -> re-review, one PR each',
   whenToUse:
-    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small; --small-model sonnet|inherit|haiku picks the model of the small tier (default sonnet). Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
+    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small; --small-model sonnet|inherit|haiku picks the model of the small tier (default sonnet). Experimental --batch-review reviews a batch of PRs in one review instead of one per PR (cheaper, less independent; ignored for a batch with a risk label). Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
   phases: [
     { title: 'Implement', detail: 'delivery:code-issue takes each issue in the batch to a green PR' },
     { title: 'Review', detail: 'delivery:code-review reads each PR independently, scoped to its risk' },
@@ -79,6 +79,20 @@ const REVIEW_SCHEMA = {
     },
   },
   required: ['recommendation', 'blocking', 'findings', 'verification'],
+}
+
+// The batch review (--batch-review) returns one REVIEW_SCHEMA entry per PR it covered, each
+// with its own pr number, so every PR still gets its own blocking decision.
+const BATCH_REVIEW_SCHEMA = {
+  type: 'object',
+  properties: {
+    reviews: {
+      type: 'array',
+      description: 'One entry per pull request reviewed, each the review of that PR alone',
+      items: { ...REVIEW_SCHEMA, required: ['pr', ...REVIEW_SCHEMA.required] },
+    },
+  },
+  required: ['reviews'],
 }
 
 const formatReview = (r) =>
@@ -379,7 +393,15 @@ if (/(?:^|\s)--small-model(?=[\s=]|$)/.test(raw)
 }
 const SMALL = smallFlag ? SMALL_MODELS[smallFlag[1]] : SONNET
 if (smallFlag) log(`Small tier (small implementations, light reviews, fixes, confirming re-reviews) runs on ${modelName(SMALL)} (--small-model ${smallFlag[1]}).`)
-const target = raw.replace(/(^|\s)--small-model(=|\s+)\S+/g, ' ').replace(/\s+/g, ' ').trim()
+// --batch-review (cheap mode, EXPERIMENTAL, off by default) reviews each batch of two or more
+// PRs in ONE review dispatch instead of one per PR. It trades the independence of a per-PR
+// review for cost, which is why it is opt-in: without it, every PR gets its own review. It is
+// ignored for a batch where any issue carries a risk label, or whose labels are unknown. A PR
+// the batch review blocks still gets its own fix and re-review. It stays experimental until
+// eval evidence compares its recall with per-PR review.
+const BATCH_REVIEW = /(?:^|\s)--batch-review(?=\s|$)/.test(raw)
+if (BATCH_REVIEW) log('Cheap mode (--batch-review, EXPERIMENTAL): a batch of PRs with no risk label is reviewed once, not once per PR.')
+const target = raw.replace(/(^|\s)--small-model(=|\s+)\S+/g, ' ').replace(/(^|\s)--batch-review(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim()
 
 const parseSegment = (text) => {
   // Commas are accepted as separators too: `412, 413` is a batch, not a description.
@@ -420,7 +442,7 @@ if (segments.length && segments.every((s) => s.issues)) {
 if (!target) {
   log(
     'No target given. Usage: /delivery:orchestrate <issue number> [more issue numbers] ' +
-      '[; another batch] [--points N | --small] [--small-model sonnet|inherit|haiku]  or  ' +
+      '[; another batch] [--points N | --small] [--small-model sonnet|inherit|haiku] [--batch-review]  or  ' +
         '/delivery:orchestrate <what you want done>',
   )
 }
@@ -469,18 +491,22 @@ const implementPrompt = (lane, rules) => {
   )
 }
 
-async function reviewOne(it, lane, implementModel, iso, rules) {
+// `batch`, when set, is this PR's entry from a batch review that already ran: the review step
+// is not dispatched again, and the fix and re-review below run per PR exactly as they would
+// after a per-PR review.
+async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
   const tag = it.issue ?? `pr${it.pr}`
   const subject = it.issue ? `issue #${it.issue}` : subjectOf(lane)
-  const route = routeReview(it)
+  const route = batch ? BATCH_ROUTE : routeReview(it)
   const models = { implement: implementModel, review: route.model }
   const effort = { implement: IMPLEMENT_EFFORT, review: REVIEW_EFFORT }
-  const outputTokens = { review: null }
+  // A batch review's tokens are the batch's, recorded on the lane, not split across its PRs.
+  const outputTokens = batch ? {} : { review: null }
   log(
-    `#${tag}: ${route.light ? 'light review' : 'full review'} on ${modelName(route.model)} ` +
+    `#${tag}: ${batch ? 'batch review' : route.light ? 'light review' : 'full review'} on ${modelName(route.model)} ` +
       `(${route.why}).`,
   )
-  const [reviewed, reviewTokens] = await metered(() => agent(
+  const [reviewed, reviewTokens] = batch ? [batch.review, null] : await metered(() => agent(
     `Review pull request #${it.pr}, opened for ${subject}, following the code-review ` +
       `procedure (preloaded).\n\n` +
       (route.light ? `${LIGHT_SCOPE}\n\n` : '') +
@@ -499,7 +525,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
       ...iso,
     },
   ))
-  outputTokens.review = reviewTokens
+  if (!batch) outputTokens.review = reviewTokens
   const effortNames = () => Object.fromEntries(Object.entries(effort).map(([k, e]) => [k, effortName(e)]))
   const base = {
     issue: it.issue,
@@ -507,6 +533,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
     implemented: it.report,
     reviewScope: route.light ? 'light' : 'full',
     reviewRouting: route.why,
+    reviewedInBatch: Boolean(batch),
   }
 
   // A review that never came back is not a clean review. Stop loudly rather than
@@ -616,6 +643,31 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
   }
 }
 
+// A batch review is always full scope on the session model at high effort: it is the only
+// look the PRs get before a fix, and it covers more than one change.
+const BATCH_ROUTE = { light: false, model: INHERIT, why: 'covered by one batch review (--batch-review)' }
+
+const reviewModeOf = (withPr) => {
+  if (!BATCH_REVIEW) return { batch: false, why: 'per-PR review (default)' }
+  if (withPr.length < 2) return { batch: false, why: '--batch-review has no effect on a single PR' }
+  const unknown = withPr.filter((i) => !Array.isArray(i.labels))
+  if (unknown.length) return { batch: false, why: `--batch-review ignored: labels unknown for ${unknown.map((i) => `#${i.issue ?? '?'}`).join(', ')}` }
+  const risky = withPr.flatMap((i) => i.labels.filter((l) => RISKY_LABEL.test(l)).map((l) => `${l} on #${i.issue ?? '?'}`))
+  if (risky.length) return { batch: false, why: `--batch-review ignored: risk label ${risky.join(', ')}` }
+  return { batch: true, why: `--batch-review: ${withPr.length} PRs, no risk label` }
+}
+
+const batchReviewPrompt = (withPr, rules) =>
+  `Review these pull requests from one batch in a single pass, following the code-review ` +
+  `procedure (preloaded) at full scope for each: ` +
+  withPr.map((i) => `PR #${i.pr}${i.issue ? ` (issue #${i.issue})` : ''}`).join(', ') + `.\n\n` +
+  `Judge each PR on its own diff and its own issue: a finding belongs to the PR that ` +
+  `introduced it. Each implementer's summary is in its PR body (\`gh pr view <pr> --json body\`); ` +
+  `read the change itself, not only that account.\n\n${rules}\n\n` +
+  `Publish a separate review on EACH pull request, with that PR's findings and its own ` +
+  `Recommendation: line, as the procedure describes. Then return one entry per PR, with its ` +
+  `pr number, recommendation and every finding with severity, file:line and whether it is blocking.`
+
 async function runLane(lane, isolated) {
   // Isolation is all or nothing per batch: concurrent batches sharing one checkout
   // would switch branches under each other, so every agent in a concurrent batch
@@ -656,12 +708,34 @@ async function runLane(lane, isolated) {
   for (const i of unopened) log(`#${i.issue ?? '?'}: no PR was opened — nothing to review. ${i.report}`)
 
   const prs = []
+  const withPr = built.issues.filter((i) => i.pr)
+  const mode = reviewModeOf(withPr)
+  if (BATCH_REVIEW) log(`${subjectOf(lane)}: ${mode.batch ? 'one batch review' : 'one review per PR'} (${mode.why}).`)
+  let batchByPr = null
+  if (mode.batch) {
+    const [got, tokens] = await metered(() => agent(batchReviewPrompt(withPr, rules), {
+      label: `review:batch:${name}`,
+      phase: 'Review',
+      agentType: 'delivery:code-review',
+      schema: BATCH_REVIEW_SCHEMA,
+      ...modelOpt(BATCH_ROUTE.model),
+      ...effortOpt(REVIEW_EFFORT),
+      ...iso,
+    }))
+    laneResult.outputTokens.batchReview = tokens
+    batchByPr = new Map((Array.isArray(got?.reviews) ? got.reviews : []).filter((r) => r && Array.isArray(r.findings)).map((r) => [r.pr, r]))
+  }
   // One PR at a time within a batch: in the caller's checkout two reviewers would
-  // fight over the branch, and the batch is meant to be one lane of work.
-  for (const it of built.issues.filter((i) => i.pr)) prs.push(await reviewOne(it, lane, route.model, iso, rules))
+  // fight over the branch, and the batch is meant to be one lane of work. After a batch
+  // review, a PR it returned no entry for counts as not reviewed (reviewOne says so).
+  for (const it of withPr) {
+    prs.push(await reviewOne(it, lane, route.model, iso, rules, batchByPr ? { review: batchByPr.get(it.pr) ?? null } : null))
+  }
 
   return {
     ...laneResult,
+    reviewMode: mode.batch ? 'batch' : 'per-pr',
+    reviewModeWhy: mode.why,
     implemented: built.issues,
     notImplemented: missing,
     noPr: unopened.map((i) => i.issue),
@@ -679,6 +753,7 @@ const results = batches.map((b, i) => b || { issues: lanes[i].issues, prs: [], r
 
 return {
   batches: results,
+  cheapMode: BATCH_REVIEW,
   reviewCompleted: results.every((b) => b.reviewCompleted),
   merged: false,
   note:
