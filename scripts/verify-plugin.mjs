@@ -163,6 +163,20 @@ for (const dir of SKILLS) {
   else ok(`skills/${dir}: frontmatter ok (${fm.description.length} char description)`)
 }
 
+// Every file a skill or agent points at through ${CLAUDE_PLUGIN_ROOT} must exist: a reference
+// file moved out of a preloaded skill is read on demand, and a dangling pointer silently drops
+// the rules it held.
+{
+  const refs = []
+  for (const f of [...agentFiles.map((a) => `agents/${a}`), ...SKILLS.flatMap((d) =>
+    readdirSync(join(ROOT, 'skills', d)).filter((x) => x.endsWith('.md')).map((x) => `skills/${d}/${x}`))]) {
+    for (const m of readFileSync(join(ROOT, f), 'utf8').matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([\w./-]+[\w])/g)) refs.push([f, m[1]])
+  }
+  const dangling = refs.filter(([, r]) => !existsSync(join(ROOT, r)))
+  ;(refs.length && dangling.length === 0 ? ok : bad)(
+    `every \${CLAUDE_PLUGIN_ROOT} path named in a skill or agent exists (${refs.length} references${dangling.length ? `; dangling: ${dangling.map(([f, r]) => `${f} -> ${r}`).join(', ')}` : ''})`)
+}
+
 // The orient steps of the two procedure skills are one batched Bash call, then one
 // response of parallel reads: every separate fetch is a full model turn over a
 // growing context. The batch is joined with `;`, never `&&`, so a missing
@@ -208,17 +222,37 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'code-issue Step 5 says a fail bucket means read the failed log, fix, push, and wait again')
   checkSkill(ci.includes('no checks reported') && /not configured/.test(ci),
     'code-issue Step 5 says "no checks reported" is CI not configured, not passed')
-  // `--no-watch` is not a universal run-once flag; some runners reject it.
-  const shell = sectionOf(issue, '## Shell Execution Rules')
+  // `--no-watch` is not a universal run-once flag; some runners reject it. The full shell
+  // rules live in a shared reference file (#52); the inline section is a digest that names it.
+  // Both must state the same CI-wait ceiling as Step 5.
+  const SHELL_FILE = 'skills/code-issue/SHELL_RULES.md'
+  const shellDigest = sectionOf(issue, '## Shell Execution Rules')
+  const shellFull = existsSync(join(ROOT, SHELL_FILE)) ? readFileSync(join(ROOT, SHELL_FILE), 'utf8') : ''
+  checkSkill(shellFull && shellDigest.includes(`\${CLAUDE_PLUGIN_ROOT}/${SHELL_FILE}`) && shellDigest.trim().split('\n').length <= 14,
+    `code-issue keeps a Shell Execution Rules digest (at most ~10 rule lines) that points at ${SHELL_FILE}, which exists`)
+  const shell = shellDigest + '\n' + shellFull
   // The Bash tool's foreground maximum is 600000 ms; Step 5 and Shell rule 2 must state it and agree.
   const BASH_MAX_MS = 600000
-  const shellRule2 = shell.slice(shell.indexOf('2. **No watch mode**'))
+  const rule2 = (t) => { const i = t.indexOf('2. **No watch mode**'); if (i === -1) return ''; const e = t.slice(i).search(/\n\s*3\. \*\*/); return e === -1 ? t.slice(i) : t.slice(i, i + e) }
   const ceilings = (t) => [...t.matchAll(/`timeout` of at most `(\d+)` ms/g)].map((m) => Number(m[1]))
-  const stepMs = ceilings(ci), ruleMs = ceilings(shellRule2)
-  checkSkill(stepMs.length === 1 && ruleMs.length === 1 && stepMs[0] <= BASH_MAX_MS && stepMs[0] === ruleMs[0],
-    `code-issue Step 5 and Shell rule 2 state the same CI-wait ceiling, at most ${BASH_MAX_MS} ms (found ${stepMs} / ${ruleMs})`)
+  const stepMs = ceilings(ci), ruleMs = [...ceilings(rule2(shellDigest)), ...ceilings(rule2(shellFull))]
+  checkSkill(stepMs.length === 1 && ruleMs.length === 2 && stepMs[0] <= BASH_MAX_MS && ruleMs.every((n) => n === stepMs[0]),
+    `code-issue Step 5, the shell digest's rule 2 and ${SHELL_FILE} rule 2 state the same CI-wait ceiling, at most ${BASH_MAX_MS} ms (found ${stepMs} / ${ruleMs})`)
   checkSkill(!shell.includes('--no-watch') && shell.includes('--watch=false'),
     'code-issue shell rule 2 gives --watch=false, not --no-watch, as a run-once form')
+
+  // The preloaded code-issue core (#52): at least 30% shorter than at 0.7.1 (4,289 words), and
+  // the must-hold rules -- one issue, test-first, coverage, security -- come before the first
+  // pointer to a reference file, so a compacted copy still carries them.
+  {
+    const words = issue.split(/\s+/).filter(Boolean).length
+    checkSkill(words <= 3002, `skills/code-issue/SKILL.md is at most 3,002 words, 70% of 0.7.1's 4,289 (has ${words})`)
+    const firstRef = issue.indexOf('${CLAUDE_PLUGIN_ROOT}/skills/code-issue/')
+    const musts = { 'one issue': 'one GitHub issue per branch and PR', 'test-first': '#### 3a. Test-Driven Development',
+      coverage: 'at least 80% on the code you', security: '**Security blocking rule**' }
+    const late = Object.entries(musts).filter(([, t]) => { const i = issue.indexOf(t); return i === -1 || firstRef === -1 || i > firstRef }).map(([k]) => k)
+    checkSkill(late.length === 0, `code-issue states the one-issue, test-first, coverage and security rules before its first reference-file pointer${late.length ? ` (late or missing: ${late.join(', ')})` : ''}`)
+  }
 
   // Only the plan-epic workflow reaches these two, and it is not a user.
   const planner = readFileSync(join(ROOT, 'skills/epic-planner/SKILL.md'), 'utf8')
