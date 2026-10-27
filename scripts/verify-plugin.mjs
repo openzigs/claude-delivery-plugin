@@ -66,6 +66,15 @@ for (const f of ['name', 'version', 'description', 'author']) {
   manifest[f] ? ok(`has ${f}`) : bad(`missing ${f}`)
 }
 manifest.name === 'delivery' ? ok('name is "delivery"') : bad(`name is ${manifest.name}`)
+// A minor or major release carries its change note in the README (#64), so a version bump
+// cannot ship without saying what changed for users.
+{
+  const [maj, min] = String(manifest.version).split('.')
+  const note = new RegExp(`^### What changed in ${maj}\\.${min}\\.0$`, 'm')
+  note.test(readFileSync(join(ROOT, 'README.md'), 'utf8'))
+    ? ok(`README.md has a "What changed in ${maj}.${min}.0" note for version ${manifest.version}`)
+    : bad(`README.md has no "### What changed in ${maj}.${min}.0" note for version ${manifest.version}`)
+}
 
 // -------------------------------------------------------------------- agents
 console.log('\n== agents/ ==')
@@ -526,6 +535,16 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
       .concat([...t.matchAll(/count lower than (\d+) or/g)].map((m) => Number(m[1])))
     checkSkill(found.length > 0 && found.every((n) => n === want),
       `${f}: every stated skill count is ${want}, the number of skills/ directories (found ${JSON.stringify(found)})`)
+  }
+  // The agent count stated alongside it must be the real one too (#64).
+  for (const f of ['.claude-plugin/plugin.json', '.claude-plugin/marketplace.json', 'README.md', 'docs/installation.md']) {
+    const t = readFileSync(join(ROOT, f), 'utf8')
+    // Only a count stated beside the skill count ("seven agents and nine skills"), not prose
+    // such as "a clean issue costs two agents".
+    const found = [...t.matchAll(new RegExp(`\\b(${NUM.join('|')}) agents(?:,|\\s+and)\\s+(?:${NUM.join('|')})\\s+skills\\b`, 'gi'))].map((m) => NUM.indexOf(m[1].toLowerCase()))
+      .concat([...t.matchAll(/\bAgents \((\d+)\)/g)].map((m) => Number(m[1])))
+    checkSkill(found.length > 0 && found.every((n) => n === agentFiles.length),
+      `${f}: every stated agent count is ${agentFiles.length}, the number of agents/*.md files (found ${JSON.stringify(found)})`)
   }
   {
     const d = join(tmpdir(), `skills-stray-${process.pid}`)
