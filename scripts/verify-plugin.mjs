@@ -1108,9 +1108,14 @@ for (const file of workflowFiles) {
     check(JSON.stringify(r.result.suggestedProjectNotes) === JSON.stringify(['Scoped queries must filter on tenant_id.', 'The in-memory fixture hides missing indexes.']),
       'durable findings from reviews and re-reviews across the run become suggestedProjectNotes, deduplicated',
       `suggestedProjectNotes = ${JSON.stringify(r.result.suggestedProjectNotes)}`)
-    r = await run({ argv: '412 ; 500', review: (o) => (o.label === 'review:500' ? { ...CLEAN_REVIEW, durableFinding: 'scoped queries must filter on TENANT_ID.' }
-      : { ...CLEAN_REVIEW, durableFinding: 'Scoped queries must filter on tenant_id.' }) })
-    check(JSON.stringify(r.result.suggestedProjectNotes) === '["Scoped queries must filter on tenant_id."]', 'notes are deduplicated across concurrent batches too')
+    r = await run({ argv: '412 ; 500 ; 600', review: (o) => (o.label === 'review:500' ? { ...CLEAN_REVIEW, durableFinding: 'scoped queries must filter on TENANT_ID.' }
+      : o.label === 'review:600' ? { ...CLEAN_REVIEW, durableFinding: 'Second batch only.' }
+        : { ...CLEAN_REVIEW, durableFinding: 'Scoped queries must filter on tenant_id.' }) })
+    check(JSON.stringify(r.result.suggestedProjectNotes) === '["Scoped queries must filter on tenant_id.","Second batch only."]',
+      'notes are collected from every concurrent batch and deduplicated across them',
+      `suggestedProjectNotes = ${JSON.stringify(r.result.suggestedProjectNotes)}`)
+    r = await run({ review: { ...CLEAN_REVIEW, durableFinding: 'x'.repeat(2000) } })
+    check(r.result.suggestedProjectNotes.length === 1 && r.result.suggestedProjectNotes[0].length <= 500, 'a note is capped at 500 characters')
     r = await run()
     check(Array.isArray(r.result.suggestedProjectNotes) && r.result.suggestedProjectNotes.length === 0,
       'a run in which no review returned a durable finding yields an empty list, not a placeholder')
@@ -1121,9 +1126,13 @@ for (const file of workflowFiles) {
     check(/nothing was written to either/.test(r.result.note), 'the result says the notes were not written anywhere')
     // No dispatched prompt, in any workflow or route, instructs editing CLAUDE.md, AGENTS.md or
     // .claude/delivery.md. The matcher is proven able to fail on a prompt that does.
-    const PROTECTED = /\b(edit|edits|editing|write|writes|writing|modify|update|updates|append|add (?:it|them|this|a note|notes)? ?to|commit (?:it|them)? ?to|record (?:it|them)? in)\b[^.\n]{0,60}(CLAUDE\.md|AGENTS\.md|\.claude\/delivery\.md)/i
+    const PROTECTED_RE = /(?<!\b(?:not|never|no|n't) )\b(edit|edits|editing|write|writes|writing|modify|modifies|update|updates|append|appends|add|adds|record|records|save|saves|put|puts|commit|commits|amend|amends|store|stores|log|logs)\b[^.\n]{0,80}(CLAUDE\.md|AGENTS\.md|\.claude\/delivery\.md)/i
+    const PROTECTED = { test: (t) => PROTECTED_RE.test(t.replace(/\b(?:e\.g|i\.e)\./gi, 'eg')), exec: (t) => PROTECTED_RE.exec(t.replace(/\b(?:e\.g|i\.e)\./gi, 'eg')) }
     check(PROTECTED.test('Then update CLAUDE.md with the lesson.') && PROTECTED.test('Append the durable finding to .claude/delivery.md')
-      && PROTECTED.test('add it to AGENTS.md') && !PROTECTED.test('Your procedure\'s Step 0 says how to treat CLAUDE.md, AGENTS.md'),
+      && PROTECTED.test('add it to AGENTS.md') && ['Add the durable finding to CLAUDE.md.', 'Add a line to CLAUDE.md', 'Record the lesson in CLAUDE.md', 'Save it to AGENTS.md',
+      'Put the note in .claude/delivery.md', 'Commit the finding to CLAUDE.md', 'Amend CLAUDE.md', 'Add a note (e.g. a lesson) to CLAUDE.md.'].every((t) => PROTECTED.test(t))
+      && !PROTECTED.test('Your procedure\'s Step 0 says how to treat CLAUDE.md, AGENTS.md')
+      && ['Do not edit CLAUDE.md.', 'Never write to AGENTS.md.', 'You must not add notes to CLAUDE.md'].every((t) => !PROTECTED.test(t)),
     'the instruction-file guard matches an instruction to edit them and not a mention of them')
     const planBody = readFileSync(join(ROOT, 'workflows/plan-epic.js'), 'utf8').replace(/export const meta = \{[\s\S]*?\n\}\n/, '')
     const prompts = []

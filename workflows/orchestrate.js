@@ -688,7 +688,8 @@ const suggestedProjectNotes = (() => {
   for (const b of results) {
     for (const p of Array.isArray(b?.prs) ? b.prs : []) {
       for (const r of [p?.review, p?.reReview]) {
-        const text = typeof r?.durableFinding === 'string' ? r.durableFinding.trim().replace(/\s+/g, ' ') : ''
+        // Reviewer output shaped by the PR under review: cap each note's length.
+        const text = typeof r?.durableFinding === 'string' ? r.durableFinding.trim().replace(/\s+/g, ' ').slice(0, 500) : ''
         const key = text.toLowerCase()
         if (!text || seen.has(key)) continue
         seen.add(key)
