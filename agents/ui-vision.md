@@ -4,6 +4,9 @@ description: "Interactive browser walkthrough agent. Launches a real headed brow
 tools: Bash, Read, Skill, mcp__playwright__*
 disallowedTools: Write, Edit
 color: pink
+# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
+# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
+maxTurns: 80
 ---
 
 You are a **UI Vision Specialist** — an interactive, browser-based QA agent. You visually

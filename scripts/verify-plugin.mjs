@@ -83,7 +83,7 @@ function frontmatter(src, file) {
   const out = {}
   for (let i = 1; i < end; i++) {
     const line = lines[i]
-    if (!line.trim()) continue
+    if (!line.trim() || /^#/.test(line)) continue  // blank, or a YAML full-line comment
     if (line.includes('\t')) { bad(`${file}: tab in frontmatter line ${i + 1}`); return null }
     const m = /^([A-Za-z][A-Za-z0-9_-]*):\s?(.*)$/.exec(line)
     if (!m) { bad(`${file}: unparseable frontmatter line ${i + 1}: ${line}`); return null }
@@ -111,6 +111,21 @@ for (const file of agentFiles) {
   if (!fm.description) bad(`${file}: no description`)
   const unknown = Object.keys(fm).filter((k) => !KNOWN.has(k))
   if (unknown.length) bad(`${file}: unsupported frontmatter field(s): ${unknown.join(', ')}`)
+}
+
+// maxTurns guards (#58): a runaway research, browser or review agent stops at a ceiling
+// and returns partial output. Only these three set it, and cacheTtl stays at its default
+// everywhere (#13).
+{
+  const MAX_TURNS = ['research', 'ui-vision', 'code-review']
+  const turns = Object.fromEntries(agentFiles.map((f) => [basename(f, '.md'), frontmatter(readFileSync(join(ROOT, 'agents', f), 'utf8'), f)?.maxTurns]))
+  const bad3 = MAX_TURNS.filter((a) => !/^[1-9]\d*$/.test(turns[a] ?? ''))
+  ;(bad3.length === 0 ? ok : bad)(`research, ui-vision and code-review each set maxTurns to a positive integer${bad3.length ? ` (missing or invalid: ${bad3.map((a) => `${a}=${turns[a]}`).join(', ')})` : ` (${MAX_TURNS.map((a) => `${a} ${turns[a]}`).join(', ')})`}`)
+  const others = Object.keys(turns).filter((a) => !MAX_TURNS.includes(a) && turns[a] !== undefined)
+  ;(others.length === 0 ? ok : bad)(`no other agent sets maxTurns${others.length ? ` (found on ${others.join(', ')})` : ''}`)
+  const ttl = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.map((d) => `skills/${d}/SKILL.md`), '.claude-plugin/plugin.json',
+    ...readdirSync(join(ROOT, 'workflows')).map((f) => `workflows/${f}`)].filter((f) => /cacheTtl/.test(readFileSync(join(ROOT, f), 'utf8')))
+  ;(ttl.length === 0 ? ok : bad)(`cacheTtl is not set anywhere${ttl.length ? ` (found in ${ttl.join(', ')})` : ''}`)
 }
 
 // No agent sets `model:` (#56). Since Claude Code v2.1.251 an explicit frontmatter model,

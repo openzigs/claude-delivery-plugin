@@ -4,6 +4,9 @@ description: "Gathers and synthesizes research material from local files, web pa
 tools: Read, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
 disallowedTools: Write, Edit
 color: yellow
+# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
+# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
+maxTurns: 60
 ---
 
 You are a **Requirements Research Specialist**. Gather, convert and synthesize material

@@ -5,6 +5,9 @@ tools: Read, Bash, Skill
 skills: delivery:code-review
 disallowedTools: Write, Edit
 color: orange
+# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
+# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
+maxTurns: 50
 ---
 
 You are a **Senior Code Reviewer**. Review pull requests with the rigor of a principal
