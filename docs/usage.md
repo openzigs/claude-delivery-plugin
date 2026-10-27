@@ -106,6 +106,16 @@ rather than assumed:
 | `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output, after low-confidence findings are dropped. `rereview` is `null` when no re-review ran |
 | `suppressedFindings` | each PR | How many non-blocking findings the review and re-review rated below confidence 50 and the workflow dropped before the fix pass. A blocking finding is never dropped, whatever its confidence. The cost-report shows it on the PR's Review row and in its totals |
 
+**Suggested project notes.** The run's result also carries `suggestedProjectNotes`: every
+`durableFinding` a review or re-review returned — a lesson a future reviewer could not derive
+from the code, such as a defect class that recurs in this project — collected across all PRs
+in the run and deduplicated (ignoring case and whitespace). It is a list of strings, and an
+empty list when no review returned one. It is a **suggestion only**: nothing in the workflow
+writes it anywhere, and no dispatched prompt tells an agent to edit `CLAUDE.md`, `AGENTS.md` or
+`.claude/delivery.md` (the verifier checks the common phrasings, not every possible one). Each note is capped at 500
+characters. The notes come from reviewers reading an untrusted PR, so read them critically before
+copying what you want to keep into your project's notes file or `CLAUDE.md` yourself.
+
 `budget.spent()` counts the whole turn, so when batches run concurrently a phase's delta
 also includes what the other batches spent in the same window. Read token figures from a
 single-batch run when you are comparing them.
