@@ -59,8 +59,7 @@ turns**: every separate fetch is a full model turn over a growing context.
      guides. Wherever they live in this repository; do not assume a `docs/` directory exists.
 3. **Read CI from the batch.** Failing CI is blocking. A job stuck in `queued` is not the PR's
    fault — a deep queue and a runner outage look identical from `gh pr checks`, so say which it is
-   (or that you could not tell) rather than reporting a red check. Do **not** report pre-existing
-   lint or type findings as PR findings.
+   (or that you could not tell) rather than reporting a red check.
 
 ### Step 2: Requirements Validation
 
@@ -245,6 +244,10 @@ it is truncated or partial, say that instead. Never publish a review whose empti
 **What makes a finding blocking** (→ `do not merge`): failing CI; a security finding that the
 security blocking rule (Step 4) says blocks; missing requirements; broken or unfalsifiable tests; undocumented architectural
 change; a missing changelog entry on a user-facing change. Everything else is a follow-up or a nit.
+
+**Report only what this PR introduced**: not pre-existing issues in unchanged code, nor lint or
+type findings. Rate each finding's `confidence` (0-100) that it is real; the workflow drops only
+low-confidence non-blocking ones.
 
 **Review body structure:**
 
