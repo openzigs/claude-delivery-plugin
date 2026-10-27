@@ -141,6 +141,12 @@ for (const file of agentFiles) {
   ;(bad3.length === 0 ? ok : bad)(`research, ui-vision and code-review each set maxTurns to a positive integer${bad3.length ? ` (missing or invalid: ${bad3.map((a) => `${a}=${turns[a]}`).join(', ')})` : ` (${MAX_TURNS.map((a) => `${a} ${turns[a]}`).join(', ')})`}`)
   const others = Object.keys(turns).filter((a) => !MAX_TURNS.includes(a) && turns[a] !== undefined)
   ;(others.length === 0 ? ok : bad)(`no other agent sets maxTurns${others.length ? ` (found on ${others.join(', ')})` : ''}`)
+  // #97: each ceiling's frontmatter comment states its evidence -- the bench replay it read
+  // and the highest turn count observed there, or that there is no data yet -- not a stale
+  // "provisional" note.
+  const note = (a) => { const l = readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8').split('\n'); return l.slice(1, l.indexOf('---', 1)).filter((x) => /^#/.test(x)).join(' ') }
+  const unsourced = MAX_TURNS.filter((a) => { const n = note(a); return /provisional/i.test(n) || !/bench replay on #\d+/.test(n) || !/highest observed \d+|no data yet/i.test(n) })
+  ;(unsourced.length === 0 ? ok : bad)(`each maxTurns comment names its bench replay and the highest observed turns, or says there is no data yet${unsourced.length ? ` (not on ${unsourced.join(', ')})` : ''}`)
   const ttl = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.map((d) => `skills/${d}/SKILL.md`), '.claude-plugin/plugin.json',
     ...readdirSync(join(ROOT, 'workflows')).map((f) => `workflows/${f}`)].filter((f) => /cacheTtl/.test(readFileSync(join(ROOT, f), 'utf8')))
   ;(ttl.length === 0 ? ok : bad)(`cacheTtl is not set anywhere${ttl.length ? ` (found in ${ttl.join(', ')})` : ''}`)

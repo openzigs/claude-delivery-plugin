@@ -4,9 +4,11 @@ description: "Gathers and synthesizes research material from local files, web pa
 tools: Read, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
 disallowedTools: Write, Edit
 color: yellow
-# maxTurns is provisional (#58): no persisted run records a turn count, so this is the
-# issue's conservative ceiling. Replace it with ~2x the highest observed once runs record turns.
-maxTurns: 60
+# maxTurns (#97): highest observed 8 turns over 6 runs (bench replay on #86, N=3 per ref, on a
+# small fixture). Set with headroom rather than at #58's 2x: real research reads more sources
+# than the fixture's topic, and a run cut off by the cap returns nothing. To re-derive:
+# docs/benchmarks.md.
+maxTurns: 30
 ---
 
 You are a **Requirements Research Specialist**. Gather, convert and synthesize material
