@@ -153,6 +153,7 @@ for (const file of agentFiles) {
   const SKILL_AGENT = { 'code-issue': 'code-issue', 'code-review': 'code-review', 'ui-vision': 'ui-vision', 'e2e-test': 'e2e-test',
     'epic-planner': 'code-planner', 'research-gather': 'research' }
   const DISPATCH = /\b(hands? (?:it |the work |the findings |them )?(?:off |over )?to|call|dispatch(?:es|ing)?|invoke|delegate to|run)\s+(?:the\s+)?\*{0,2}`delivery:([a-z-]+)`/gi
+  const LOOSE = /\b(hand\w*(?: [\w`]+){0,3}? to|hand-?off|send\w*|pass\w*|rout\w+|forward\w*|call|dispatch\w*|invoke|delegat\w+ to|run)\b[^.;\n]{0,80}?(?<![/:\w-])(?:delivery:)?(code-issue|code-review|e2e-test|ui-vision|code-planner|research-gather)(?![\w-])/gi
   const impossible = []
   for (const [skill, agentName] of Object.entries(SKILL_AGENT)) {
     const agentSrc = readFileSync(join(ROOT, 'agents', `${agentName}.md`), 'utf8')
@@ -161,6 +162,9 @@ for (const file of agentFiles) {
     const text = squash([agentSrc, ...readdirSync(join(ROOT, 'skills', skill)).filter((f) => f.endsWith('.md'))
       .map((f) => readFileSync(join(ROOT, 'skills', skill, f), 'utf8'))].join('\n'))
     for (const m of text.matchAll(DISPATCH)) if (!allow.includes(m[2])) impossible.push(`${agentName} (skill ${skill}): "${m[0]}"`)
+    // Any verb of sending work, followed within one clause by another agent's name (with or
+    // without the delivery: prefix), is the same instruction in other words.
+    for (const m of text.matchAll(LOOSE)) if (m[2] !== agentName && !allow.includes(m[2])) impossible.push(`${agentName} (skill ${skill}): "${m[0]}"`)
   }
   ;(impossible.length === 0 ? ok : bad)(`no skill or agent tells its agent to dispatch an agent outside its Agent(...) allowlist${impossible.length ? ` (${impossible.join('; ')})` : ''}`)
   const texts = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.flatMap((d) => readdirSync(join(ROOT, 'skills', d)).filter((f) => f.endsWith('.md')).map((f) => `skills/${d}/${f}`))]
@@ -171,8 +175,8 @@ for (const file of agentFiles) {
   ;(noTool.length === 0 ? ok : bad)(`no agent or skill relies on TodoWrite or an "execution subagent" no agent has${noTool.length ? ` (${noTool.join(', ')})` : ''}`)
   const ciSrc = readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8')
   const wt = ciSrc.slice(ciSrc.indexOf('### Step 2: Branch Setup'), ciSrc.indexOf('### Step 3'))
-  ;(/Under a workflow, the workflow decides isolation/.test(wt) && /When invoked interactively\*\* and the checkout may be\s+shared[\s\S]*git worktree add/.test(wt) ? ok : bad)(
-    'code-issue creates its own worktree only when invoked interactively; under a workflow the workflow decides isolation')
+  ;(/Under a workflow, the workflow decides isolation/.test(wt) && /When not under a workflow\*\* and the checkout may be\s+shared[\s\S]*git worktree add/.test(wt) ? ok : bad)(
+    'code-issue creates its own worktree only when not under a workflow; under a workflow the workflow decides isolation')
 }
 
 // No agent sets `model:` (#56). Since Claude Code v2.1.251 an explicit frontmatter model,

@@ -276,7 +276,7 @@ If confidential documents were converted and cached locally, also note:
 
 ### Step 7: Handoff to Epic Planner
 
-Pass the research summary to `/delivery:epic-planner` (or the `delivery:code-planner` agent) as
+Pass the research summary to `/delivery:epic-planner` as
 context for issue creation. Carry the **Could Not Confirm** and **Open Questions** sections
 across verbatim — they belong in the epic's own Open Questions section, not on the floor. An
 epic that silently resolved an open question is worse than one that admits it.
