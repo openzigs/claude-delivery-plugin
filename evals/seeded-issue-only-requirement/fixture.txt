@@ -1,0 +1,64 @@
+@@@ base package.json
+{
+  "name": "identity",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0" }
+}
+@@@ base src/app.js
+const express = require('express')
+
+const app = express()
+app.use(express.json())
+app.use(require('./routes/session'))
+
+module.exports = app
+@@@ base src/users.js
+const { db } = require('./db')
+
+exports.findByEmail = (email) => db('users').where({ email: email.toLowerCase() }).first()
+@@@ base src/mailer.js
+exports.sendResetLink = async (user, token) => {
+  // Queues the reset email; delivery is asynchronous.
+}
+@@@ head src/app.js
+const express = require('express')
+
+const app = express()
+app.use(express.json())
+app.use(require('./routes/session'))
+app.use(require('./routes/password-reset'))
+
+module.exports = app
+@@@ head src/routes/password-reset.js
+const crypto = require('node:crypto')
+const router = require('express').Router()
+const users = require('../users')
+const mailer = require('../mailer')
+const { db } = require('../db')
+
+// POST /password-reset { email }: email the user a single-use link valid for 30 minutes.
+router.post('/password-reset', async (req, res) => {
+  const email = String(req.body.email || '')
+  const user = await users.findByEmail(email)
+  if (!user) return res.status(404).json({ error: 'no account with that email' })
+  const token = crypto.randomBytes(32).toString('hex')
+  const hash = crypto.createHash('sha256').update(token).digest('hex')
+  await db('reset_tokens').insert({ user_id: user.id, token_hash: hash, expires_at: new Date(Date.now() + 30 * 60 * 1000) })
+  await mailer.sendResetLink(user, token)
+  res.status(202).json({ status: 'sent' })
+})
+
+module.exports = router
+@@@ issue
+Password reset request
+
+POST /password-reset with an email address sends that account a reset link.
+
+Acceptance criteria:
+- [ ] the link is single-use and expires after 30 minutes
+- [ ] only a hash of the token is stored
+
+Security note from the threat model: the response must be identical (status and body) whether or not an account exists for the email, so the endpoint cannot be used to find out which emails have accounts.
+@@@ pr
+Adds POST /password-reset: a random 32-byte token, stored hashed, valid for 30 minutes. Closes #412.

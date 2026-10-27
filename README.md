@@ -484,12 +484,15 @@ workflows/
 scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
   cost-report.mjs      # the report /delivery:cost-report runs
-  eval-tiers.mjs       # tier table over `claude plugin eval` results
+  eval-run.mjs         # opt-in review eval matrix: tiers x scopes x N runs (costs model calls; never in CI)
+  eval-tiers.mjs       # tier table over `claude plugin eval` results: recall spread, batch review, confidence
+  eval-build.mjs       # generates the eval prompts from workflows/orchestrate.js, plus scaffolds and full copies
+  eval-scaffold.mjs    # builds one eval case's fixture repository
   footprint.mjs        # fixed prompt bytes per dispatch, for any git ref
   bench-run.mjs        # opt-in, expensive pipeline replay of a plugin ref on bench/ (never in CI)
   bench-report.mjs     # tokens, findings and behaviour checks from bench-run's results
   fixtures/            # synthetic inputs for the verifier
-evals/                 # review eval cases (seeded defects, clean controls), light scope; full/ holds the full-scope copies
+evals/                 # review eval cases (fixture repo, graders), light scope; full/ holds the full-scope copies
 bench/                 # fixture repo, canned issues and a plan-epic topic for bench-run.mjs
 docs/                  # installation, usage, configuration, gotchas, customising, benchmarks, templates
 ```

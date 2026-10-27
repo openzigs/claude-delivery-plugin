@@ -1,0 +1,84 @@
+@@@ base package.json
+{
+  "name": "catalog-api",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0", "pg": "^8.11.0" },
+  "devDependencies": { "jest": "^29.7.0", "supertest": "^7.0.0" }
+}
+@@@ base src/db.js
+const { Pool } = require('pg')
+
+const pool = new Pool()
+// query(text, params): params are bound as $1, $2, ...
+exports.query = async (text, params = []) => (await pool.query(text, params)).rows
+@@@ base src/routes/products.js
+const router = require('express').Router()
+const db = require('../db')
+
+router.get('/products', async (req, res) => {
+  res.json(await db.query('SELECT id, name, price_cents FROM products ORDER BY created_at DESC LIMIT 50'))
+})
+
+module.exports = router
+@@@ head src/routes/products.js
+const router = require('express').Router()
+const db = require('../db')
+
+// Sort keys the client may ask for, mapped to fixed column names. Only these column names ever
+// reach the SQL text; an unknown or missing key falls back to the newest first.
+const SORTABLE = new Map([
+  ['name', 'name'],
+  ['price', 'price_cents'],
+  ['newest', 'created_at'],
+])
+
+router.get('/products', async (req, res) => {
+  const column = SORTABLE.get(String(req.query.sort)) ?? 'created_at'
+  const direction = req.query.dir === 'asc' ? 'ASC' : 'DESC'
+  const requested = Number.parseInt(req.query.limit, 10)
+  const limit = Number.isNaN(requested) ? 50 : Math.min(Math.max(requested, 1), 200)
+  // ORDER BY cannot take a bound parameter, so the column and direction come from the
+  // fixed values above; the limit is bound.
+  const rows = await db.query(`SELECT id, name, price_cents FROM products ORDER BY ${column} ${direction} LIMIT $1`, [limit])
+  res.json(rows)
+})
+
+module.exports = router
+@@@ head test/products.test.js
+jest.mock('../src/db')
+const db = require('../src/db')
+const request = require('supertest')
+const app = require('express')().use(require('../src/routes/products'))
+
+beforeEach(() => {
+  db.query.mockReset()
+  db.query.mockResolvedValue([])
+})
+
+test.each([
+  ['name', 'asc', 'ORDER BY name ASC'],
+  ['price', 'desc', 'ORDER BY price_cents DESC'],
+  ["name; DROP TABLE products", 'asc', 'ORDER BY created_at ASC'],
+  ['__proto__', undefined, 'ORDER BY created_at DESC'],
+])('sort=%s dir=%s', async (sort, dir, sql) => {
+  await request(app).get('/products').query({ sort, dir })
+  expect(db.query.mock.calls[0][0]).toContain(sql)
+})
+
+test.each([
+  ['100000', 200],
+  ['0', 1],
+  ['abc', 50],
+  [undefined, 50],
+])('limit=%s is clamped and bound as %i', async (limit, bound) => {
+  await request(app).get('/products').query(limit === undefined ? {} : { limit })
+  expect(db.query.mock.calls[0][1]).toEqual([bound])
+  expect(db.query.mock.calls[0][0]).not.toMatch(/DROP|;/)
+})
+@@@ issue
+Sort the product list
+
+GET /products takes ?sort=name|price|newest (default newest), ?dir=asc|desc (default desc) and ?limit (1 to 200, default 50).
+@@@ pr
+Adds sorting and a clamped limit to GET /products. The sort column comes from a fixed map, never from the request, and the limit is a bound parameter; the tests include an injection attempt. Closes #412.

@@ -1,0 +1,59 @@
+@@@ base package.json
+{
+  "name": "admin-api",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "express": "^4.19.0", "pg": "^8.11.0" }
+}
+@@@ base src/db.js
+const { Pool } = require('pg')
+
+const pool = new Pool()
+// query(text, params): params are bound as $1, $2, ...
+exports.query = async (text, params = []) => (await pool.query(text, params)).rows
+exports.users = { findById: async (id) => (await pool.query('SELECT * FROM users WHERE id = $1', [id])).rows[0] || null }
+@@@ base src/routes/users.js
+const express = require('express')
+const db = require('../db')
+const requireAuth = require('../middleware/auth')
+
+const router = express.Router()
+
+// Fetch one user by id.
+//
+// Admin console only.
+//
+router.get('/users/:id', requireAuth, async (req, res) => {
+  res.json(await db.users.findById(req.params.id))
+})
+
+module.exports = router
+@@@ head src/routes/users.js
+const express = require('express')
+const db = require('../db')
+const requireAuth = require('../middleware/auth')
+
+const router = express.Router()
+
+// Fetch one user by id.
+//
+// Admin console only.
+//
+router.get('/users/:id', requireAuth, async (req, res) => {
+  res.json(await db.users.findById(req.params.id))
+})
+
+// Search users by name for the admin console.
+router.get('/users', requireAuth, async (req, res) => {
+  const name = req.query.name || ''
+  const rows = await db.query("SELECT id, name, email FROM users WHERE name LIKE '%" + name + "%'")
+  res.json(rows)
+})
+
+module.exports = router
+@@@ issue
+Search users by name
+
+The admin console needs GET /users?name=<fragment> returning matching users.
+@@@ pr
+Adds user search by name. Closes #412.

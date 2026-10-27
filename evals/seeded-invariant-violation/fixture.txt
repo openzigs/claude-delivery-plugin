@@ -1,0 +1,73 @@
+@@@ base package.json
+{
+  "name": "payments-core",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "knex": "^3.1.0" }
+}
+@@@ base src/db.js
+const knex = require('knex')
+
+exports.db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/ledger.js
+const { db } = require('./db')
+
+// The ledger holds every amount as an integer number of cents. postEntry() stores what it is
+// given without checking: a fractional amount is written as-is, and the nightly reconciliation,
+// which sums entries as integers against the bank statement, then fails for the whole day.
+// Callers convert to integer cents (Math.round) before they post.
+async function postEntry({ accountId, amount, memo }) {
+  await db('ledger').insert({ account_id: accountId, amount, memo, posted_at: new Date() })
+}
+
+module.exports = { postEntry }
+@@@ base src/orders.js
+const { db } = require('./db')
+
+// An order's total is in integer cents.
+async function getOrder(id) {
+  return db('orders').where({ id }).first()
+}
+
+module.exports = { getOrder }
+@@@ base src/refunds/full.js
+const { postEntry } = require('../ledger')
+
+async function refundInFull(order) {
+  await postEntry({ accountId: order.accountId, amount: -order.total, memo: `refund ${order.id}` })
+  return order.total
+}
+
+module.exports = { refundInFull }
+@@@ head src/refunds/partial.js
+const { postEntry } = require('../ledger')
+
+// Refund a percentage of an order, for goodwill gestures (support picks 5, 10, 15 or 25).
+async function refundPercent(order, percent) {
+  if (percent <= 0 || percent > 100) throw new RangeError('percent must be in (0, 100]')
+  const amount = order.total * (percent / 100)
+  await postEntry({ accountId: order.accountId, amount: -amount, memo: `refund ${percent}% of ${order.id}` })
+  return amount
+}
+
+module.exports = { refundPercent }
+@@@ head test/partial.test.js
+jest.mock('../src/ledger')
+const { postEntry } = require('../src/ledger')
+const { refundPercent } = require('../src/refunds/partial')
+
+test('refunds the given percentage of the order total', async () => {
+  const amount = await refundPercent({ id: 'o1', accountId: 'a1', total: 2000 }, 10)
+  expect(amount).toBe(200)
+  expect(postEntry).toHaveBeenCalledWith({ accountId: 'a1', amount: -200, memo: 'refund 10% of o1' })
+})
+
+test('rejects a percentage out of range', async () => {
+  await expect(refundPercent({ total: 2000 }, 0)).rejects.toThrow(RangeError)
+})
+@@@ issue
+Partial refunds for goodwill gestures
+
+Support needs to refund a percentage of an order (5, 10, 15 or 25 percent) and post it to the ledger.
+@@@ pr
+Adds `refundPercent(order, percent)` with unit tests. Closes #412.

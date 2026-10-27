@@ -183,9 +183,11 @@ const isBlocking = (r) => Boolean(r.blocking || r.findings.some((f) => f.blockin
 // silently. A blocking finding is never dropped, whatever its confidence: suppressing a real
 // blocker costs more than any fix cycle it saves. A finding with no confidence is kept, since
 // unknown is not low.
-// The value 50 is a PROVISIONAL default, not an eval result: the light-review eval suite's
-// results record no per-finding confidence, so there is no measured threshold yet. Raise it, or
-// extend it to blocking findings, only with eval data that supports it.
+// The value 50 was measured by the #92 eval matrix (docs/benchmarks.md, "Results at #92"): over
+// 2,481 findings from haiku, sonnet and the session model, no seeded defect would have been lost
+// at 30, 50 or 70, and 50 drops 36 of 234 findings on clean changes. 70 was lossless too but
+// would also drop 621 of 1,410 findings whose truth the eval does not know, so it stays at 50.
+// Raise it, or extend it to blocking findings, only with eval data that labels those findings.
 const CONFIDENCE_THRESHOLD = 50
 const lowConfidence = (f) => !f?.blocking && Number.isFinite(f?.confidence) && f.confidence < CONFIDENCE_THRESHOLD
 const dropLowConfidence = (r) => {
@@ -420,8 +422,10 @@ if (smallFlag) log(`Small tier (small implementations, light reviews, fixes, con
 // PRs in ONE review dispatch instead of one per PR. It trades the independence of a per-PR
 // review for cost, which is why it is opt-in: without it, every PR gets its own review. It is
 // ignored for a batch where any issue carries a risk label, or whose labels are unknown. A PR
-// the batch review blocks still gets its own fix and re-review. It stays experimental until
-// eval evidence compares its recall with per-PR review.
+// the batch review blocks still gets its own fix and re-review. The #92 eval compares it with
+// per-PR review (evals/batch-three-prs, evals/per-pr-three-prs): at N=3 its recall matched on
+// haiku and the session model but not on sonnet, so it stays experimental. The graduation
+// criterion is in docs/benchmarks.md.
 const BATCH_REVIEW = /(?:^|\s)--batch-review(?=\s|$)/.test(raw)
 if (BATCH_REVIEW) log('Cheap mode (--batch-review, EXPERIMENTAL): a batch of PRs with no risk label is reviewed once, not once per PR.')
 const target = raw.replace(/(^|\s)--small-model(=|\s+)\S+/g, ' ').replace(/(^|\s)--batch-review(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim()

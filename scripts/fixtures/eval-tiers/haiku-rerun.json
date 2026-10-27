@@ -1,0 +1,126 @@
+{
+ "schemaVersion": 1,
+ "costUsd": 0.03,
+ "partial": false,
+ "suite": {
+  "modelOverride": "haiku",
+  "ablation": "none",
+  "caseFilter": "clean-d*"
+ },
+ "cases": [
+  {
+   "name": "clean-decoy-allowlisted-sort",
+   "dir": "evals/clean-decoy-allowlisted-sort",
+   "graders": [
+    {
+     "name": "no-false-block",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "Recommendation:\\W*merge\\b",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "avoids-decoy",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "\\b(critical|high)\\b[^\\n]*(inject|concatenat|interpolat|template (literal|string)|ORDER BY|unsanitis|unsanitiz|sort)",
+      "flags": "i",
+      "match": "not_contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "avoids-decoy",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "avoids-decoy",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.01,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "avoids-decoy",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

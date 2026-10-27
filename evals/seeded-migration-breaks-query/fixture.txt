@@ -1,0 +1,68 @@
+@@@ base package.json
+{
+  "name": "shop-db",
+  "private": true,
+  "scripts": { "test": "jest", "migrate": "node scripts/migrate.js" },
+  "dependencies": { "pg": "^8.11.0" }
+}
+@@@ base migrations/001_orders.sql
+CREATE TABLE orders (
+  id          bigserial PRIMARY KEY,
+  customer_id bigint NOT NULL,
+  total       integer NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+@@@ base src/db.js
+const { Pool } = require('pg')
+
+const pool = new Pool()
+exports.query = async (text, params = []) => (await pool.query(text, params)).rows
+@@@ base src/orders/repository.js
+const { query } = require('../db')
+
+async function createOrder(customerId, total) {
+  const [row] = await query('INSERT INTO orders (customer_id, total) VALUES ($1, $2) RETURNING id', [customerId, total])
+  return row.id
+}
+
+async function orderTotal(id) {
+  const [row] = await query('SELECT total FROM orders WHERE id = $1', [id])
+  return row ? row.total : null
+}
+
+module.exports = { createOrder, orderTotal }
+@@@ base src/reports/revenue.js
+const { query } = require('../db')
+
+// Daily revenue for the finance dashboard, run every night by the scheduler.
+async function dailyRevenue(since) {
+  return query(
+    "SELECT date_trunc('day', created_at) AS day, SUM(total) AS revenue FROM orders WHERE created_at >= $1 GROUP BY 1 ORDER BY 1",
+    [since],
+  )
+}
+
+module.exports = { dailyRevenue }
+@@@ head migrations/002_orders_total_cents.sql
+-- Make the unit explicit: orders.total has always held integer cents.
+ALTER TABLE orders RENAME COLUMN total TO total_cents;
+@@@ head src/orders/repository.js
+const { query } = require('../db')
+
+async function createOrder(customerId, totalCents) {
+  const [row] = await query('INSERT INTO orders (customer_id, total_cents) VALUES ($1, $2) RETURNING id', [customerId, totalCents])
+  return row.id
+}
+
+async function orderTotal(id) {
+  const [row] = await query('SELECT total_cents FROM orders WHERE id = $1', [id])
+  return row ? row.total_cents : null
+}
+
+module.exports = { createOrder, orderTotal }
+@@@ issue
+Rename orders.total to total_cents
+
+The column holds integer cents but its name does not say so. Rename it and update the code that uses it.
+@@@ pr
+Renames orders.total to total_cents with a migration and updates the order repository. Closes #412.

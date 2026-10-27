@@ -1,0 +1,43 @@
+@@@ base package.json
+{
+  "name": "billing",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "jest" }
+}
+@@@ base src/billing.js
+export function orderTotal(order) {
+  return order.lines.reduce((n, l) => n + l.price * l.qty, 0)
+}
+@@@ base test/billing.test.js
+import { orderTotal } from '../src/billing'
+
+test('orderTotal sums price x qty', () => {
+  expect(orderTotal({ lines: [{ price: 5, qty: 2 }, { price: 1, qty: 3 }] })).toBe(13)
+})
+@@@ head src/billing.js
+export function orderTotal(order) {
+  return order.lines.reduce((n, l) => n + l.price * l.qty, 0)
+}
+
+export async function chargeOrder(order, gateway) {
+  return gateway.charge({ customerId: order.customerId, amount: orderTotal(order) })
+}
+@@@ head test/billing.test.js
+import { orderTotal, chargeOrder } from '../src/billing'
+
+test('orderTotal sums price x qty', () => {
+  expect(orderTotal({ lines: [{ price: 5, qty: 2 }, { price: 1, qty: 3 }] })).toBe(13)
+})
+
+test('chargeOrder charges the customer the order total', async () => {
+  const charge = jest.fn().mockResolvedValue({ amount: 13 })
+  const result = await charge({ customerId: 'c1', amount: 13 })
+  expect(result.amount).toBe(13)
+})
+@@@ issue
+Charge an order through the gateway
+
+Add chargeOrder(order, gateway), which charges the customer the order total. It needs a unit test.
+@@@ pr
+Adds `chargeOrder` with a unit test. Closes #412.

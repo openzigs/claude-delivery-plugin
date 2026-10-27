@@ -1,0 +1,68 @@
+@@@ base package.json
+{
+  "name": "billing-service",
+  "private": true,
+  "scripts": { "test": "jest", "build": "tsc" },
+  "dependencies": { "knex": "^3.1.0" }
+}
+@@@ base src/db.ts
+import knex from 'knex'
+
+// Every table except `tenants` carries a tenant_id. Every read and write must filter on it.
+export const db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/invoices/repository.ts
+import { db } from '../db'
+
+export async function listInvoices(tenantId: string) {
+  return db('invoices').where({ tenant_id: tenantId })
+}
+@@@ base src/invoices/routes.ts
+import { Router } from 'express'
+import { listInvoices } from './repository'
+
+export const router = Router()
+
+router.get('/tenants/:tenantId/invoices', async (req, res) => {
+  res.json(await listInvoices(req.params.tenantId))
+})
+@@@ head src/invoices/repository.ts
+import { db } from '../db'
+
+export async function listInvoices(tenantId: string) {
+  return db('invoices').where({ tenant_id: tenantId })
+}
+
+// Called by GET /tenants/:tenantId/invoices/:invoiceId
+export async function getInvoice(tenantId: string, invoiceId: string) {
+  return db('invoices').where({ id: invoiceId }).first()
+}
+
+export async function markPaid(tenantId: string, invoiceId: string) {
+  return db('invoices').where({ tenant_id: tenantId, id: invoiceId }).update({ paid: true })
+}
+@@@ head src/invoices/routes.ts
+import { Router } from 'express'
+import { listInvoices, getInvoice, markPaid } from './repository'
+
+export const router = Router()
+
+router.get('/tenants/:tenantId/invoices', async (req, res) => {
+  res.json(await listInvoices(req.params.tenantId))
+})
+
+router.get('/tenants/:tenantId/invoices/:invoiceId', async (req, res) => {
+  const invoice = await getInvoice(req.params.tenantId, req.params.invoiceId)
+  if (!invoice) return res.status(404).end()
+  res.json(invoice)
+})
+
+router.post('/tenants/:tenantId/invoices/:invoiceId/paid', async (req, res) => {
+  await markPaid(req.params.tenantId, req.params.invoiceId)
+  res.status(204).end()
+})
+@@@ issue
+Invoice detail and mark-as-paid endpoints
+
+Add GET /tenants/:tenantId/invoices/:invoiceId and POST .../paid for the billing console.
+@@@ pr
+Adds `getInvoice` and `markPaid` with their routes. Closes #412.

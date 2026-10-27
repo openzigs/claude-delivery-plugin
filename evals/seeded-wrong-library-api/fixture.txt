@@ -1,0 +1,67 @@
+@@@ base package.json
+{
+  "name": "pricing",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "ttl-memo": "^1.2.0" }
+}
+@@@ base node_modules/ttl-memo/package.json
+{
+  "name": "ttl-memo",
+  "version": "1.2.0",
+  "main": "index.js"
+}
+@@@ base node_modules/ttl-memo/index.js
+'use strict'
+
+/**
+ * memoize(fn, options) caches fn's promise per first argument.
+ *
+ * options.maxAge  how long an entry stays fresh, in milliseconds (default 1000)
+ * options.max     the most entries kept; the oldest is evicted first (default 500)
+ */
+function memoize(fn, { maxAge = 1000, max = 500 } = {}) {
+  const cache = new Map()
+  return function memoized(key, ...rest) {
+    const hit = cache.get(key)
+    if (hit && Date.now() - hit.at < maxAge) return hit.value
+    const value = fn(key, ...rest)
+    cache.set(key, { value, at: Date.now() })
+    if (cache.size > max) cache.delete(cache.keys().next().value)
+    return value
+  }
+}
+
+module.exports = { memoize }
+@@@ base src/fx/client.js
+// The upstream FX provider allows 60 requests per hour per API key; past that it returns 429
+// for the rest of the hour and every price in the shop fails to render.
+async function fetchRates(base) {
+  const res = await fetch(`https://fx.example.com/latest?base=${encodeURIComponent(base)}`, {
+    headers: { authorization: `Bearer ${process.env.FX_API_KEY}` },
+  })
+  if (!res.ok) throw new Error(`fx ${res.status}`)
+  return res.json()
+}
+
+module.exports = { fetchRates }
+@@@ head src/fx/rates.js
+const { memoize } = require('ttl-memo')
+const { fetchRates } = require('./client')
+
+// Cache rates per base currency for five minutes, so the shop makes at most 12 upstream
+// requests an hour per currency.
+const getRates = memoize(fetchRates, { maxAge: 300 })
+
+async function convert(amount, from, to) {
+  const { rates } = await getRates(from)
+  return Math.round(amount * rates[to])
+}
+
+module.exports = { convert, getRates }
+@@@ issue
+Cache FX rates
+
+Every price render calls the FX provider and we are hitting its rate limit (60 requests an hour). Cache the rates for five minutes.
+@@@ pr
+Caches FX rates for five minutes with `ttl-memo`. Closes #412.

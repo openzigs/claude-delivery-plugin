@@ -1,0 +1,82 @@
+@@@ base README.md
+# inventory
+
+Stock levels for the warehouse service.
+
+## Install
+
+Requires Node 20.
+
+```
+npm install
+```
+
+## Running the tests
+
+Run `npm test`.
+
+## License
+
+MIT
+@@@ head README.md
+# inventory
+
+Stock levels for the warehouse service.
+
+## Install
+
+Requires Node 20.
+
+```
+npm install
+```
+
+## Running the tests
+
+Run `npm test` for the unit suite. The integration suite needs a local database:
+
+    docker compose up -d db
+    npm run test:integration
+
+## License
+
+MIT
+@@@ base package.json
+{
+  "name": "inventory",
+  "private": true,
+  "scripts": { "test": "jest --testPathIgnorePatterns test/integration", "test:integration": "jest -c jest.integration.config.js" },
+  "devDependencies": { "jest": "^29.7.0", "pg": "^8.11.0" }
+}
+@@@ base jest.integration.config.js
+// Integration tests: they need the database from docker-compose.yml (postgres on localhost:5432,
+// password "postgres"; test/integration/setup.js reads DATABASE_URL or falls back to that).
+module.exports = {
+  testMatch: ['<rootDir>/test/integration/**/*.test.js'],
+  setupFiles: ['<rootDir>/test/integration/setup.js'],
+}
+@@@ base test/integration/setup.js
+process.env.DATABASE_URL ||= 'postgres://postgres:postgres@localhost:5432/postgres'
+@@@ base test/integration/stock.test.js
+const { Client } = require('pg')
+
+test('the stock table exists', async () => {
+  const db = new Client({ connectionString: process.env.DATABASE_URL })
+  await db.connect()
+  const { rows } = await db.query("SELECT to_regclass('public.stock') AS t")
+  await db.end()
+  expect(rows[0].t).toBe('stock')
+})
+@@@ base docker-compose.yml
+services:
+  db:
+    image: postgres:16
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_PASSWORD: postgres
+@@@ issue
+Document how to run the integration tests
+
+New contributors cannot find how to run the integration suite.
+@@@ pr
+Documents the integration suite in the README. Closes #412.

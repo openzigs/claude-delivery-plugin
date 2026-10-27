@@ -1,75 +1,466 @@
 {
  "schemaVersion": 1,
- "claudeVersion": "2.1.311",
- "durationSeconds": 7,
- "costUsd": 0.1507,
+ "costUsd": 1.5,
  "partial": false,
  "suite": {
-  "ablation": "none",
-  "modelOverride": "sonnet"
+  "modelOverride": "sonnet",
+  "ablation": "none"
  },
  "cases": [
   {
-   "name": "control-unseeable-defect",
+   "name": "seeded-sql-injection",
+   "dir": "evals/seeded-sql-injection",
+   "graders": [
+    {
+     "name": "found-seeded-defect",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "(inject|parameteri[sz]|placeholder|prepared statement|concatenat)[\\s\\S]*Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
    "arms": {
     "with": [
      {
       "score": 0,
       "passed": false,
-      "turns": 1,
-      "costUsd": 0.0399,
-      "error": null
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
      }
     ]
    }
   },
   {
-   "name": "seeded-auth-bypass",
+   "name": "seeded-off-by-one",
+   "dir": "evals/seeded-off-by-one",
+   "graders": [
+    {
+     "name": "found-seeded-defect",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "(off[- ]by[- ]one|exclusive|one (item|element|row|record)? ?(short|fewer|too few)|fewer than pageSize|drops?[^\\n]{0,40}last|pageSize ?- ?1|missing[^\\n]{0,30}(item|element|row|last))[\\s\\S]*Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
    "arms": {
     "with": [
      {
-      "score": 1,
-      "passed": true,
-      "turns": 1,
-      "costUsd": 0.0373,
-      "error": null
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
      }
     ]
    }
   },
   {
-   "name": "seeded-missing-tenant-scope",
+   "name": "seeded-n-plus-one",
+   "dir": "evals/seeded-n-plus-one",
+   "graders": [
+    {
+     "name": "found-seeded-defect",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "\\b(critical|high|medium)\\b[^\\n]*(N ?\\+ ?1|quer(y|ies) (per|for each|in a loop|inside the loop)|one query per|whereIn|round[- ]trips?)",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
    "arms": {
     "with": [
      {
-      "score": 1,
-      "passed": true,
-      "turns": 1,
-      "costUsd": 0.0354,
-      "error": null
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
      }
     ]
    }
   },
   {
-   "name": "seeded-sql-injection",
+   "name": "clean-docs",
+   "dir": "evals/clean-docs",
+   "graders": [
+    {
+     "name": "no-false-block",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "Recommendation:\\W*merge\\b",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
    "arms": {
     "with": [
      {
-      "score": 1,
-      "passed": true,
-      "turns": 1,
-      "costUsd": 0.0381,
-      "error": null
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "no-false-block",
+        "passed": true
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "name": "control-unseeable-defect",
+   "dir": "evals/control-unseeable-defect",
+   "graders": [
+    {
+     "name": "found-seeded-defect",
+     "type": "regex",
+     "weight": 1,
+     "config": {
+      "target": "last_message",
+      "pattern": "RETRY_LIMIT[^\\n]{0,80}\\b4096\\b[\\s\\S]*Recommendation:\\W*do not merge",
+      "flags": "i",
+      "match": "contains"
+     }
+    },
+    {
+     "name": "review-agent-dispatched",
+     "type": "tool_used",
+     "weight": 1,
+     "config": {
+      "tool": "Agent",
+      "input_match": "\"subagent_type\"\\s*:\\s*\"delivery:code-review\"",
+      "min": 1
+     }
+    }
+   ],
+   "arms": {
+    "with": [
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": false
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": false
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
+     },
+     {
+      "score": 0,
+      "passed": false,
+      "turns": 2,
+      "costUsd": 0.1,
+      "judgeCostUsd": 0,
+      "durationSeconds": 30,
+      "error": null,
+      "tracePath": null,
+      "graders": [
+       {
+        "name": "found-seeded-defect",
+        "passed": false
+       },
+       {
+        "name": "review-agent-dispatched",
+        "passed": true
+       }
+      ]
      }
     ]
    }
   }
- ],
- "aggregates": {
-  "casesTotal": 4,
-  "casesPassed": 3,
-  "overallScore": 0.75,
-  "overallPassRate": 0.75
- }
+ ]
 }

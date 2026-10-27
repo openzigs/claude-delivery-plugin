@@ -237,22 +237,26 @@ option nothing could read would be a setting that silently does nothing.
 
 Before moving a review tier, compare the candidates on the same inputs. `evals/` holds a
 [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) suite (Claude Code
-v2.1.269+): twelve synthetic PR diffs with one seeded defect each, across security,
-correctness, performance, tests and requirements; three clean diffs, on which a do-not-merge
-verdict is a false block; and one control whose defect is outside the diff, so a real reply
-should score 0. Every case exists at LIGHT and FULL scope (`--tag light-review`,
-`--tag full-review`), and every grader is a free regex.
+v2.1.269+) that runs the real review: each case dispatches the `delivery:code-review` agent with
+the prompt `workflows/orchestrate.js` builds, on a checked-out fixture repository. There are 21
+seeded defects across security, correctness, performance, tests and requirements, nine of
+them visible only by reading an unchanged file, the linked issue or installed library source;
+five clean changes, two of them decoys, on which a do-not-merge verdict is a false block; one
+control whose defect no reviewer can see; and a batch-review comparison. Every case exists at
+LIGHT and FULL scope, and every grader is a free regex.
 
 ```
-claude plugin eval . --tag light-review --model haiku  --ablation none --runs 3 --json haiku.json
-claude plugin eval . --tag light-review --model sonnet --ablation none --runs 3 --json sonnet.json
-node scripts/eval-tiers.mjs haiku.json sonnet.json
+node scripts/eval-run.mjs --tier haiku --tier sonnet --scope light    # N=3 each
 ```
 
-`eval-tiers.mjs` prints one row per tier and scope: recall overall and per category, false
-blocks, whether the control scored 0 (it exits 1 if not), list-price cost and turns.
-`--model` changes the model only; the eval CLI has no effort flag. How to run the full matrix,
-and what the numbers do and do not prove, is in [benchmarks](benchmarks.md).
+`eval-tiers.mjs`, which `eval-run.mjs` calls at the end, prints one row per tier and scope:
+recall as a mean with its lowest and highest run, overall and per category; false blocks;
+whether the control scored 0; cost per pass and turns per run; which tiers cannot be told apart
+at that N; and it exits 1 on a run that never dispatched the review agent. `--model` changes the
+model only; the eval CLI has no effort flag. If you change the review prompt in
+`workflows/orchestrate.js`, run `node scripts/eval-build.mjs` to regenerate the eval prompts
+(the verifier fails until you do). How to run the full matrix, and what the numbers do and do
+not prove, is in [benchmarks](benchmarks.md).
 
 Each PR's result records `reviewScope`, `reviewRouting` and `models`; every routing decision
 is logged with its reason. To change the policy, edit the constants at the top of

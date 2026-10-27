@@ -1,0 +1,532 @@
+@@@ base package.json
+{
+  "name": "commerce-backoffice",
+  "private": true,
+  "scripts": { "test": "jest", "lint": "eslint ." },
+  "dependencies": { "express": "^4.19.0", "knex": "^3.1.0" }
+}
+@@@ base src/db.js
+const knex = require('knex')
+
+// Every table except `tenants` carries tenant_id; every query filters on it.
+exports.db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/errors.js
+class NotFoundError extends Error {}
+class ConflictError extends Error {}
+class ForbiddenError extends Error {}
+class ValidationError extends Error {
+  constructor(problems) {
+    super(problems.join('; '))
+    this.problems = problems
+  }
+}
+
+module.exports = { NotFoundError, ConflictError, ForbiddenError, ValidationError }
+@@@ base src/middleware/auth.js
+const jwt = require('jsonwebtoken')
+
+function requireAuth(req, res, next) {
+  try {
+    req.user = jwt.verify((req.headers.authorization || '').replace(/^Bearer /, ''), process.env.JWT_SECRET)
+    next()
+  } catch {
+    res.status(401).end()
+  }
+}
+
+const requireRole = (role) => (req, res, next) => (req.user.roles.includes(role) ? next() : res.status(403).end())
+
+module.exports = { requireAuth, requireRole }
+@@@ base src/orders/repository.js
+const { db } = require('../db')
+
+async function getOrder(tenantId, orderId) {
+  return db('orders').where({ tenant_id: tenantId, id: orderId }).first()
+}
+
+module.exports = { getOrder }
+@@@ base src/app.js
+const express = require('express')
+
+const app = express()
+app.use(express.json())
+app.use('/orders', require('./orders/routes'))
+
+module.exports = app
+@@@ head src/app.js
+const express = require('express')
+
+const app = express()
+app.use(express.json())
+app.use('/orders', require('./orders/routes'))
+app.use('/refunds', require('./refunds/routes'))
+
+module.exports = app
+@@@ head docs/refunds.md
+# Refunds
+
+Refunds are requested by support agents and approved by finance. This page is the source of
+truth for the rules; the code in `src/refunds/` implements them.
+
+## Lifecycle
+
+```
+requested ──approve──▶ approved ──pay──▶ paid
+    │
+    ├──reject──▶ rejected
+    └──cancel──▶ cancelled   (by the requester, while still requested)
+```
+
+## Rules
+
+1. A refund belongs to one order, and to the order's tenant. Every read and write is scoped
+   to the tenant.
+2. The total of an order's refunds that are not rejected or cancelled can never exceed the
+   order's total.
+3. Amounts are integer cents, at least 1.
+4. A reason is required, 10 to 500 characters.
+5. Approval needs the `refund-approver` role.
+6. Four-eyes rule: the person who requested a refund can never approve it, whatever roles
+   they hold. Finance staff also raise refunds, so the role alone is not enough.
+7. Only a `requested` refund can be approved, rejected or cancelled.
+8. Every state change is written to `refund_events` with who made it and when.
+
+## Export
+
+`GET /refunds/export?from=&to=` returns the tenant's paid refunds as CSV for reconciliation.
+@@@ head src/refunds/validation.js
+const { ValidationError } = require('../errors')
+
+const MIN_REASON = 10
+const MAX_REASON = 500
+
+// Validate a refund request body. Returns the cleaned request or throws ValidationError
+// listing every problem at once, so the console can show them together.
+function validateRefundRequest(body) {
+  const problems = []
+  const orderId = typeof body.orderId === 'string' ? body.orderId.trim() : ''
+  if (!orderId) problems.push('orderId is required')
+
+  const amount = body.amount
+  if (!Number.isInteger(amount)) problems.push('amount must be an integer number of cents')
+  else if (amount < 1) problems.push('amount must be at least 1 cent')
+
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : ''
+  if (reason.length < MIN_REASON) problems.push(`reason must be at least ${MIN_REASON} characters`)
+  if (reason.length > MAX_REASON) problems.push(`reason must be at most ${MAX_REASON} characters`)
+
+  if (problems.length) throw new ValidationError(problems)
+  return { orderId, amount, reason }
+}
+
+// Validate an export date range: both ISO dates, from <= to, at most 366 days apart.
+function validateExportRange(query) {
+  const problems = []
+  const from = new Date(query.from)
+  const to = new Date(query.to)
+  if (Number.isNaN(from.getTime())) problems.push('from must be an ISO date')
+  if (Number.isNaN(to.getTime())) problems.push('to must be an ISO date')
+  if (!problems.length) {
+    if (from > to) problems.push('from must not be after to')
+    const days = (to - from) / (24 * 60 * 60 * 1000)
+    if (days > 366) problems.push('the range must be at most 366 days')
+  }
+  if (problems.length) throw new ValidationError(problems)
+  return { from, to }
+}
+
+// A rejection needs a note for the requester, 1 to 500 characters.
+function validateRejection(body) {
+  const note = typeof body.note === 'string' ? body.note.trim() : ''
+  if (!note) throw new ValidationError(['note is required'])
+  if (note.length > MAX_REASON) throw new ValidationError([`note must be at most ${MAX_REASON} characters`])
+  return { note }
+}
+
+module.exports = { validateRefundRequest, validateExportRange, validateRejection, MIN_REASON, MAX_REASON }
+@@@ head src/refunds/repository.js
+const { db } = require('../db')
+
+const OPEN_STATES = ['requested', 'approved', 'paid']
+
+// Every function takes the tenant first and filters on it (docs/refunds.md, rule 1).
+
+async function insertRefund(trx, tenantId, refund) {
+  const [row] = await trx('refunds')
+    .insert({
+      tenant_id: tenantId,
+      order_id: refund.orderId,
+      amount: refund.amount,
+      reason: refund.reason,
+      status: 'requested',
+      requested_by: refund.requestedBy,
+      requested_at: new Date(),
+    })
+    .returning('*')
+  return row
+}
+
+async function getRefund(tenantId, refundId, trx = db) {
+  return trx('refunds').where({ tenant_id: tenantId, id: refundId }).first()
+}
+
+async function getRefundForUpdate(trx, tenantId, refundId) {
+  return trx('refunds').where({ tenant_id: tenantId, id: refundId }).forUpdate().first()
+}
+
+// Sum of the order's refunds that still count against its total (rule 2).
+async function openRefundTotal(trx, tenantId, orderId) {
+  const row = await trx('refunds')
+    .where({ tenant_id: tenantId, order_id: orderId })
+    .whereIn('status', OPEN_STATES)
+    .sum({ total: 'amount' })
+    .first()
+  return Number(row.total || 0)
+}
+
+async function setStatus(trx, tenantId, refundId, status, actorId, note = null) {
+  await trx('refunds').where({ tenant_id: tenantId, id: refundId }).update({ status, updated_at: new Date() })
+  await trx('refund_events').insert({
+    tenant_id: tenantId,
+    refund_id: refundId,
+    status,
+    actor_id: actorId,
+    note,
+    at: new Date(),
+  })
+}
+
+async function listByStatus(tenantId, status, { limit = 50, offset = 0 } = {}) {
+  return db('refunds')
+    .where({ tenant_id: tenantId, status })
+    .orderBy('requested_at', 'asc')
+    .limit(Math.min(limit, 200))
+    .offset(offset)
+}
+
+async function listPaidBetween(tenantId, from, to) {
+  return db('refunds')
+    .join('refund_events', function joinEvents() {
+      this.on('refund_events.refund_id', '=', 'refunds.id').andOn('refund_events.tenant_id', '=', 'refunds.tenant_id')
+    })
+    .where('refunds.tenant_id', tenantId)
+    .where('refunds.status', 'paid')
+    .where('refund_events.status', 'paid')
+    .whereBetween('refund_events.at', [from, to])
+    .select('refunds.id', 'refunds.order_id', 'refunds.amount', 'refunds.reason', 'refund_events.at as paid_at')
+    .orderBy('refund_events.at', 'asc')
+}
+
+async function eventsFor(tenantId, refundId) {
+  return db('refund_events').where({ tenant_id: tenantId, refund_id: refundId }).orderBy('at', 'asc')
+}
+
+module.exports = {
+  insertRefund,
+  getRefund,
+  getRefundForUpdate,
+  openRefundTotal,
+  setStatus,
+  listByStatus,
+  listPaidBetween,
+  eventsFor,
+}
+@@@ head src/refunds/service.js
+const { db } = require('../db')
+const orders = require('../orders/repository')
+const repo = require('./repository')
+const { NotFoundError, ConflictError, ForbiddenError } = require('../errors')
+
+const APPROVER_ROLE = 'refund-approver'
+
+// Request a refund for an order (docs/refunds.md). The open-refund total is checked inside the
+// transaction, with the order's refunds locked, so two requests cannot both pass rule 2.
+async function requestRefund(tenantId, user, request) {
+  return db.transaction(async (trx) => {
+    const order = await orders.getOrder(tenantId, request.orderId)
+    if (!order) throw new NotFoundError(`order ${request.orderId}`)
+    await trx('refunds').where({ tenant_id: tenantId, order_id: order.id }).forUpdate().select('id')
+    const open = await repo.openRefundTotal(trx, tenantId, order.id)
+    if (open + request.amount > order.total) {
+      throw new ConflictError(`refunds would exceed the order total (${open + request.amount} > ${order.total})`)
+    }
+    const refund = await repo.insertRefund(trx, tenantId, { ...request, requestedBy: user.id })
+    await trx('refund_events').insert({
+      tenant_id: tenantId,
+      refund_id: refund.id,
+      status: 'requested',
+      actor_id: user.id,
+      at: new Date(),
+    })
+    return refund
+  })
+}
+
+// Load a refund for a state change, locked, and check it is still `requested` (rule 7).
+async function lockRequested(trx, tenantId, refundId) {
+  const refund = await repo.getRefundForUpdate(trx, tenantId, refundId)
+  if (!refund) throw new NotFoundError(`refund ${refundId}`)
+  if (refund.status !== 'requested') throw new ConflictError(`refund ${refundId} is ${refund.status}`)
+  return refund
+}
+
+// Approve a refund (rules 5 to 8).
+async function approveRefund(tenantId, user, refundId) {
+  if (!user.roles.includes(APPROVER_ROLE)) throw new ForbiddenError('approval needs the refund-approver role')
+  return db.transaction(async (trx) => {
+    const refund = await lockRequested(trx, tenantId, refundId)
+    await repo.setStatus(trx, tenantId, refund.id, 'approved', user.id)
+    return { ...refund, status: 'approved' }
+  })
+}
+
+// Reject a refund with a note for the requester (rules 7 and 8).
+async function rejectRefund(tenantId, user, refundId, note) {
+  if (!user.roles.includes(APPROVER_ROLE)) throw new ForbiddenError('rejection needs the refund-approver role')
+  return db.transaction(async (trx) => {
+    const refund = await lockRequested(trx, tenantId, refundId)
+    await repo.setStatus(trx, tenantId, refund.id, 'rejected', user.id, note)
+    return { ...refund, status: 'rejected' }
+  })
+}
+
+// Cancel a refund: only its requester, and only while it is still requested.
+async function cancelRefund(tenantId, user, refundId) {
+  return db.transaction(async (trx) => {
+    const refund = await lockRequested(trx, tenantId, refundId)
+    if (refund.requested_by !== user.id) throw new ForbiddenError('only the requester can cancel a refund')
+    await repo.setStatus(trx, tenantId, refund.id, 'cancelled', user.id)
+    return { ...refund, status: 'cancelled' }
+  })
+}
+
+// Mark an approved refund paid, once the payment provider confirms it.
+async function markPaid(tenantId, refundId, providerRef) {
+  return db.transaction(async (trx) => {
+    const refund = await repo.getRefundForUpdate(trx, tenantId, refundId)
+    if (!refund) throw new NotFoundError(`refund ${refundId}`)
+    if (refund.status !== 'approved') throw new ConflictError(`refund ${refundId} is ${refund.status}`)
+    await repo.setStatus(trx, tenantId, refund.id, 'paid', 'payment-provider', providerRef)
+    return { ...refund, status: 'paid' }
+  })
+}
+
+async function getRefundWithHistory(tenantId, refundId) {
+  const refund = await repo.getRefund(tenantId, refundId)
+  if (!refund) throw new NotFoundError(`refund ${refundId}`)
+  return { ...refund, events: await repo.eventsFor(tenantId, refundId) }
+}
+
+module.exports = {
+  requestRefund,
+  approveRefund,
+  rejectRefund,
+  cancelRefund,
+  markPaid,
+  getRefundWithHistory,
+  APPROVER_ROLE,
+}
+@@@ head src/refunds/csv.js
+// RFC 4180 CSV. A field is quoted when it holds a comma, a quote, CR or LF, and quotes are
+// doubled. A field starting with =, +, - or @ is prefixed with ' so a spreadsheet does not
+// run it as a formula.
+function field(value) {
+  if (value === null || value === undefined) return ''
+  let s = value instanceof Date ? value.toISOString() : String(value)
+  if (/^[=+\-@]/.test(s)) s = `'${s}`
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+}
+
+function toCsv(columns, rows) {
+  const lines = [columns.map((c) => field(c.header)).join(',')]
+  for (const row of rows) lines.push(columns.map((c) => field(c.value(row))).join(','))
+  return `${lines.join('\r\n')}\r\n`
+}
+
+const EXPORT_COLUMNS = [
+  { header: 'refund_id', value: (r) => r.id },
+  { header: 'order_id', value: (r) => r.order_id },
+  { header: 'amount_cents', value: (r) => r.amount },
+  { header: 'reason', value: (r) => r.reason },
+  { header: 'paid_at', value: (r) => r.paid_at },
+]
+
+module.exports = { field, toCsv, EXPORT_COLUMNS }
+@@@ head src/refunds/routes.js
+const router = require('express').Router()
+const { requireAuth, requireRole } = require('../middleware/auth')
+const service = require('./service')
+const repo = require('./repository')
+const { validateRefundRequest, validateExportRange, validateRejection } = require('./validation')
+const { toCsv, EXPORT_COLUMNS } = require('./csv')
+const { NotFoundError, ConflictError, ForbiddenError, ValidationError } = require('../errors')
+
+router.use(requireAuth)
+
+// Map service errors to HTTP statuses in one place.
+const handle = (fn) => async (req, res) => {
+  try {
+    await fn(req, res)
+  } catch (e) {
+    if (e instanceof ValidationError) return res.status(400).json({ problems: e.problems })
+    if (e instanceof NotFoundError) return res.status(404).json({ error: e.message })
+    if (e instanceof ConflictError) return res.status(409).json({ error: e.message })
+    if (e instanceof ForbiddenError) return res.status(403).json({ error: e.message })
+    throw e
+  }
+}
+
+router.post('/', requireRole('support'), handle(async (req, res) => {
+  const request = validateRefundRequest(req.body)
+  res.status(201).json(await service.requestRefund(req.user.tenantId, req.user, request))
+}))
+
+router.get('/pending', requireRole(service.APPROVER_ROLE), handle(async (req, res) => {
+  const limit = Number.parseInt(req.query.limit, 10) || 50
+  const offset = Number.parseInt(req.query.offset, 10) || 0
+  res.json(await repo.listByStatus(req.user.tenantId, 'requested', { limit, offset }))
+}))
+
+router.get('/export', requireRole('finance'), handle(async (req, res) => {
+  const { from, to } = validateExportRange(req.query)
+  const rows = await repo.listPaidBetween(req.user.tenantId, from, to)
+  res.type('text/csv').attachment('refunds.csv').send(toCsv(EXPORT_COLUMNS, rows))
+}))
+
+router.get('/:id', handle(async (req, res) => {
+  res.json(await service.getRefundWithHistory(req.user.tenantId, req.params.id))
+}))
+
+router.post('/:id/approve', requireRole(service.APPROVER_ROLE), handle(async (req, res) => {
+  res.json(await service.approveRefund(req.user.tenantId, req.user, req.params.id))
+}))
+
+router.post('/:id/reject', requireRole(service.APPROVER_ROLE), handle(async (req, res) => {
+  const { note } = validateRejection(req.body)
+  res.json(await service.rejectRefund(req.user.tenantId, req.user, req.params.id, note))
+}))
+
+router.post('/:id/cancel', handle(async (req, res) => {
+  res.json(await service.cancelRefund(req.user.tenantId, req.user, req.params.id))
+}))
+
+module.exports = router
+@@@ head test/refunds/validation.test.js
+const { validateRefundRequest, validateExportRange, validateRejection } = require('../../src/refunds/validation')
+const { ValidationError } = require('../../src/errors')
+
+describe('validateRefundRequest', () => {
+  const ok = { orderId: 'o1', amount: 500, reason: 'Damaged on arrival' }
+
+  test('accepts a valid request and trims it', () => {
+    expect(validateRefundRequest({ ...ok, orderId: ' o1 ', reason: ' Damaged on arrival ' })).toEqual(ok)
+  })
+
+  test.each([
+    [{ amount: 1.5 }, 'amount must be an integer number of cents'],
+    [{ amount: 0 }, 'amount must be at least 1 cent'],
+    [{ reason: 'short' }, 'reason must be at least 10 characters'],
+    [{ reason: 'x'.repeat(501) }, 'reason must be at most 500 characters'],
+    [{ orderId: '' }, 'orderId is required'],
+  ])('rejects %j', (patch, problem) => {
+    expect(() => validateRefundRequest({ ...ok, ...patch })).toThrow(problem)
+  })
+
+  test('lists every problem at once', () => {
+    try {
+      validateRefundRequest({})
+    } catch (e) {
+      expect(e).toBeInstanceOf(ValidationError)
+      expect(e.problems).toHaveLength(3)
+    }
+  })
+})
+
+describe('validateExportRange', () => {
+  test('accepts a range of up to 366 days', () => {
+    expect(validateExportRange({ from: '2026-01-01', to: '2026-12-31' }).from).toEqual(new Date('2026-01-01'))
+  })
+
+  test('rejects a reversed range', () => {
+    expect(() => validateExportRange({ from: '2026-02-01', to: '2026-01-01' })).toThrow('from must not be after to')
+  })
+
+  test('rejects a range over 366 days', () => {
+    expect(() => validateExportRange({ from: '2025-01-01', to: '2026-06-01' })).toThrow('at most 366 days')
+  })
+})
+
+test('a rejection needs a note', () => {
+  expect(() => validateRejection({ note: '  ' })).toThrow('note is required')
+})
+@@@ head test/refunds/service.test.js
+jest.mock('../../src/db')
+jest.mock('../../src/orders/repository')
+jest.mock('../../src/refunds/repository')
+const { db } = require('../../src/db')
+const orders = require('../../src/orders/repository')
+const repo = require('../../src/refunds/repository')
+const service = require('../../src/refunds/service')
+const { ConflictError, ForbiddenError, NotFoundError } = require('../../src/errors')
+
+const trx = Object.assign(jest.fn(() => ({ where: () => ({ forUpdate: () => ({ select: async () => [] }) }), insert: async () => {} })), {})
+beforeEach(() => {
+  jest.resetAllMocks()
+  db.transaction = jest.fn((fn) => fn(trx))
+})
+
+const support = { id: 'u-support', roles: ['support'] }
+const approver = { id: 'u-approver', roles: ['refund-approver'] }
+
+describe('requestRefund', () => {
+  test('refuses a refund that would exceed the order total', async () => {
+    orders.getOrder.mockResolvedValue({ id: 'o1', total: 1000 })
+    repo.openRefundTotal.mockResolvedValue(800)
+    await expect(service.requestRefund('t1', support, { orderId: 'o1', amount: 300, reason: 'Damaged on arrival' }))
+      .rejects.toBeInstanceOf(ConflictError)
+  })
+
+  test('records the requester', async () => {
+    orders.getOrder.mockResolvedValue({ id: 'o1', total: 1000 })
+    repo.openRefundTotal.mockResolvedValue(0)
+    repo.insertRefund.mockResolvedValue({ id: 'r1' })
+    await service.requestRefund('t1', support, { orderId: 'o1', amount: 300, reason: 'Damaged on arrival' })
+    expect(repo.insertRefund.mock.calls[0][2].requestedBy).toBe('u-support')
+  })
+
+  test('404s an order from another tenant', async () => {
+    orders.getOrder.mockResolvedValue(undefined)
+    await expect(service.requestRefund('t1', support, { orderId: 'o9', amount: 1, reason: 'Damaged on arrival' }))
+      .rejects.toBeInstanceOf(NotFoundError)
+  })
+})
+
+describe('approveRefund', () => {
+  test('needs the approver role', async () => {
+    await expect(service.approveRefund('t1', support, 'r1')).rejects.toBeInstanceOf(ForbiddenError)
+  })
+
+  test('approves a requested refund', async () => {
+    repo.getRefundForUpdate.mockResolvedValue({ id: 'r1', status: 'requested', requested_by: 'u-support' })
+    await expect(service.approveRefund('t1', approver, 'r1')).resolves.toMatchObject({ status: 'approved' })
+    expect(repo.setStatus).toHaveBeenCalledWith(trx, 't1', 'r1', 'approved', 'u-approver')
+  })
+
+  test('refuses a refund that is no longer requested', async () => {
+    repo.getRefundForUpdate.mockResolvedValue({ id: 'r1', status: 'paid', requested_by: 'u-support' })
+    await expect(service.approveRefund('t1', approver, 'r1')).rejects.toBeInstanceOf(ConflictError)
+  })
+})
+
+describe('cancelRefund', () => {
+  test('only the requester can cancel', async () => {
+    repo.getRefundForUpdate.mockResolvedValue({ id: 'r1', status: 'requested', requested_by: 'u-support' })
+    await expect(service.cancelRefund('t1', approver, 'r1')).rejects.toBeInstanceOf(ForbiddenError)
+  })
+})
+@@@ issue
+Refund requests and approvals
+
+Support agents request refunds against an order; finance approves, rejects or pays them. The rules are written up in docs/refunds.md as part of this work.
+@@@ pr
+Adds the refunds module: request, approve, reject, cancel, mark paid, a pending queue and a CSV export, with validation and unit tests. Implements every rule in docs/refunds.md. Closes #412.

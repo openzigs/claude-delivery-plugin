@@ -1,6 +1,8 @@
 # Benchmarks: prompt footprint, review evals and pipeline replay
 
-> **Cost.** Scenarios 1 and 2 are free or cheap. Scenarios 3–5, the pipeline replay, are
+> **Cost.** Scenario 1 is free. Scenario 2's full matrix (three tiers, two scopes, N=3) cost
+> about **$83 at list price** at #92, most of it the session model; one tier on one scope is
+> cents to dollars. Scenarios 3–5, the pipeline replay, are
 > **expensive**: one full run of both scenarios on two refs (0.7.1 and 0.8.0, N=1) is in the
 > order of **a few million tokens** — every issue goes through a real implement, review and,
 > for the trap issue, fix and re-review, on a real GitHub scratch repository. Each `--runs`
@@ -13,7 +15,7 @@ change that moves a prompt, a skill or a review tier, and compare.
 | Scenario | Command | Cost | Deterministic |
 |----------|---------|------|---------------|
 | 1. Static prompt footprint | `node scripts/footprint.mjs --ref <a> --ref <b>` | free | yes |
-| 2. Review precision and recall | `claude plugin eval` + `node scripts/eval-tiers.mjs` | a few dollars at list price for the full matrix | no |
+| 2. Review precision and recall | `node scripts/eval-run.mjs` (`claude plugin eval` + `scripts/eval-tiers.mjs`) | about $83 at list price for the full matrix at N=3 (haiku $2, sonnet $23, session model $58) | no |
 | 3–5. Pipeline replay and behaviour checks | `node scripts/bench-run.mjs` + `node scripts/bench-report.mjs` | a few million tokens for two refs | no |
 
 ## Scenario 1 — static prompt footprint per dispatch
@@ -77,61 +79,168 @@ Baseline at the 0.8.0 release, against 0.7.1:
 ## Scenario 2 — review precision and recall
 
 `evals/` is a [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) suite
-(Claude Code v2.1.269+). Each case puts a synthetic PR diff in the prompt, with no repository and
-no GitHub, and asks for findings as `file:line — severity — finding` and a final
-`Recommendation:` line. Every case is graded by a free regex grader; no judge model is called.
+(Claude Code v2.1.269+). Each case runs the review **the way `/delivery:orchestrate` does**:
+the session dispatches the `delivery:code-review` agent, whose `skills:` frontmatter preloads
+the review procedure, with the review prompt the workflow itself builds. The reviewer works on
+a checked-out fixture repository, not a diff pasted into its prompt, so a defect that is only
+visible in an unchanged file can be found by reading that file, and missed by not reading it.
 
 | Kind | Cases | Graded on |
 |------|-------|-----------|
-| `seeded-*` (12) | one seeded defect each, tagged with its category | the defect named; for security, correctness and requirements, also a `do not merge` verdict; for performance and tests, the finding at `medium` or above |
-| `clean-*` (3) | a refactor, a docs change, a correct fix | a `Recommendation: merge` verdict. Anything else is a **false block** |
-| `control-unseeable-defect` (1) | a defect outside the diff | must score 0: a grader that passes here cannot fail |
+| `seeded-*` (21) | one seeded defect each, tagged with its category | the defect named; for security, correctness and requirements, also a `do not merge` verdict; for performance and tests, the finding at `medium` or above |
+| `clean-*` (5) | a refactor, a docs change, a correct fix, and two **decoys**: code that looks dangerous but is correct | a `Recommendation: merge` verdict. Anything else is a **false block** |
+| `control-unseeable-defect` (1) | a defect whose cause is in no file of the repository | must score 0: a grader that passes here cannot fail |
+| `batch-three-prs`, `per-pr-three-prs` | three PRs (two seeded, one clean) reviewed as one `--batch-review` dispatch, or as three per-PR dispatches | each PR's own section of the reply, so a finding under the wrong PR does not count |
 
-Categories: **security** (SQL injection, missing tenant scope, auth bypass, a secret logged, a
-secret committed), **correctness** (off-by-one, an unhandled null, a race on shared state),
-**performance** (an N+1 query), **tests** (a test that asserts on its own mock, a new branch the
-test does not cover), **requirements** (a diff that misses one acceptance criterion of the linked
-issue text in the prompt).
+The twelve original seeded cases cover **security** (SQL injection, missing tenant scope, auth
+bypass, a secret logged, a secret committed), **correctness** (off-by-one, an unhandled null, a
+race on shared state), **performance** (an N+1 query), **tests** (a test that asserts on its own
+mock, a new branch the test does not cover) and **requirements** (a missed acceptance
+criterion). The nine harder ones (#92) cannot be judged from the changed lines alone:
 
-Every case exists twice: `evals/<case>/` asks for a LIGHT review (security and correctness of
-the changed lines, as the light route does) and is tagged `light-review`; `evals/full/<case>/`
-is the same diff and graders asking for a FULL review, named `<case>-full` and tagged
-`full-review`. The verifier keeps the two copies in step.
+| Case | Category | What it takes to find it |
+|------|----------|--------------------------|
+| `seeded-invariant-violation` | correctness | a new caller posts fractional cents; the integer-cents rule is stated only in the unchanged `src/ledger.js` |
+| `seeded-authz-moved` | security | a "pure move" of a route between files drops the admin check, which lives in the unchanged `src/app.js` mount |
+| `seeded-race-lock-helper` | correctness | the new code serialises with `withLock`, and only the unchanged helper shows it releases the lock before an async callback finishes |
+| `seeded-migration-breaks-query` | correctness | a column rename is correct on its own, but the unchanged revenue report still selects the old name |
+| `seeded-fixture-hides-bug` | tests | the tests pass only because the unchanged JSON fixture has no mixed-case emails |
+| `seeded-issue-only-requirement` | requirements | the "same response whether or not the account exists" rule is only in the linked issue |
+| `seeded-quadratic-helper` | performance | a lookup becomes O(n×m) through an unchanged linear `findById` helper |
+| `seeded-wrong-library-api` | correctness | `maxAge` is in milliseconds, which only the installed source under `node_modules/` says |
+| `seeded-large-diff` | security | one missing four-eyes check buried in a 455-line change |
+
+The two decoys are `clean-decoy-allowlisted-sort` (an `ORDER BY ${column}` whose column comes
+from a fixed `Map`) and `clean-decoy-publishable-key` (a Stripe *publishable* key, public by
+design, built into the browser bundle).
+
+Every case exists twice: `evals/<case>/` at LIGHT scope (tagged `light-review`) and
+`evals/full/<case>/` at FULL scope (`<case>-full`, tagged `full-review`). Each case is written
+by hand as a `case.yaml` (its tags), a `fixture.txt` (the repository, the PR and its linked
+issue) and its graders. **Everything else is generated** by `node scripts/eval-build.mjs`:
+
+- **The prompt is rendered from `workflows/orchestrate.js`**, by running it against a stub
+  `agent()` as `scripts/footprint.mjs` does: the light route's prompt, carrying the workflow's
+  own `LIGHT_SCOPE` text, for the light copy; the full route's for the full copy; the
+  `--batch-review` prompt and the per-PR prompts for the batch comparison. Only two things are
+  added around it: where the `gh` reads are instead (the fixture writes the PR diff, body and
+  linked issue under `.pr/`, because the eval sandbox reaches no GitHub), and the reply format
+  the graders read (one line per finding with its severity, confidence and whether it blocks,
+  then the `Recommendation:` line). `node scripts/verify-plugin.mjs` fails when a generated file
+  is stale, so editing the workflow's prompt text without re-running the build fails CI.
+- **`scaffold.sh`** builds the fixture repository with `scripts/eval-scaffold.mjs`: `main`
+  holds the base, `pr/<n>` the change, and `.pr/` the stand-ins for `gh`. It refuses to run
+  in a directory that is not empty.
+- **`graders/review-agent-dispatched.md`** checks that the session dispatched
+  `delivery:code-review`. A run where it did not reviewed nothing with the plugin's procedure;
+  `eval-tiers.mjs` reports it as **INVALID**, leaves it out of every rate, and exits 1.
 
 ```bash
-for m in haiku sonnet; do for s in light full; do
-  claude plugin eval . --tag $s-review --model $m --ablation none --trust-plugin --no-publish --json $m-$s.json
-done; done
-for s in light full; do   # the session model: no --model
-  claude plugin eval . --tag $s-review --ablation none --trust-plugin --no-publish --json session-$s.json
-done
-node scripts/eval-tiers.mjs haiku-*.json sonnet-*.json session-*.json
+node scripts/eval-run.mjs --dry-run       # the nine claude plugin eval calls it would make
+node scripts/eval-run.mjs                 # haiku, sonnet, session model x light, full, batch; N=3
+node scripts/eval-run.mjs --tier haiku --scope light --runs 1      # one cell, once
+node scripts/eval-tiers.mjs evals/results/matrix-*/*/*.json      # report saved results again
 ```
 
-`--ablation none` skips the no-plugin baseline arm, which halves the cost; `--runs 3` repeats
-each case (a seeded case then counts as found only if every run found it, and a clean case as a
-false block if any run blocked). `-j 4` runs four cases at once. `--trust-plugin` answers the
-first-run prompt for a suite you wrote.
+`eval-run.mjs` makes one `claude plugin eval` call per tier and scope, with `--scaffold` (the
+cases build their repository), `--allow-tools Bash` (the reviewer reads and runs things in it,
+under the eval sandbox), `--ablation none` (without the plugin there is no reviewer agent to
+compare against) and `--keep-temp`. It copies each run's trace next to its result, so the
+report can count the reviewer's turns and read its findings, and deletes the kept run
+directory. `--tier`, `--scope`, `--case GLOB`, `--runs N` (default 3), `-j N` and
+`--max-cost-usd` narrow it. `eval-tiers.mjs` merges every file of one tier, and a case found in
+more than one file is taken from the last one named, so after fixing a fixture or a grader you
+re-run only that case (`--case 'seeded-x*' --out <dir>`) and list its results after the rest.
+The session tier passes no `--model`; every agent the session dispatches inherits its model, so
+the reviewer runs on the tier under test.
 
-`eval-tiers.mjs` prints one row per tier and scope: seeded cases found and recall, found/seeded
-per category, false blocks on the clean controls, whether the control scored 0 (it exits 1 if
-not), list-price cost and mean turns per run.
+**What the report shows.** Per tier and scope, over N passes of the suite:
 
-**What it proves.** Whether a model, at a scope, names a known defect in a small diff and
-blocks on it, and whether it blocks a diff with nothing wrong. Comparing rows compares tiers
-and scopes on identical inputs. `scripts/verify-plugin.mjs` proves each grader can fail: every
-seeded grader is run against a reply that misses the defect and one that names it but approves,
-and every clean grader against a do-not-merge reply.
+- **recall** as the mean with the lowest and highest pass, overall and per category;
+- **false blocks** on the clean cases, decoys included, as mean and range;
+- **cost** of one pass (list price) and **turns** per run (the dispatching session's plus the
+  reviewer's own, read from the trace), as mean and range;
+- for two tiers in one scope whose recall ranges overlap: *not distinguishable at N=3*;
+- **batch review** (#66): recall over the two seeded PRs and false blocks on the clean one, per
+  mode, and the graduation criterion with its verdict;
+- **confidence calibration** (#65): every finding line classed as the seeded defect (it matches
+  the case's grader), a decoy (it matches the decoy's bait pattern), on a clean change, or other;
+  and how many in each class fall under a confidence of 30, 50 and 70, split by what
+  `CONFIDENCE_THRESHOLD` would actually drop (non-blocking findings only).
 
-**What it does not prove.** How the full `code-review` procedure performs on a real PR: the
-cases run with no repository, so nothing is checked out, no test is run and nothing is
-published. One case per defect class is an anecdote, not a rate: a 1/1 or 0/1 in a category
-moves with a single reply, so read per-category recall as "found or missed", and repeat with
-`--runs 3` before acting on a difference. Regex graders can miss a correct reply worded in a
-way the pattern does not expect; read the reply in the HTML report before calling a miss a
-model's fault. Effort is not compared: the eval CLI has no effort flag, so every row ran at the
-CLI's default effort, whereas the workflow passes `high` to the first full review. Output tokens
-are not reported, because the eval result records none.
+**Graduating `--batch-review`.** It drops "experimental" when, on the session model (the model
+a batch review runs on) at N≥3 valid runs per mode, the batch review's mean recall is at least
+the per-PR review's lowest run, and it false-blocks the clean PR no more often than per-PR
+review does. `eval-tiers.mjs` prints the verdict per tier.
+
+**Grader proof.** `scripts/verify-plugin.mjs` proves each grader can fail without a model call:
+every seeded grader is run against a reply that misses the defect, one that names it but
+approves, five that block on a different defect, and every other seeded case's hit (the two
+race cases share a defect class and are allowed to match each other); every clean grader
+against a do-not-merge reply; each decoy's bait pattern against a finding that takes the bait;
+each batch grader against a reply with the two defects swapped between PR sections.
+
+### Results at #92 (Claude Code 2.1.311, N=3)
+
+Tiers: haiku is `claude-haiku-5-5`, sonnet `claude-sonnet-5-5`, the session model
+`claude-opus-5-5`; the reviewer inherits the session's model. 504 runs, none invalid: every run
+dispatched `delivery:code-review`. Recall is the mean over three passes of the suite, with the
+lowest and highest pass.
+
+| tier | scope | recall (21 seeded) | tests category (3) | false blocks (5 clean) | cost per pass | turns per run |
+|------|-------|--------------------|--------------------|------------------------|---------------|---------------|
+| haiku | light | 97% [95–100%] | 78% [67–100%] | 13% [0–20%] | $0.34 | 5.7 [4–10] |
+| haiku | full | 100% [100–100%] | 100% | 0% | $0.35 | 6.2 [4–11] |
+| sonnet | light | 98% [95–100%] | 89% [67–100%] | 0% | $3.76 | 4.0 [3–5] |
+| sonnet | full | 100% [100–100%] | 100% | 0% | $3.56 | 4.2 [3–6] |
+| session model | light | 100% [100–100%] | 100% | 0% | $9.39 | 4.8 [4–7] |
+| session model | full | 100% [100–100%] | 100% | 0% | $8.45 | 4.9 [4–8] |
+
+Every pair of tiers overlaps on recall in both scopes: **not distinguishable at N=3**. Security,
+correctness, performance and requirements were found in every run by every tier. The misses were
+`seeded-fixture-hides-bug` (haiku and sonnet at light scope rated the case-sensitive comparison
+`low`), and haiku's light-scope false blocks were a docs change it blocked over a pre-existing
+gap in the integration setup and the publishable-key decoy, which it blocked as a live key in
+non-production builds. Turns are few because the procedure orients with one batched read.
+
+Batch review, two seeded PRs and one clean one, three runs per mode:
+
+| tier | batch recall | per-PR recall | false blocks (both modes) | batch cost / per-PR cost | criterion |
+|------|--------------|---------------|---------------------------|--------------------------|-----------|
+| haiku | 100% | 100% | 0 | $0.019 / $0.033 | met |
+| sonnet | 67% [50–100%] | 100% | 0 | $0.149 / $0.293 | **not met** |
+| session model | 100% | 100% | 0 | $0.497 / $0.837 | met |
+
+Sonnet's batch review twice assumed `pg` returns `Date` objects without reading `src/db.js`,
+and approved PR #1413; reviewed on its own, it read the file every time.
+
+Confidence calibration over 2,481 findings (`dropped` counts the non-blocking ones under the
+threshold, which is all `CONFIDENCE_THRESHOLD` removes):
+
+| finding is | count | blocking | dropped <30 | dropped <50 | dropped <70 |
+|------------|-------|----------|-------------|-------------|-------------|
+| the seeded defect | 836 | 599 | 0 | 11 | 68 |
+| a decoy's bait | 1 | 1 | 0 | 0 | 0 |
+| on a clean change | 234 | 1 | 2 | 36 | 134 |
+| other (truth unknown) | 1,410 | 285 | 10 | 191 | 621 |
+
+No threshold tested would have lost a seeded defect: in each of the 400 replies that named one,
+some finding naming it was blocking or rated 70 or more.
+
+**What it proves.** Whether a model, at a scope, running the plugin's real review procedure,
+names a known defect in a small repository and blocks on it, and whether it blocks a change
+with nothing wrong, with the run-to-run spread at N passes. Comparing rows compares tiers and
+scopes on identical inputs.
+
+**What it does not prove.** How the procedure performs on your repository: the fixtures are
+small, there is no CI to read and nothing is published. Under the macOS sandbox `git` cannot
+run (the Xcode shim it needs is blocked), so the reviewer reads the `.pr/` diff and the working
+tree instead of running `git diff`; on Linux it runs. One case per defect class is an anecdote:
+read per-category recall as "found or missed", and trust a difference only when the ranges do
+not overlap. Regex graders can miss a correct reply worded in a way the pattern does not
+expect; read the trace (`traces/` beside each result) before calling a miss a model's fault.
+Effort is not compared: the eval CLI has no effort flag, so every row ran at the CLI's default
+effort, whereas the workflow passes `high` to the first full review.
 
 ## Scenarios 3–5 — pipeline replay on a fixture repository
 

@@ -1,0 +1,63 @@
+@@@ base package.json
+{
+  "name": "inventory",
+  "private": true,
+  "scripts": { "test": "jest" },
+  "dependencies": { "knex": "^3.1.0" }
+}
+@@@ base src/db.js
+const knex = require('knex')
+
+exports.db = knex({ client: 'pg', connection: process.env.DATABASE_URL })
+@@@ base src/lib/lock.js
+// In-process mutex keyed by string. A second caller for a key that is held gets LockBusyError.
+class LockBusyError extends Error {}
+
+const held = new Set()
+
+function withLock(key, fn) {
+  if (held.has(key)) throw new LockBusyError(key)
+  held.add(key)
+  try {
+    return fn()
+  } finally {
+    held.delete(key)
+  }
+}
+
+module.exports = { withLock, LockBusyError }
+@@@ base src/inventory/cache.js
+const { withLock } = require('../lib/lock')
+
+const counts = new Map()
+
+// Adjust the cached count for a SKU.
+function adjust(sku, delta) {
+  return withLock(`cache:${sku}`, () => counts.set(sku, (counts.get(sku) || 0) + delta))
+}
+
+module.exports = { adjust, counts }
+@@@ head src/inventory/reserve.js
+const { db } = require('../db')
+const { withLock } = require('../lib/lock')
+
+class OutOfStockError extends Error {}
+
+// Reserve stock for a checkout. The read-check-write runs under the SKU's lock, so two
+// checkouts for the last unit cannot both succeed.
+async function reserve(sku, qty) {
+  return withLock(`stock:${sku}`, async () => {
+    const row = await db('stock').where({ sku }).first()
+    if (row.available < qty) throw new OutOfStockError(sku)
+    await db('stock').where({ sku }).update({ available: row.available - qty })
+    return row.available - qty
+  })
+}
+
+module.exports = { reserve, OutOfStockError }
+@@@ issue
+Reserve stock at checkout
+
+Checkout must reserve stock. Two customers buying the last unit at the same time must not both get it: one of them gets OutOfStockError.
+@@@ pr
+Adds `reserve(sku, qty)`. The read-check-write is serialised per SKU with the existing `withLock` helper, so concurrent checkouts cannot oversell. Closes #412.

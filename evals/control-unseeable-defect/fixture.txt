@@ -1,0 +1,39 @@
+@@@ base package.json
+{
+  "name": "jobs",
+  "private": true,
+  "scripts": { "test": "jest" }
+}
+@@@ base src/config.js
+// Deployment settings, read from the environment at start-up. Values differ per environment
+// and are not kept in this repository.
+module.exports = {
+  RETRY_LIMIT: Number(process.env.RETRY_LIMIT),
+}
+@@@ base src/jobs/retry.js
+const { RETRY_LIMIT } = require('../config')
+
+async function withRetry(fn) {
+  for (let i = 0; i < 3; i++) {
+    try { return await fn() } catch (e) { if (i === 2) throw e }
+  }
+}
+
+module.exports = { withRetry }
+@@@ head src/jobs/retry.js
+const { RETRY_LIMIT } = require('../config')
+
+async function withRetry(fn) {
+  const limit = Number.isInteger(RETRY_LIMIT) && RETRY_LIMIT > 0 ? RETRY_LIMIT : 3
+  for (let i = 0; i < limit; i++) {
+    try { return await fn() } catch (e) { if (i === limit - 1) throw e }
+  }
+}
+
+module.exports = { withRetry }
+@@@ issue
+Make the job retry limit configurable
+
+Read the retry limit from config (RETRY_LIMIT), falling back to 3.
+@@@ pr
+withRetry reads RETRY_LIMIT from config, falling back to 3. Closes #412.

@@ -1,0 +1,49 @@
+@@@ base package.json
+{
+  "name": "utils",
+  "private": true,
+  "type": "module",
+  "scripts": { "test": "jest" }
+}
+@@@ base src/lib/chunk.js
+export function chunk(items, size) {
+  const out = []
+  for (let i = 0; i < items.length - 1; i += size) {
+    out.push(items.slice(i, i + size))
+  }
+  return out
+}
+@@@ base test/chunk.test.js
+// Unit tests for chunk().
+
+import { chunk } from '../src/lib/chunk'
+
+test('chunk splits evenly', () => {
+  expect(chunk([1, 2, 3, 4], 2)).toEqual([[1, 2], [3, 4]])
+})
+@@@ head src/lib/chunk.js
+export function chunk(items, size) {
+  const out = []
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size))
+  }
+  return out
+}
+@@@ head test/chunk.test.js
+// Unit tests for chunk().
+
+import { chunk } from '../src/lib/chunk'
+
+test('chunk splits evenly', () => {
+  expect(chunk([1, 2, 3, 4], 2)).toEqual([[1, 2], [3, 4]])
+})
+
+test('chunk keeps a trailing single item', () => {
+  expect(chunk([1, 2, 3], 2)).toEqual([[1, 2], [3]])
+})
+@@@ issue
+chunk() drops a trailing single item
+
+chunk([1, 2, 3], 2) returns [[1, 2]] instead of [[1, 2], [3]].
+@@@ pr
+Fixes the loop bound in `chunk` and adds a regression test that fails without the fix. Closes #412.

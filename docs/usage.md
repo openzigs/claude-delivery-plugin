@@ -56,8 +56,11 @@ the light-review rule), when any issue's labels are unknown, or when the batch h
 result records `cheapMode` for the run and `reviewMode` (`batch` or `per-pr`) with
 `reviewModeWhy` per batch; the batch review's output tokens are `outputTokens.batchReview` on
 the batch, and each PR it covered has `reviewedInBatch: true`. The cost-report marks the run as
-cheap mode and shows the batch review as its own row. It stays experimental until an eval
-compares its recall with per-PR review.
+cheap mode and shows the batch review as its own row. It stays experimental: the review eval
+compares it with per-PR review, and at N=3 its recall matched per-PR review on haiku and the
+session model but not on sonnet, which twice approved a defect the per-PR review caught
+([benchmarks](benchmarks.md#results-at-92-claude-code-21311-n3) has the numbers and the
+criterion for dropping "experimental").
 
 **How each step picks its model.** There is no separate sizing agent; the implementer reads
 the issue anyway and reports what the later steps route on.
