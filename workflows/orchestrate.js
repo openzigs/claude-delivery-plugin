@@ -197,7 +197,9 @@ const INHERIT = null
 const SONNET = 'sonnet'
 const modelOpt = (m) => (m ? { model: m } : {})
 const modelName = (m) => m || 'session model'
-// Effort follows the same rule: INHERIT omits `effort`, and the result says "inherit".
+// effortOpt(INHERIT) would omit `effort` and report "inherit", but this pipeline
+// passes every phase's effort explicitly (see the effort rule below).
+const HIGH = 'high'
 const MEDIUM = 'medium'
 const effortOpt = (e) => (e ? { effort: e } : {})
 const effortName = (e) => e || 'inherit'
@@ -263,11 +265,17 @@ const fixModel = (implementedOn) => (implementedOn === SONNET ? INHERIT : SONNET
 const rereviewModel = (route) => (route.light ? INHERIT : SONNET)
 // Effort. Medium effort was measured (by Cloudflare) to lose real findings for
 // quality and performance reviewers, so the implementer and the first full review
-// inherit the session's effort. Only the fix, whose findings spell out the work, and
-// the confirming re-review drop to medium. A re-review escalated from a light review
-// is that change's first full-scope look, so it inherits too.
+// pass `high` explicitly. They do not inherit: Claude Code's default effort on Opus
+// 5.5 is `medium` (code.claude.com/docs/en/model-config, "Model default"), so in
+// most sessions "inherit" would mean exactly the medium this rule exists to avoid.
+// Only the fix, whose findings spell out the work, and the confirming re-review
+// drop to medium. A re-review escalated from a light review is that change's first
+// full-scope look, so it is `high` too. Every phase's effort is therefore explicit,
+// and the result records the level passed, never "inherit".
+const IMPLEMENT_EFFORT = HIGH
+const REVIEW_EFFORT = HIGH
 const FIX_EFFORT = MEDIUM
-const rereviewEffort = (route) => (route.light ? INHERIT : MEDIUM)
+const rereviewEffort = (route) => (route.light ? HIGH : MEDIUM)
 
 const LIGHT_SCOPE = `
 Review scope: LIGHT. This change was routed to a light review because it is small and
@@ -432,7 +440,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
   const subject = it.issue ? `issue #${it.issue}` : subjectOf(lane)
   const route = routeReview(it)
   const models = { implement: implementModel, review: route.model }
-  const effort = { implement: INHERIT, review: INHERIT }
+  const effort = { implement: IMPLEMENT_EFFORT, review: REVIEW_EFFORT }
   const outputTokens = { review: null }
   log(
     `#${tag}: ${route.light ? 'light review' : 'full review'} on ${modelName(route.model)} ` +
@@ -453,6 +461,7 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
       agentType: 'delivery:code-review',
       schema: REVIEW_SCHEMA,
       ...modelOpt(route.model),
+      ...effortOpt(effort.review),
       ...iso,
     },
   ))
@@ -581,6 +590,7 @@ async function runLane(lane, isolated) {
     agentType: 'delivery:code-issue',
     schema: IMPLEMENT_SCHEMA,
     ...modelOpt(route.model),
+    ...effortOpt(IMPLEMENT_EFFORT),
     ...iso,
   }))
   const laneResult = {

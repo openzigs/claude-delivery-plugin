@@ -671,25 +671,29 @@ for (const file of workflowFiles) {
   check(r.result.reviewCompleted === false && !r.dispatches.some((d) => d.label?.startsWith('review:')),
     'an implementer that never returned marks the run unreviewed')
 
-  // --- effort per stage: medium only on the fix and the non-escalated re-review
+  // --- effort per stage: explicit high on the implementer, the first full review and an
+  // escalated re-review; medium only on the fix and the confirming re-review. Nothing
+  // inherits: the session default on Opus 5.5 is medium, so "inherit" would mean medium.
   const optsOf = (x, label) => x.dispatches.find((d) => d.label === label) || {}
   r = await run({ review: BLOCKING_REVIEW })
-  check(optsOf(r, 'fix:412').effort === 'medium', 'the fix runs at medium effort', `fix effort = ${optsOf(r, 'fix:412').effort}`)
-  check(optsOf(r, 'rereview:412').effort === 'medium', 'a non-escalated re-review runs at medium effort',
+  check(optsOf(r, 'implement:412').effort === 'high', 'the implementer runs at high effort, passed explicitly',
+    `implement effort = ${optsOf(r, 'implement:412').effort}`)
+  check(optsOf(r, 'review:412').effort === 'high', 'the first full review runs at high effort, passed explicitly',
+    `review effort = ${optsOf(r, 'review:412').effort}`)
+  check(optsOf(r, 'fix:412').effort === 'medium', 'the fix runs at medium effort, not high', `fix effort = ${optsOf(r, 'fix:412').effort}`)
+  check(optsOf(r, 'rereview:412').effort === 'medium', 'a confirming re-review runs at medium effort, not high',
     `rereview effort = ${optsOf(r, 'rereview:412').effort}`)
-  check(!('effort' in optsOf(r, 'review:412')) && !('effort' in optsOf(r, 'implement:412')),
-    'the first review and the implementer pass no effort (they inherit)')
-  check(JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'inherit', review: 'inherit', fix: 'medium', rereview: 'medium' }),
-    'the effort of every phase is reported, inherited ones as "inherit"', `effort = ${JSON.stringify(pr0(r).effort)}`)
+  check(JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'high', review: 'high', fix: 'medium', rereview: 'medium' }),
+    'the effort of every phase is reported as passed, never "inherit"', `effort = ${JSON.stringify(pr0(r).effort)}`)
   r = await run({ review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
-  check(optsOf(r, 'rereview:412').label && !('effort' in optsOf(r, 'rereview:412')),
-    'a re-review escalated from a light review passes no effort (it is the first full-scope review)',
-    `escalated rereview effort = ${optsOf(r, 'rereview:412').effort}`)
-  check(optsOf(r, 'fix:412').effort === 'medium' && pr0(r).effort?.rereview === 'inherit',
-    'after a light review the fix is still medium and the escalated re-review reports "inherit"')
+  check(optsOf(r, 'rereview:412').effort === 'high' && optsOf(r, 'review:412').effort === 'high',
+    'a re-review escalated from a light review runs at high effort (it is the first full-scope review)',
+    `escalated rereview effort = ${optsOf(r, 'rereview:412').effort}, light review effort = ${optsOf(r, 'review:412').effort}`)
+  check(optsOf(r, 'fix:412').effort === 'medium' && pr0(r).effort?.rereview === 'high',
+    'after a light review the fix is still medium and the escalated re-review reports "high"')
   r = await run()
-  check(r.dispatches.every((d) => !('effort' in d)) && JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'inherit', review: 'inherit' }),
-    'a clean run sets no effort anywhere and reports both phases as "inherit"')
+  check(r.dispatches.every((d) => d.effort === 'high') && JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'high', review: 'high' }),
+    'a clean run passes high effort on both dispatches and reports both as "high", none as "inherit"')
 
   // --- output tokens per phase, as budget.spent() deltas
   r = await run({ review: BLOCKING_REVIEW, budget: 'metered' })
@@ -874,6 +878,10 @@ console.log('\n== scripts/cost-report.mjs ==')
   const single = run('orchestrate-single.json')
   c(single.total.outputTokens === 41000 + 9000 + 3200 + 1800 && single.total.unmeasured === 0
     && /total 55,000$/m.test(block('orchestrate-single.json')), `a fully measured run totals 55,000 (got ${single.total.outputTokens})`)
+  c(['Implement', 'Review'].every((p) => single.rows.find((r) => r.phase === p)?.effort === 'high')
+    && /^1\s+#412\s+-\s+Implement\s+41,000\s+high\s/m.test(block('orchestrate-single.json'))
+    && /^1\s+#412\s+#1412\s+Review\s+9,000\s+high\s/m.test(block('orchestrate-single.json')),
+    'a run with explicit high effort prints high in the effort column for Implement and Review')
 
   // The contract: a single file path works, and summarise() is exported.
   const one = parse(cli('--json', join(FIX, 'plan-epic.json')))

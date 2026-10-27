@@ -155,10 +155,10 @@ conversation.
 
 | Phase | Model | Effort |
 |---|---|---|
-| Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | inherits the session's |
-| Review | Sonnet when light; the session model when full | inherits the session's |
+| Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | `high` |
+| Review | Sonnet when light; the session model when full | `high` |
 | Fix | Sonnet (the session model if Sonnet did the implementing) | `medium` |
-| Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked | `medium`, or inherits when escalated |
+| Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked | `medium`, or `high` when escalated |
 
 **Batches.** Space-separated issues are one batch for one implementer — use it for related
 issues that touch the same code. Each issue still gets its own branch and PR, and its own
@@ -283,7 +283,7 @@ entry records:
 | Field | What it holds |
 |---|---|
 | `models` | The model of each phase that ran (`session model` when inherited) |
-| `effort` | The effort of each phase that ran (`inherit` when none was set) |
+| `effort` | The effort passed to each phase that ran (`high` or `medium`; runs from before 0.8.0 show `inherit`) |
 | `outputTokens` | Output tokens of `review`, and of `fix` / `rereview` when they ran; `null` when the runtime gave no budget |
 | `findingCounts` | `{ review, rereview }`, each a count per severity: `critical`, `high`, `medium`, `low`, `nit` |
 | `stillBlocking` | After a re-review: `true` if blocking findings remain, `false` if not; `null` when no re-review ran |

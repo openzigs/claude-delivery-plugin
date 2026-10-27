@@ -58,11 +58,20 @@ the issue anyway and reports what the later steps route on.
 - *Re-review* runs on Sonnet, or on the session model, at full scope, if the first review
   was a light one that still found something blocking.
 
-**Effort per step.** The implementer and the first review inherit the session's reasoning
-effort. The fix and the re-review run at `medium`, except a re-review escalated from a light
-review: that is the change's first full-scope review, so it inherits too. Medium effort is
-known to lose real findings for quality and performance reviewers, which is why the first
-review never drops.
+**Effort per step.** The implementer and the first review run at `high` effort, passed
+explicitly rather than inherited: Claude Code's default effort on Opus 5.5 is `medium`
+([model configuration](https://code.claude.com/docs/en/model-config)), so inheriting would
+usually mean medium. The fix and the re-review run at `medium`, except a re-review escalated
+from a light review: that is the change's first full-scope review, so it runs at `high` too.
+Medium effort is known to lose real findings for quality and performance reviewers, which is
+why the first review never drops.
+
+| Step | Effort |
+|---|---|
+| Implement | `high` |
+| Review (light or full) | `high` |
+| Fix | `medium` |
+| Re-review | `medium`; `high` when escalated from a light review |
 
 Every decision is logged with its reason, and each PR's result records the scope and the
 models used. The thresholds are constants at the top of `workflows/orchestrate.js` — see
@@ -75,7 +84,7 @@ rather than assumed:
 | Field | Where | What it holds |
 |---|---|---|
 | `models` | each PR | The model of each phase that ran (`session model` when inherited) |
-| `effort` | each PR | The effort of each phase that ran: `implement`, `review`, and `fix` / `rereview` when they ran. `inherit` when no effort was set |
+| `effort` | each PR | The effort passed to each phase that ran: `implement`, `review`, and `fix` / `rereview` when they ran. Always `high` or `medium`; results from before 0.8.0 show `inherit` where no effort was set |
 | `outputTokens` | each PR: `review`, `fix`, `rereview`; each batch: `implement` | Output tokens per phase, as the difference in `budget.spent()` around that agent call. `null` when the runtime provides no `budget` |
 | `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output. `rereview` is `null` when no re-review ran |
 
