@@ -56,33 +56,33 @@ to workflows.
 
 ---
 
-## 3. An agent's `name` must match its filename
+## 3. An agent is named by its `name`, not its filename
 
-Three requirements, all of which fail by the agent simply not existing:
+A plugin agent's scoped name is `<plugin>:<name>`, and `<name>` comes **from the frontmatter
+`name` field, or from the file name when that field is missing** (or longer than 256
+characters). An agent whose frontmatter does not parse still loads, named after its file, with
+every field ignored and the description `Agent from <plugin> plugin`. Source:
+[plugin components, "Agents"](https://code.claude.com/docs/en/plugins/components), checked
+against Claude Code v2.1.311.
 
-1. `name:` is **required**. So is `description:`.
-2. `name` must be **lowercase letters, digits and hyphens only**.
-3. `name` must equal the **filename stem** — `code-review.md` must declare
-   `name: code-review`.
+So a mismatch no longer stops the agent loading — it **renames** it, which is quieter:
 
 ```yaml
+# agents/code-review.md
 ---
-name: code-review        # matches code-review.md
-description: "..."       # required — and it is what the model reads when choosing
+name: reviewer           # loads as delivery:reviewer, not delivery:code-review
+description: "..."
 ---
 ```
 
-Get any of these wrong and the agent does not load. Nothing says so. The only symptom is that
-a dispatch you expected never happens, or `claude plugin details` shows `Agents (6)` where you
-expected 7.
+Every `agentType: 'delivery:code-review'` in a workflow and every `Agent(delivery:code-review)`
+allowlist entry now points at nothing, and the dispatch that should have happened does not.
+`scripts/verify-plugin.mjs` keeps each `name` equal to its filename stem, lowercase and
+hyphenated, so a reference written from the filename stays right.
 
-**How to check:** count them.
-
-```bash
-claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery
-```
-
-If the count is short, compare each file's `name:` against its filename.
+**How to check:** `claude plugin validate .` reports a file whose frontmatter does not parse;
+`claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery` lists the agent
+names that actually loaded — compare them against the filenames.
 
 ---
 
@@ -151,9 +151,11 @@ less pretty and it is unambiguously a literal.
 
 ## 7. `claude plugin details` does not list workflows
 
-An empty workflow listing is not a symptom. The command reports skills, agents, hooks, MCP
-servers and LSP servers — **not workflows** — and this is true of Anthropic's own plugins
-too.
+An empty workflow listing is not a symptom. The command's component inventory is "the
+plugin's skills, agents, hooks, MCP servers, and LSP servers" — **not workflows** — and this
+is true of Anthropic's own plugins too. Source:
+[plugin commands reference, "plugin details"](https://code.claude.com/docs/en/plugins/cli-reference),
+confirmed by running it on Claude Code v2.1.311.
 
 Confirm workflows a different way: type `/` interactively, or
 
@@ -203,6 +205,56 @@ descriptions, two similar descriptions make the choice arbitrary.
 If you run more than one delivery-style plugin, either disable one
 (`claude plugin disable <name>`) or make the descriptions sharply distinct. A description is
 not documentation — it is the dispatch mechanism.
+
+---
+
+## 12. `model: inherit` in an agent's frontmatter overrides `CLAUDE_CODE_SUBAGENT_MODEL`
+
+Since Claude Code **v2.1.251** a subagent's model is resolved in this order: the per-invocation
+`model`, then the agent's frontmatter `model` (where `inherit` selects the main conversation's
+model), then the `CLAUDE_CODE_SUBAGENT_MODEL` environment variable, then the main
+conversation's model. Before v2.1.251 the variable came first. Source:
+[sub-agents, "Choose a model"](https://code.claude.com/docs/en/sub-agents).
+
+So an explicit `model: inherit` — which reads like "no opinion" — silently beats a user's
+`CLAUDE_CODE_SUBAGENT_MODEL`. Omitting the field gives the same default *and* lets the
+variable apply, which is why no agent in this plugin sets `model:` at all (the verifier
+enforces it). A `model` a workflow passes per call still outranks the variable; set
+`CLAUDE_CODE_SUBAGENT_MODEL_FORCE=1` (v2.1.257+) to force one model everywhere.
+
+---
+
+## 13. A model blocked by `availableModels` is substituted, not refused
+
+When an organization's `availableModels` allowlist blocks the model a subagent or a workflow
+`agent()` call asks for, Claude Code **runs the agent on a substituted model rather than
+failing the request**; a blocked family alias resolves to the newest permitted version of that
+family. Sources: [model configuration](https://code.claude.com/docs/en/model-config) ("Subagent
+or teammate override … runs the subagent or teammate on a fallback model rather than failing
+the request") and [workflows, "Cost"](https://code.claude.com/docs/en/workflows), read against
+Claude Code v2.1.311.
+
+The run carries on. `/delivery:orchestrate` records in each PR's `models` the model it
+**requested** for each phase, so under a restrictive allowlist that field can name a model the
+phase never ran on. If your organization sets `availableModels`, check that `sonnet` (or the
+`--small-model` you pass) is on it before comparing tiers.
+
+---
+
+## 14. Plugin agents ignore `hooks`, `mcpServers` and `permissionMode`
+
+> "For security reasons, plugin subagents don't support the `hooks`, `mcpServers`, or
+> `permissionMode` frontmatter fields. These fields are ignored when loading agents from a
+> plugin."
+
+Source: [sub-agents, "Choose the subagent scope"](https://code.claude.com/docs/en/sub-agents);
+the [plugin components page](https://code.claude.com/docs/en/plugins/components) adds
+`initialPrompt` to the ignored list. Checked against Claude Code v2.1.311.
+
+Setting one produces no error: the agent loads without it. A `permissionMode: acceptEdits` on a
+plugin agent does not loosen anything, and an `mcpServers` block does not give the agent a
+server. Ship hooks in the plugin's `hooks/hooks.json` and servers in its `.mcp.json`, or copy
+the agent into `.claude/agents/` (project) or `~/.claude/agents/` (user) where the fields apply.
 
 ---
 
