@@ -9,7 +9,8 @@ Add `removeItem(stock, sku, qty)` to `src/inventory.js`, the counterpart of `add
 
 ## Acceptance criteria
 
-- [ ] subtracts `qty` from the SKU and returns the new stock
+- [ ] subtracts `qty` from the SKU and returns the new stock, in which a SKU whose quantity
+      reaches 0 is no longer listed: its key is deleted, not left at 0
 - [ ] throws a `RangeError` when `qty` is not a positive integer, or is more than is on hand
       (the message names the SKU and the quantity on hand)
 - [ ] throws when the SKU is not in stock
@@ -17,5 +18,5 @@ Add `removeItem(stock, sku, qty)` to `src/inventory.js`, the counterpart of `add
 
 ## Notes
 
-The warehouse system reads any SKU listed with quantity 0 as a reorder trigger, so a removal
-that empties a SKU must delete the key from the returned stock rather than leave it at 0.
+The warehouse system reads any SKU listed with quantity 0 as a reorder trigger, so an emptied
+SKU left at 0 would reorder stock nobody asked for.

@@ -1853,7 +1853,11 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       'each canned issue\'s Story Points line matches the --points hint it is run with (small 1, medium 3, trap 3)')
     c(Object.values(issues).every((i) => i.labels.length && !i.labels.some((l) => /secur|auth|migrat|breaking|payment|billing|privacy|infra|data-loss/i.test(l))),
       'no canned issue carries a risk label, so the small one is eligible for the light review')
-    c(/delete the key/.test(issues.trap.body) && /## Notes/.test(issues.trap.body), 'the trap issue plants its requirement outside the acceptance criteria')
+    // #94: in the Notes alone the reviewer did not catch it, so the requirement is now in an
+    // acceptance criterion, as a clause of the bullet whose obvious implementation breaks it.
+    const trapAc = issues.trap.body.split('## Acceptance criteria')[1]?.split('\n## ')[0] || ''
+    c(/subtracts `qty`[^\n]*\n\s+[^\n]*key is deleted, not left at 0/.test(trapAc),
+      'the trap issue states its planted requirement (an emptied SKU\'s key is deleted) inside the acceptance criteria, in the subtract bullet')
     c(existsSync(join(ROOT, 'bench/topics/plan-epic.md')), 'the plan-epic topic file is committed')
     c(run.parseIssue(readFileSync(join(ROOT, 'bench/issues/small.md'), 'utf8').replace(/\n/g, '\r\n')).title === issues.small.title, 'an issue file with CRLF line endings parses')
     const tmpR = mkdtempSync(join(tmpdir(), 'bench-stale-'))
@@ -1866,6 +1870,62 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     let collide = ''
     try { run.parseArgs(['--ref', 'HEAD~1', '--ref', 'HEAD^1', '--repo', 'a/b', '--dry-run']) } catch (e) { collide = e.message }
     c(/same results directory/.test(collide), 'two refs that map to one results directory are refused')
+    // Per-ref isolation (#94). One --repo is shared by every ref; one per ref gives each its own.
+    const shared = run.parseArgs(['--ref', 'A', '--ref', 'B', '--repo', 'o/s', '--dry-run'])
+    const perRef = run.parseArgs(['--ref', 'A', '--ref', 'B', '--repo', 'o/a', '--repo', 'o/b', '--dry-run'])
+    c(shared.isolation === 'reset' && run.plan(shared).every((st) => st.repo === 'o/s')
+      && perRef.isolation === 'repo-per-ref' && run.plan(perRef).every((st) => st.repo === (st.ref === 'A' ? 'o/a' : 'o/b')),
+    'one --repo is shared by every ref (isolation "reset"); one per --ref gives each ref its own (isolation "repo-per-ref")')
+    const bad = (...a) => { try { run.parseArgs(a); return '' } catch (e) { return e.message } }
+    c(/one different --repo per --ref/.test(bad('--ref', 'A', '--ref', 'B', '--ref', 'C', '--repo', 'o/a', '--repo', 'o/b', '--dry-run'))
+      && /one different --repo per --ref/.test(bad('--ref', 'A', '--ref', 'B', '--repo', 'o/a', '--repo', 'o/a', '--dry-run')),
+    'a --repo count that is neither 1 nor one per ref, or two refs given the same repo, is refused')
+    // A fake GitHub: the first ref files its issues and an epic, opens a PR on a branch and
+    // closes one issue; after the reset the second ref's own queries, including the planner's
+    // `--state all` duplicate search, must find nothing the first one left.
+    const fakeGitHub = () => {
+      const st = { issues: new Map(), prs: new Map(), branches: new Set(['main']), next: 1 }
+      const gh = (a) => {
+        const opt = (k, d) => (a.includes(k) ? a[a.indexOf(k) + 1] : d)
+        const pick = (m, state) => JSON.stringify([...m].filter(([, x]) => state === 'all' || x.state === state).map(([number, x]) => ({ number, title: x.title })))
+        const [cmd, sub] = a
+        if (cmd === 'issue' && sub === 'create') { const n = st.next++; st.issues.set(n, { title: opt('--title'), state: 'open' }); return `https://github.com/o/s/issues/${n}` }
+        if (cmd === 'issue' && sub === 'list') return pick(st.issues, opt('--state', 'open'))
+        if (cmd === 'issue' && sub === 'close') { st.issues.get(Number(a[2])).state = 'closed'; return '' }
+        if (cmd === 'issue' && sub === 'delete') { st.issues.delete(Number(a[2])); return '' }
+        if (cmd === 'pr' && sub === 'create') { const n = st.next++; st.prs.set(n, { title: opt('--title'), state: 'open' }); st.branches.add(opt('--head')); return '' }
+        if (cmd === 'pr' && sub === 'list') return pick(st.prs, opt('--state', 'open'))
+        if (cmd === 'pr' && sub === 'close') { st.prs.get(Number(a[2])).state = 'closed'; return '' }
+        if (cmd === 'repo' && sub === 'view') return 'main\n'
+        if (cmd === 'api' && sub === '-X' && a[2] === 'DELETE') { st.branches.delete(decodeURIComponent(a[3].split('/git/refs/heads/')[1])); return '' }
+        if (cmd === 'api') return [...st.branches].join('\n') + '\n'
+        throw new Error(`fake gh: unexpected ${a.join(' ')}`)
+      }
+      return { st, gh }
+    }
+    const { st, gh } = fakeGitHub()
+    for (const t of ['Add removeItem', 'Add restock', 'Epic: audit log']) gh(['issue', 'create', '--repo', 'o/s', '--title', t])
+    gh(['issue', 'close', '1', '--repo', 'o/s'])
+    gh(['pr', 'create', '--repo', 'o/s', '--title', 'feat: removeItem', '--head', 'feature/issue-1-remove-item'])
+    const reset = run.resetScratch('o/s', gh)
+    const seen = [['issue', 'list', '--repo', 'o/s', '--state', 'all', '--search', 'audit log', '--json', 'number'], ['issue', 'list', '--repo', 'o/s', '--json', 'number'],
+      ['pr', 'list', '--repo', 'o/s', '--state', 'all', '--json', 'number']].map((q) => JSON.parse(gh(q)).length)
+    c(JSON.stringify(reset) === '{"issuesDeleted":3,"prsClosed":1,"branchesDeleted":1}' && seen[0] === 0 && seen[1] === 0
+      && [...st.prs.values()].every((x) => x.state === 'closed') && JSON.stringify([...st.branches]) === '["main"]',
+    `after the reset the second ref sees no issue the first filed, open or closed, no open PR and no branch but main (${JSON.stringify({ reset, seen, branches: [...st.branches] })})`)
+    const noAdmin = fakeGitHub()
+    noAdmin.gh(['issue', 'create', '--repo', 'o/s', '--title', 'x'])
+    let denied = ''
+    try { run.resetScratch('o/s', (a) => { if (a[1] === 'delete') throw new Error('HTTP 403'); return noAdmin.gh(a) }) } catch (e) { denied = e.message }
+    let leftover = ''
+    try { run.resetScratch('o/s', (a) => (a[1] === 'delete' ? '' : noAdmin.gh(a))) } catch (e) { leftover = e.message }
+    c(/admin rights/.test(denied) && /still has 1 issue/.test(leftover), 'a reset that cannot delete an issue, or leaves one behind, stops the run instead of starting it on a dirty repo')
+    // runStep needs GitHub and claude, so it is not run here; this holds it to resetting the
+    // step's repository before it pushes the fixture or files an issue, and recording the result.
+    const stepSrc = readFileSync(RUN, 'utf8').split('function runStep')[1] || ''
+    const at = (re) => stepSrc.search(re)
+    c(at(/resetScratch\(repo,/) > 0 && at(/resetScratch\(repo,/) < at(/'push'/) && at(/resetScratch\(repo,/) < at(/'issue', 'create'/) && /isolation, calls/.test(stepSrc),
+      'each step resets its scratch repository before it pushes or files anything, and records the isolation in meta.json')
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
       'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
@@ -1879,8 +1939,9 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
   c(dry.status === 0 && /DRY RUN — nothing will be executed/.test(dry.stdout) && lines.length === 8
     && lines.filter((l) => /\/delivery:orchestrate <#small> --points 1"/.test(l)).length === 2
     && lines.filter((l) => /\/delivery:plan-epic/.test(l)).length === 2 && lines.every((l) => /--plugin-dir/.test(l))
-    && existsSync(join(ROOT, 'bench/results')) === before,
-  `--dry-run prints 8 calls for two refs (3 orchestrate + 1 plan-epic each) and runs nothing (exit ${dry.status})`)
+    && existsSync(join(ROOT, 'bench/results')) === before && /Isolation: reset \(one scratch repo, no\.such\.owner\/scratch, shared by every ref, reset before every step\)/.test(dry.stdout)
+    && (dry.stdout.match(/\[reset no\.such\.owner\/scratch first\]/g) || []).length === 4,
+  `--dry-run prints 8 calls for two refs (3 orchestrate + 1 plan-epic each) and runs nothing, naming the isolation and the reset before each of the 4 steps (exit ${dry.status})`)
   c(cli('--ref', 'HEAD', '--dry-run').status === 2, 'without --repo it refuses to start')
   const noAck = cli('--ref', 'HEAD', '--repo', 'no.such.owner/scratch')
   c(noAck.status === 2 && /--reset-scratch is required/.test(noAck.stderr), 'a real run without --reset-scratch refuses to start')
@@ -1904,7 +1965,7 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     // An epic counts as filed only if the scratch repo gained issues: a planner that replied
     // but filed nothing (or asked a question) must read as not filed.
     const stalled = g('stalled', 'plan-epic')
-    c(stalled && stalled.epicFiled === false && /^stalled\s+plan-epic\s.*\sNO$/m.test(rep.render(groups)) && epic.epicFiled === true,
+    c(stalled && stalled.epicFiled === false && /^stalled\s+plan-epic\s.*\sNO\s+none$/m.test(rep.render(groups)) && epic.epicFiled === true,
       'a plan-epic whose planner replied but filed no issue reads as epic NOT filed')
     const crashed = g('crashed', 'orchestrate')
     c(crashed && crashed.incompleteRuns === 1 && neu.incompleteRuns === 0 && old.incompleteRuns === 0 && /WARNING: crashed \/ orchestrate: 1 of 1 run\(s\) INCOMPLETE/.test(rep.render(groups)),
@@ -1916,8 +1977,23 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     c(neu.maxTurns['delivery:code-review'] === 4 && old.maxTurns['delivery:code-issue'] === 3, 'the highest turn count per agent type is reported')
     const out = rep.render(groups)
     c(/^old\s+orchestrate\s+FAIL\s+FAIL\s+FAIL\s+FAIL$/m.test(out) && /^new\s+plan-epic\s+n\/a\s+n\/a\s+PASS\s+PASS$/m.test(out)
-      && /^new\s+orchestrate\s+2\s+12,265\s+Implement 400, Review 185, Fix 20, Re-review 5\s+0\.8 min\s+\$1\.50\s+0\/1\.5\/0\/0\/1\s+1\s+-$/m.test(out),
+      && /^new\s+orchestrate\s+2\s+12,265\s+Implement 400, Review 185, Fix 20, Re-review 5\s+0\.8 min\s+\$1\.50\s+0\/1\.5\/0\/0\/1\s+1\s+-\s+reset$/m.test(out),
     'the report prints the comparison table and the behaviour checks')
+    // Token types per phase (#94): new/orchestrate run 1 and 2 are identical, 4 messages of
+    // 10 input, 100 cache write, 1,000 cache read and 100 output in its implementer.
+    c(JSON.stringify(neu.tokensByPhase.Implement) === '{"input":40,"cacheWrite":400,"cacheRead":4000,"output":400}'
+      && Object.values(neu.tokensByPhase).reduce((n, t) => n + t.input + t.cacheWrite + t.cacheRead + t.output, 0) === neu.tokens
+      && Object.entries(neu.tokensByPhase).every(([p, t]) => t.output === neu.outputByPhase[p]),
+    `tokens are split by type per phase and add up to the total (got ${JSON.stringify(neu.tokensByPhase)})`)
+    c(/^new\s+orchestrate\s+Implement\s+40\s+400\s+4,000\s+400$/m.test(out) && /^new\s+orchestrate\s+all\s+105\s+1,050\s+10,500\s+610$/m.test(out)
+      && /^new\s+plan-epic\s+Plan\s+20\s+200\s+2,000\s+400$/m.test(out),
+    'the report prints input, cache write, cache read and output per ref, scenario and phase, with an all-phases row')
+    const fixWarn = /WARNING: (\S+) \/ orchestrate: no run exercised the Fix phase/g
+    c(JSON.stringify([...out.matchAll(fixWarn)].map((m) => m[1])) === '["crashed"]' && crashed.fixRan === false && neu.fixRan === true,
+      'the report warns for each orchestrate ref in which no run reached the Fix phase, and only for those')
+    c(epic.isolation === 'repo-per-ref' && crashed.isolation === 'none' && /^new\s+plan-epic\s.*\syes\s+repo-per-ref$/m.test(out)
+      && /WARNING: stalled \/ plan-epic: no scratch-repo isolation recorded/.test(out) && !/WARNING: new \/ orchestrate: no scratch-repo isolation/.test(out),
+    'the report names the isolation each ref ran with, and warns on results that recorded none')
     // Each detector, against what it must and must not match.
     const B = (command) => ({ name: 'Bash', input: { command } })
     c(['git checkout -b x', 'git switch -c x', 'git branch topic', 'gh pr create --fill', 'cd w && git checkout -B y'].every((x) => rep.createsBranchOrPr(B(x)))

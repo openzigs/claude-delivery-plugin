@@ -13,7 +13,9 @@
 //
 // Per ref and scenario, averaged over runs: total subagent tokens (input + cache writes + cache
 // reads + output), output tokens per phase, wall time, list-price cost, review findings by
-// severity, fix cycles. Then the behaviour checks, read from the transcripts, which pass only
+// severity, fix cycles, and the scratch-repo isolation the run used. Then the same tokens split by
+// type and phase, so a prompt-footprint change (cache writes and reads) can be told apart from
+// an effort change (output). Then the behaviour checks, read from the transcripts, which pass only
 // if every run passes:
 //   #48  every FULL review ran at `high` effort
 //   #49  the fix phase created no branch and no PR
@@ -28,6 +30,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'nit']
 const ORCH_PHASES = ['Implement', 'Review', 'Fix', 'Re-review']
 const EPIC_PHASES = ['Research', 'Plan']
+const TOKEN_TYPES = ['input', 'cacheWrite', 'cacheRead', 'output']
 
 const isDir = (p) => existsSync(p) && statSync(p).isDirectory()
 const ls = (p) => (isDir(p) ? readdirSync(p).sort() : [])
@@ -117,7 +120,12 @@ export function analyseRun(runDir) {
   const claude = ls(runDir).filter((f) => /^claude-.*\.json$/.test(f)).map((f) => readJson(join(runDir, f))).filter(Boolean)
   const tokens = agents.reduce((n, a) => n + a.tokens.input + a.tokens.cacheWrite + a.tokens.cacheRead + a.tokens.output, 0)
   const outputByPhase = {}
-  for (const a of agents) outputByPhase[a.phase] = (outputByPhase[a.phase] || 0) + a.tokens.output
+  const tokensByPhase = {}
+  for (const a of agents) {
+    outputByPhase[a.phase] = (outputByPhase[a.phase] || 0) + a.tokens.output
+    const t = (tokensByPhase[a.phase] ||= Object.fromEntries(TOKEN_TYPES.map((k) => [k, 0])))
+    for (const k of TOKEN_TYPES) t[k] += a.tokens[k]
+  }
   // Findings come from the workflow results (review + re-review), when they record them.
   const prs = results.flatMap((r) => (Array.isArray(r.result?.batches) ? r.result.batches : []).flatMap((b) => (Array.isArray(b?.prs) ? b.prs : [])))
   let findings = null
@@ -145,6 +153,7 @@ export function analyseRun(runDir) {
     agents: agents.length,
     tokens,
     outputByPhase,
+    tokensByPhase,
     findings,
     fixCycles: fixAgents.length,
     // The planner's reply is free text, so a reply proves nothing: an epic was filed only if the
@@ -152,6 +161,9 @@ export function analyseRun(runDir) {
     // the counts were not recorded.
     epicFiled: meta.scenario === 'plan-epic' ? epicFiledOf(meta.calls) : null,
     incomplete: incompleteOf(meta.calls),
+    // How bench-run.mjs kept this run from seeing an earlier ref's or run's issues and PRs
+    // (`reset` or `repo-per-ref`); null for results recorded before it isolated runs.
+    isolation: typeof meta.isolation?.mode === 'string' ? meta.isolation.mode : null,
     checks: {
       fullReviewHigh: fullReviews.length ? fullReviews.every((a) => a.efforts.length > 0 && a.efforts.every((e) => e === 'high')) : null,
       fixNoNewBranchOrPr: fixAgents.length ? count(createsBranchOrPr, fixAgents) === 0 : null,
@@ -199,10 +211,13 @@ export function aggregate(runs) {
       ref: rs[0].ref, sha: rs[0].sha, scenario: rs[0].scenario, runs: rs.length,
       tokens: mean(nums((r) => r.tokens)),
       outputByPhase: Object.fromEntries(phases.map((p) => [p, mean(rs.map((r) => r.outputByPhase[p] || 0))])),
+      tokensByPhase: Object.fromEntries(phases.map((p) => [p, Object.fromEntries(TOKEN_TYPES.map((k) => [k, mean(rs.map((r) => r.tokensByPhase[p]?.[k] || 0))]))])),
       wallMs: mean(nums((r) => r.wallMs)),
       costUsd: mean(nums((r) => r.costUsd)),
       findings: withFindings.length ? Object.fromEntries(SEVERITIES.map((s) => [s, mean(withFindings.map((r) => r.findings[s]))])) : null,
       fixCycles: mean(rs.map((r) => r.fixCycles)),
+      fixRan: rs.some((r) => r.fixCycles > 0),
+      isolation: [...new Set(rs.map((r) => r.isolation ?? 'none'))].sort().join(', '),
       epicFiled: rs[0].scenario === 'plan-epic' ? (rs.some((r) => r.epicFiled === false) ? false : rs.every((r) => r.epicFiled === true) ? true : null) : null,
       incompleteRuns: rs.filter((r) => r.incomplete > 0).length,
       checks,
@@ -222,12 +237,18 @@ export function render(groups) {
   if (!groups.length) return 'no benchmark runs found'
   const out = []
   const phasesFor = (g) => (g.scenario === 'plan-epic' ? EPIC_PHASES : ORCH_PHASES)
-  out.push(table(['ref', 'scenario', 'runs', 'subagent tokens', 'output by phase', 'wall time', 'costUsd', 'findings c/h/m/l/n', 'fix cycles', 'epic filed'],
+  out.push(table(['ref', 'scenario', 'runs', 'subagent tokens', 'output by phase', 'wall time', 'costUsd', 'findings c/h/m/l/n', 'fix cycles', 'epic filed', 'isolation'],
     groups.map((g) => [g.ref, g.scenario, g.runs, fmt(g.tokens),
       phasesFor(g).map((p) => `${p} ${fmt(g.outputByPhase[p] ?? 0)}`).join(', '),
       g.wallMs == null ? 'n/a' : `${fmt(g.wallMs / 60000, 1)} min`, g.costUsd == null ? 'n/a' : `$${g.costUsd.toFixed(2)}`,
       g.findings ? SEVERITIES.map((s) => fmt(g.findings[s], 1)).join('/') : 'n/a', fmt(g.fixCycles, 1),
-      g.scenario !== 'plan-epic' ? '-' : g.epicFiled === null ? 'n/a' : g.epicFiled ? 'yes' : 'NO'])))
+      g.scenario !== 'plan-epic' ? '-' : g.epicFiled === null ? 'n/a' : g.epicFiled ? 'yes' : 'NO', g.isolation])))
+  out.push('')
+  out.push('Subagent tokens by type and phase (cache write and read move with the prompt footprint, output with effort)')
+  const sum = (ts) => Object.fromEntries(TOKEN_TYPES.map((k) => [k, ts.reduce((n, t) => n + t[k], 0)]))
+  out.push(table(['ref', 'scenario', 'phase', 'input', 'cache write', 'cache read', 'output'],
+    groups.flatMap((g) => [...Object.entries(g.tokensByPhase), ['all', sum(Object.values(g.tokensByPhase))]]
+      .map(([p, t]) => [g.ref, g.scenario, p, ...TOKEN_TYPES.map((k) => fmt(t[k]))]))))
   out.push('')
   out.push(table(['ref', 'scenario', '#48 full review at high', '#49 fix: no new branch/PR', '#51 no CLAUDE.md read', '#51 no ask-user'],
     groups.map((g) => [g.ref, g.scenario, ck(g.checks.fullReviewHigh), ck(g.checks.fixNoNewBranchOrPr), ck(g.checks.noClaudeMdRead), ck(g.checks.noAskUser)])))
@@ -238,6 +259,12 @@ export function render(groups) {
   out.push('')
   for (const g of groups.filter((x) => x.incompleteRuns)) {
     out.push(`WARNING: ${g.ref} / ${g.scenario}: ${g.incompleteRuns} of ${g.runs} run(s) INCOMPLETE (a call exited non-zero, timed out, or its session was not found). Its numbers are not comparable.`)
+  }
+  for (const g of groups.filter((x) => x.scenario === 'orchestrate' && !x.fixRan)) {
+    out.push(`WARNING: ${g.ref} / ${g.scenario}: no run exercised the Fix phase (no review drew a blocking finding), so fix, re-review and #49 went unchecked.`)
+  }
+  for (const g of groups.filter((x) => x.isolation.split(', ').includes('none'))) {
+    out.push(`WARNING: ${g.ref} / ${g.scenario}: no scratch-repo isolation recorded (results from before bench-run reset the repo per step); it may have seen issues and PRs an earlier ref or run left behind.`)
   }
   out.push('Numbers are means over runs; a check passes only if it passed in every run it applied to (n/a: nothing to check).')
   return out.join('\n')

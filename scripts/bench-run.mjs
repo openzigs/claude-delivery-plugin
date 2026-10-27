@@ -7,13 +7,18 @@
 //
 //   node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <owner>/<scratch-repo> --reset-scratch
 //   node scripts/bench-run.mjs --ref HEAD --repo <owner>/<scratch-repo> --scenario plan-epic --runs 3 --reset-scratch
+//   node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <owner>/<scratch-a> --repo <owner>/<scratch-b> --reset-scratch
 //   node scripts/bench-run.mjs --ref HEAD --repo <owner>/<scratch-repo> --dry-run     # print the plan, run nothing
 //   node scripts/bench-report.mjs
 //
-// The pipeline opens issues and pull requests and watches CI, so it needs ONE GitHub
-// repository you own and do not care about: --repo. Every run force-pushes the fixture as
-// that repository's `main` and files the canned issues in it, which is why --reset-scratch
-// must be passed to say so. Nothing else on GitHub is touched.
+// The pipeline opens issues and pull requests and watches CI, so it needs a GitHub repository
+// you own and do not care about: --repo, once (every ref shares it) or once per --ref (each ref
+// gets its own). Before every step (one ref, run and scenario) the step's scratch repository is
+// RESET: every issue is deleted, every open pull request closed and every branch but the default
+// deleted, so no step sees what an earlier one filed (the planner searches closed issues too, so
+// closing them would not do). Then the fixture is force-pushed as its `main` and the canned
+// issues are filed. That is why --reset-scratch must be passed to say so. Nothing else on
+// GitHub is touched.
 //
 // For each ref and run: a detached git worktree of this repository at the ref is the plugin
 // (`claude --plugin-dir`, which takes precedence over an installed `delivery` plugin); a fresh
@@ -55,12 +60,12 @@ export function parseIssue(md) {
 }
 
 export function parseArgs(argv) {
-  const o = { refs: [], scenarios: [...SCENARIOS], runs: 1, timeoutMin: 120, repo: null, out: join(BENCH, 'results'), dryRun: false, reset: false, keep: false }
+  const o = { refs: [], scenarios: [...SCENARIOS], runs: 1, timeoutMin: 120, repos: [], out: join(BENCH, 'results'), dryRun: false, reset: false, keep: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const val = () => { if (argv[i + 1] === undefined) throw new Error(`${a} needs a value`); return argv[++i] }
     if (a === '--ref') o.refs.push(val())
-    else if (a === '--repo') o.repo = val()
+    else if (a === '--repo') o.repos.push(val())
     else if (a === '--scenario') { const s = val(); o.scenarios = s === 'all' ? [...SCENARIOS] : [s] }
     else if (a === '--runs') o.runs = Number(val())
     else if (a === '--timeout-min') o.timeoutMin = Number(val())
@@ -77,8 +82,14 @@ export function parseArgs(argv) {
   if (!Number.isFinite(o.timeoutMin) || o.timeoutMin <= 0) throw new Error('--timeout-min must be a positive number of minutes')
   const dirs = o.refs.map((r) => r.replace(/[^A-Za-z0-9._-]/g, '_'))
   if (new Set(dirs).size !== dirs.length) throw new Error('two --ref values map to the same results directory (HEAD~1 and HEAD^1 both become HEAD_1); name them differently, e.g. by tag or branch')
-  if (!o.repo || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(o.repo)) throw new Error('--repo <owner>/<scratch-repo> is required: the pipeline opens issues and PRs there')
-  if (!o.dryRun && !o.reset) throw new Error(`--reset-scratch is required: every run force-pushes the fixture as ${o.repo}'s main and files issues in it`)
+  if (!o.repos.length || !o.repos.every((r) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r))) throw new Error('--repo <owner>/<scratch-repo> is required: the pipeline opens issues and PRs there')
+  if (o.repos.length > 1 && (o.repos.length !== o.refs.length || new Set(o.repos).size !== o.repos.length)) {
+    throw new Error('give one --repo shared by every ref, or one different --repo per --ref, in the same order')
+  }
+  o.isolation = o.repos.length > 1 ? 'repo-per-ref' : 'reset'
+  if (!o.dryRun && !o.reset) {
+    throw new Error(`--reset-scratch is required: before every step it deletes every issue, closes every open PR and deletes every branch but the default in ${o.repos.join(', ')}, then force-pushes the fixture as main and files issues`)
+  }
   return o
 }
 
@@ -88,13 +99,14 @@ export const claudeArgs = (prompt, pluginDir) =>
 
 export function plan(o) {
   const steps = []
-  for (const ref of o.refs) {
+  for (const [k, ref] of o.refs.entries()) {
+    const repo = o.repos[o.isolation === 'repo-per-ref' ? k : 0]
     for (let run = 1; run <= o.runs; run++) {
       for (const scenario of o.scenarios) {
         const calls = scenario === 'orchestrate'
           ? ISSUES.map((i) => ({ issue: i.name, prompt: `/delivery:orchestrate <#${i.name}> --points ${i.points}` }))
           : [{ issue: null, prompt: '/delivery:plan-epic ./PLAN-TOPIC.md' }]
-        steps.push({ ref, run, scenario, calls, out: join(o.out, ref.replace(/[^A-Za-z0-9._-]/g, '_'), scenario, `run-${run}`) })
+        steps.push({ ref, run, scenario, repo, calls, out: join(o.out, ref.replace(/[^A-Za-z0-9._-]/g, '_'), scenario, `run-${run}`) })
       }
     }
   }
@@ -109,26 +121,53 @@ export function clearResults(steps) {
 
 const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
+// Isolate a step from every earlier one: delete every issue (open or closed: the epic planner
+// searches `--state all` for a duplicate, so a closed epic would still be found), close every
+// open pull request (GitHub cannot delete one; `gh issue list` never lists a PR), and delete
+// every branch but the default. `gh(args)` runs gh and returns its stdout; the verifier passes a
+// fake. Throws if anything is left, so a step never starts on a repository it could not reset.
+export function resetScratch(repo, gh) {
+  const list = (args) => JSON.parse(gh(args) || '[]').map((x) => x.number)
+  const issues = () => list(['issue', 'list', '--repo', repo, '--state', 'all', '--limit', '1000', '--json', 'number'])
+  const openPrs = () => list(['pr', 'list', '--repo', repo, '--state', 'open', '--limit', '1000', '--json', 'number'])
+  const prs = openPrs()
+  for (const n of prs) gh(['pr', 'close', String(n), '--repo', repo])
+  const deleted = issues()
+  for (const n of deleted) {
+    try { gh(['issue', 'delete', String(n), '--repo', repo, '--yes']) } catch (e) {
+      throw new Error(`could not delete issue #${n} in ${repo} (deleting an issue needs admin rights on the repository): ${e.message}`)
+    }
+  }
+  const main = gh(['repo', 'view', repo, '--json', 'defaultBranchRef', '--jq', '.defaultBranchRef.name']).trim()
+  const branches = gh(['api', `repos/${repo}/branches`, '--paginate', '--jq', '.[].name']).split('\n').map((b) => b.trim()).filter((b) => b && b !== main)
+  for (const b of branches) gh(['api', '-X', 'DELETE', `repos/${repo}/git/refs/heads/${b.split('/').map(encodeURIComponent).join('/')}`])
+  const left = issues().length + openPrs().length
+  if (left) throw new Error(`${repo} still has ${left} issue(s) or open PR(s) after the reset`)
+  return { issuesDeleted: deleted.length, prsClosed: prs.length, branchesDeleted: branches.length }
+}
+
 function runStep(step, o) {
   const sha = sh('git', ['-C', ROOT, 'rev-parse', '--verify', '--end-of-options', `${step.ref}^{commit}`])
   const tmp = mkdtempSync(join(tmpdir(), 'delivery-bench-'))
   const pluginDir = join(tmp, 'plugin')
   const work = join(tmp, 'work')
   sh('git', ['-C', ROOT, 'worktree', 'add', '--detach', pluginDir, sha])
+  const repo = step.repo
   try {
+    const isolation = { mode: o.isolation, repo, ...resetScratch(repo, (args) => sh('gh', args, ROOT)) }
     cpSync(join(BENCH, 'fixture-repo'), work, { recursive: true })
     sh('git', ['init', '-q', '-b', 'main'], work)
     sh('git', ['add', '-A'], work)
     sh('git', ['-c', 'user.name=bench', '-c', 'user.email=bench@example.invalid', 'commit', '-q', '-m', 'fixture'], work)
-    sh('git', ['remote', 'add', 'origin', `https://github.com/${o.repo}.git`], work)
+    sh('git', ['remote', 'add', 'origin', `https://github.com/${repo}.git`], work)
     sh('git', ['push', '-q', '--force', 'origin', 'main'], work)
     const calls = []
     let prompts = step.calls
     if (step.scenario === 'orchestrate') {
       prompts = step.calls.map((c) => {
         const is = parseIssue(readFileSync(join(BENCH, 'issues', `${c.issue}.md`), 'utf8'))
-        for (const l of is.labels) sh('gh', ['label', 'create', l, '--repo', o.repo, '--force'], work)
-        const url = sh('gh', ['issue', 'create', '--repo', o.repo, '--title', is.title, '--body', is.body, ...is.labels.flatMap((l) => ['--label', l])], work)
+        for (const l of is.labels) sh('gh', ['label', 'create', l, '--repo', repo, '--force'], work)
+        const url = sh('gh', ['issue', 'create', '--repo', repo, '--title', is.title, '--body', is.body, ...is.labels.flatMap((l) => ['--label', l])], work)
         const n = Number(/\/issues\/(\d+)\s*$/.exec(url)?.[1])
         if (!n) throw new Error(`could not read the issue number from ${url}`)
         return { ...c, number: n, prompt: c.prompt.replace(`<#${c.issue}>`, String(n)) }
@@ -138,7 +177,7 @@ function runStep(step, o) {
     }
     mkdirSync(step.out, { recursive: true })
     // The planner's reply is free text, so plan-epic is judged by the scratch repo gaining issues.
-    const issueCount = () => JSON.parse(sh('gh', ['issue', 'list', '--repo', o.repo, '--state', 'all', '--limit', '1000', '--json', 'number'], work)).length
+    const issueCount = () => JSON.parse(sh('gh', ['issue', 'list', '--repo', repo, '--state', 'all', '--limit', '1000', '--json', 'number'], work)).length
     prompts.forEach((c, k) => {
       const issuesBefore = step.scenario === 'plan-epic' ? issueCount() : null
       const t0 = Date.now()
@@ -156,7 +195,7 @@ function runStep(step, o) {
       calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
       console.log(`  ${step.ref} ${step.scenario} run ${step.run}: ${c.prompt} — exit ${r.status}, ${(wallMs / 60000).toFixed(1)} min`)
     })
-    writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo: o.repo, calls }, null, 2) + '\n')
+    writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls }, null, 2) + '\n')
   } finally {
     spawnSync('git', ['-C', ROOT, 'worktree', 'remove', '--force', pluginDir])
     if (!o.keep) rmSync(tmp, { recursive: true, force: true })
@@ -168,15 +207,16 @@ if (isMain) {
   let o
   try { o = parseArgs(process.argv.slice(2)) } catch (e) {
     console.error(`bench-run: ${e.message}\nusage: node scripts/bench-run.mjs --ref <git-ref>... --repo <owner>/<scratch-repo> ` +
-      '--reset-scratch [--scenario orchestrate|plan-epic|all] [--runs N] [--timeout-min M] [--out DIR] [--keep] [--dry-run]')
+      '--reset-scratch [--repo <owner>/<scratch-repo> per ref] [--scenario orchestrate|plan-epic|all] [--runs N] [--timeout-min M] [--out DIR] [--keep] [--dry-run]')
     process.exit(2)
   }
   const steps = plan(o)
   console.log(`${o.dryRun ? 'DRY RUN — nothing will be executed. ' : ''}${steps.length} step(s), ` +
-    `${steps.reduce((n, s) => n + s.calls.length, 0)} claude -p call(s); scratch repo ${o.repo}. ` +
+    `${steps.reduce((n, s) => n + s.calls.length, 0)} claude -p call(s). Isolation: ${o.isolation} ` +
+    `(${o.isolation === 'reset' ? `one scratch repo, ${o.repos[0]}, shared by every ref` : 'one scratch repo per ref'}, reset before every step). ` +
     'Expect a few million tokens for both scenarios on two refs.')
   for (const s of steps) {
-    console.log(`${s.ref} / ${s.scenario} / run ${s.run} -> ${s.out}`)
+    console.log(`${s.ref} / ${s.scenario} / run ${s.run} -> ${s.out}  [reset ${s.repo} first]`)
     for (const c of s.calls) console.log(`  claude ${claudeArgs(c.prompt, '<worktree of ' + s.ref + '>').map((a) => (/\s/.test(a) ? JSON.stringify(a) : a)).join(' ')}`)
   }
   if (o.dryRun) process.exit(0)

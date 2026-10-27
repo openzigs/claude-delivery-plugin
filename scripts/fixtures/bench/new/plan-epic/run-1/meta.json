@@ -3,6 +3,13 @@
  "sha": "bbbb",
  "scenario": "plan-epic",
  "run": 1,
+ "isolation": {
+  "mode": "repo-per-ref",
+  "repo": "a/b",
+  "issuesDeleted": 0,
+  "prsClosed": 0,
+  "branchesDeleted": 0
+ },
  "calls": [
   {
    "wallMs": 90000,
