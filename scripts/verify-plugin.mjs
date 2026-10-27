@@ -2241,7 +2241,7 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       'each step resets its scratch repository before it pushes or files anything, and records the isolation in meta.json')
     // #98: the plugin under test is exported from this repository, which holds the planted
     // defects and their descriptions; the export must carry none of them, nor git history.
-    c(at(/exportPlugin\(sha, pluginDir\)/) > 0 && at(/exportPlugin\(sha, pluginDir\)/) < at(/spawnSync\('claude'/)
+    c(at(/^\s*exportPlugin\(sha, pluginDir\)/m) > 0 && at(/^\s*exportPlugin\(sha, pluginDir\)/m) < at(/spawnSync\('claude'/)
       && /planted: c\.planted \?\? null/.test(stepSrc),
     'each step exports the plugin before any claude call, and records each call\'s planted defect in meta.json')
     const exp = mkdtempSync(join(tmpdir(), 'bench-export-'))
@@ -2271,7 +2271,7 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     }
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
-      'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
+      'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s export, prompt first')
   } catch (e) { c(false, `bench-run.mjs import threw — ${e.message}`) }
   // `no.such.owner` cannot be a GitHub account (logins have no dots), and git may not prompt:
   // if a guard below ever broke, the run it let through would fail at its first push.

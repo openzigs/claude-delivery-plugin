@@ -289,8 +289,8 @@ starts. The isolation mode is recorded in each run's `meta.json` and printed by 
 - **`repo-per-ref`**: one `--repo` per ref. Each ref's repository is still reset before each of
   its steps, so its runs and scenarios do not see each other either.
 
-**What it runs.** For each ref and run, `bench-run.mjs` checks the ref out as a detached git
-worktree of this repository and uses it as the plugin (`claude --plugin-dir`, which takes
+**What it runs.** For each ref and run, `bench-run.mjs` exports the ref with `git archive`,
+without the files in `HIDDEN_FROM_AGENTS`, and uses that as the plugin (`claude --plugin-dir`, which takes
 precedence over an installed `delivery` plugin). It copies `bench/fixture-repo/` — a tiny
 Node module with a `CLAUDE.md`, a test suite and a CI workflow that runs `npm test` — to a
 temporary directory, resets the scratch repository (see Isolation above) and force-pushes the copy as its `main`. That is why

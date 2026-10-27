@@ -30,8 +30,9 @@
 // planted defect in an unchanged caller that the natural implementation breaks, to draw a
 // blocking finding, a fix and a re-review). A planted defect is described in its issue file's
 // front matter, which is never filed. The plugin is exported without git history and without
-// the files that describe planted defects (HIDDEN_FROM_AGENTS), so no agent can read it. Scenario `plan-epic` runs one, on
-// bench/topics/plan-epic.md. The calls run with
+// the files that describe planted defects (HIDDEN_FROM_AGENTS), so no agent reads it locally
+// (an agent with gh credentials could still fetch it from GitHub). Scenario `plan-epic` runs
+// one, on bench/topics/plan-epic.md. The calls run with
 // --dangerously-skip-permissions. That is NOT confined: the agents have an unrestricted shell
 // and whatever `gh` credentials you are logged in with. Run it with a GH_TOKEN that can reach
 // only the scratch repository (a fine-grained token), and not on a machine holding secrets.
@@ -150,11 +151,6 @@ export function clearResults(steps) {
 
 const sh = (cmd, args, cwd) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 
-// Isolate a step from every earlier one: delete every issue (open or closed: the epic planner
-// searches `--state all` for a duplicate, so a closed epic would still be found), close every
-// open pull request (GitHub cannot delete one; `gh issue list` never lists a PR), and delete
-// every branch but the default. `gh(args)` runs gh and returns its stdout; the verifier passes a
-// fake. Throws if anything is left, so a step never starts on a repository it could not reset.
 // Files that describe a planted defect: the scenarios, their documentation, the bench scripts
 // and the verifier with its fixtures. None of them is part of the plugin, so the agents under
 // test never see them.
@@ -172,6 +168,11 @@ export function exportPlugin(sha, dir) {
   for (const p of HIDDEN_FROM_AGENTS) rmSync(join(dir, p), { recursive: true, force: true })
 }
 
+// Isolate a step from every earlier one: delete every issue (open or closed: the epic planner
+// searches `--state all` for a duplicate, so a closed epic would still be found), close every
+// open pull request (GitHub cannot delete one; `gh issue list` never lists a PR), and delete
+// every branch but the default. `gh(args)` runs gh and returns its stdout; the verifier passes a
+// fake. Throws if anything is left, so a step never starts on a repository it could not reset.
 export function resetScratch(repo, gh) {
   const list = (args) => JSON.parse(gh(args) || '[]').map((x) => x.number)
   const issues = () => list(['issue', 'list', '--repo', repo, '--state', 'all', '--limit', '1000', '--json', 'number'])
