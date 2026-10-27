@@ -227,14 +227,14 @@ An agent can only dispatch agents named in its own `tools:` field, namespaced:
 tools: Read, Bash, Agent(delivery:code-issue, delivery:code-review)
 ```
 
-`delivery:orchestrator` is the plugin's example of this — it can dispatch all six of the
-others.
+`delivery:orchestrator` (which points you at `/delivery:orchestrate` first) is the plugin's
+example of this — it can dispatch `delivery:code-issue` and `delivery:code-review`.
 
 ### The roster
 
 | Agent | Use it when | Notable properties |
 |---|---|---|
-| `delivery:orchestrator` | Someone says "work on issue N" without naming agents | `disallowedTools: Write, Edit`. Its whole job is that the review phase happens |
+| `delivery:orchestrator` | Someone says "work on issue N" without naming agents | Points at `/delivery:orchestrate`; runs the same four phases only if the command cannot be used. `disallowedTools: Write, Edit` |
 | `delivery:code-issue` | One issue, end to end | Writes code. Can dispatch `delivery:e2e-test` |
 | `delivery:code-review` | Before merging anything | No write tools, on purpose. Publishes a `Recommendation:`, never an APPROVE |
 | `delivery:code-planner` | A feature with no issue yet | Files epics and sub-issues; writes no product code |

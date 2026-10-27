@@ -193,7 +193,7 @@ is the handoff. Otherwise present the PR link, the issue it closes, coverage (an
 measured against), the mutations and what went red, the security result, and any inferred
 commands.
 
-For a full implement → review → fix → re-review loop, hand the work to **`delivery:orchestrator`**
+For a full implement → review → fix → re-review loop, run **`/delivery:orchestrate <issue>`**
 rather than driving the phases by hand.
 
 ## Fix mode
