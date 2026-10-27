@@ -258,7 +258,22 @@ node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/bench-a --repo 
 
 Options: `--repo` once (every ref shares it) or once per `--ref` (each ref gets its own),
 `--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
-`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
+`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies,
+`--orchestrate-args "<flags>"` to append orchestrate flags to every orchestrate call.
+
+**Two settings on one ref.** `--orchestrate-args` (for example `"--small-effort medium"`) is
+appended to each `/delivery:orchestrate` call of the invocation, never to plan-epic. It must be
+flags: the first word a `--flag`, each word letters, digits, `=`, `.`, `_` or `-`. Its results
+go to `bench/results/<ref>+<flags>/`, so a plain run of the same ref is neither cleared nor
+mixed in; `meta.json` records the flags, and the report labels the ref `<ref> [<flags>]` and
+prints the implement effort each orchestrate result recorded. Run the ref once without and
+once with the flags, then report:
+
+```bash
+node scripts/bench-run.mjs --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch --scenario orchestrate
+node scripts/bench-run.mjs --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch --scenario orchestrate --orchestrate-args "--small-effort medium"
+node scripts/bench-report.mjs
+```
 
 **Isolation.** A step is one ref, one run and one scenario. Before every step, `bench-run.mjs`
 resets that step's scratch repository: it deletes every issue, open or closed, closes every open

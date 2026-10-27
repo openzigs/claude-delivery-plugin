@@ -9,6 +9,7 @@
 //   node scripts/bench-run.mjs --ref HEAD --repo <owner>/<scratch-repo> --scenario plan-epic --runs 3 --reset-scratch
 //   node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <owner>/<scratch-a> --repo <owner>/<scratch-b> --reset-scratch
 //   node scripts/bench-run.mjs --ref HEAD --repo <owner>/<scratch-repo> --dry-run     # print the plan, run nothing
+//   node scripts/bench-run.mjs --ref HEAD --repo <owner>/<scratch-repo> --reset-scratch --scenario orchestrate --orchestrate-args "--small-effort medium"
 //   node scripts/bench-report.mjs
 //
 // The pipeline opens issues and pull requests and watches CI, so it needs a GitHub repository
@@ -33,6 +34,11 @@
 // Each call's JSON output, its wall time and the session Claude Code persisted (workflow
 // results and subagent transcripts) are copied to bench/results/<ref>/<scenario>/run-<n>/,
 // which bench-report.mjs reads.
+//
+// --orchestrate-args "<flags>" appends orchestrate flags to every orchestrate call of the
+// invocation (never to plan-epic), so one ref can be replayed under two settings: run it once
+// without and once with. The results of a run with them go to bench/results/<ref>+<flags>/, so
+// the two neither clear nor mix with each other, and meta.json records the flags.
 import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -60,7 +66,7 @@ export function parseIssue(md) {
 }
 
 export function parseArgs(argv) {
-  const o = { refs: [], scenarios: [...SCENARIOS], runs: 1, timeoutMin: 120, repos: [], out: join(BENCH, 'results'), dryRun: false, reset: false, keep: false }
+  const o = { refs: [], scenarios: [...SCENARIOS], runs: 1, timeoutMin: 120, repos: [], out: join(BENCH, 'results'), dryRun: false, reset: false, keep: false, orchestrateArgs: null }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const val = () => { if (argv[i + 1] === undefined) throw new Error(`${a} needs a value`); return argv[++i] }
@@ -73,6 +79,7 @@ export function parseArgs(argv) {
     else if (a === '--dry-run') o.dryRun = true
     else if (a === '--reset-scratch') o.reset = true
     else if (a === '--keep') o.keep = true
+    else if (a === '--orchestrate-args') o.orchestrateArgs = val().trim()
     else throw new Error(`unknown argument ${a}`)
   }
   if (!o.refs.length) throw new Error('give at least one --ref')
@@ -80,7 +87,10 @@ export function parseArgs(argv) {
   if (!o.scenarios.every((s) => SCENARIOS.includes(s))) throw new Error(`--scenario must be one of ${SCENARIOS.join(', ')} or all`)
   if (!Number.isInteger(o.runs) || o.runs < 1 || o.runs > 20) throw new Error('--runs must be an integer from 1 to 20')
   if (!Number.isFinite(o.timeoutMin) || o.timeoutMin <= 0) throw new Error('--timeout-min must be a positive number of minutes')
-  const dirs = o.refs.map((r) => r.replace(/[^A-Za-z0-9._-]/g, '_'))
+  if (o.orchestrateArgs !== null && !ORCHESTRATE_ARGS.test(o.orchestrateArgs)) {
+    throw new Error(`--orchestrate-args must be orchestrate flags such as "--small-effort medium": each word letters, digits, = . _ or -, the first a --flag (got ${JSON.stringify(o.orchestrateArgs)})`)
+  }
+  const dirs = o.refs.map((r) => resultsDir(r, o.orchestrateArgs))
   if (new Set(dirs).size !== dirs.length) throw new Error('two --ref values map to the same results directory (HEAD~1 and HEAD^1 both become HEAD_1); name them differently, e.g. by tag or branch')
   if (!o.repos.length || !o.repos.every((r) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r))) throw new Error('--repo <owner>/<scratch-repo> is required: the pipeline opens issues and PRs there')
   if (o.repos.length > 1 && (o.repos.length !== o.refs.length || new Set(o.repos).size !== o.repos.length)) {
@@ -93,6 +103,12 @@ export function parseArgs(argv) {
   return o
 }
 
+// Flags only: no shell runs the prompt, but an issue number, a ';' batch separator or prose
+// would change what the replay works on, not how.
+export const ORCHESTRATE_ARGS = /^--[A-Za-z0-9][A-Za-z0-9=._-]*(?: (?:--)?[A-Za-z0-9][A-Za-z0-9=._-]*)*$/
+export const resultsDir = (ref, orchestrateArgs) =>
+  (orchestrateArgs ? `${ref}+${orchestrateArgs}` : ref).replace(/[^A-Za-z0-9.+_-]/g, '_')
+
 // The claude call for one dispatch of the pipeline.
 export const claudeArgs = (prompt, pluginDir) =>
   ['-p', prompt, '--plugin-dir', pluginDir, '--output-format', 'json', '--dangerously-skip-permissions']
@@ -104,9 +120,9 @@ export function plan(o) {
     for (let run = 1; run <= o.runs; run++) {
       for (const scenario of o.scenarios) {
         const calls = scenario === 'orchestrate'
-          ? ISSUES.map((i) => ({ issue: i.name, prompt: `/delivery:orchestrate <#${i.name}> --points ${i.points}` }))
+          ? ISSUES.map((i) => ({ issue: i.name, prompt: `/delivery:orchestrate <#${i.name}> --points ${i.points}${o.orchestrateArgs ? ` ${o.orchestrateArgs}` : ''}` }))
           : [{ issue: null, prompt: '/delivery:plan-epic ./PLAN-TOPIC.md' }]
-        steps.push({ ref, run, scenario, repo, calls, out: join(o.out, ref.replace(/[^A-Za-z0-9._-]/g, '_'), scenario, `run-${run}`) })
+        steps.push({ ref, run, scenario, repo, calls, orchestrateArgs: o.orchestrateArgs ?? null, out: join(o.out, resultsDir(ref, o.orchestrateArgs), scenario, `run-${run}`) })
       }
     }
   }
@@ -195,7 +211,7 @@ function runStep(step, o) {
       calls.push({ prompt: c.prompt, issue: c.issue, number: c.number ?? null, wallMs, exit: r.status, sessionId, sessionFound, issuesBefore, issuesAfter })
       console.log(`  ${step.ref} ${step.scenario} run ${step.run}: ${c.prompt} — exit ${r.status}, ${(wallMs / 60000).toFixed(1)} min`)
     })
-    writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls }, null, 2) + '\n')
+    writeFileSync(join(step.out, 'meta.json'), JSON.stringify({ ref: step.ref, sha, scenario: step.scenario, run: step.run, repo, isolation, calls, orchestrateArgs: step.orchestrateArgs }, null, 2) + '\n')
   } finally {
     spawnSync('git', ['-C', ROOT, 'worktree', 'remove', '--force', pluginDir])
     if (!o.keep) rmSync(tmp, { recursive: true, force: true })
@@ -207,7 +223,8 @@ if (isMain) {
   let o
   try { o = parseArgs(process.argv.slice(2)) } catch (e) {
     console.error(`bench-run: ${e.message}\nusage: node scripts/bench-run.mjs --ref <git-ref>... --repo <owner>/<scratch-repo> ` +
-      '--reset-scratch [--repo <owner>/<scratch-repo> per ref] [--scenario orchestrate|plan-epic|all] [--runs N] [--timeout-min M] [--out DIR] [--keep] [--dry-run]')
+      '--reset-scratch [--repo <owner>/<scratch-repo> per ref] [--scenario orchestrate|plan-epic|all] [--runs N] [--timeout-min M] [--out DIR] ' +
+      '[--orchestrate-args "<orchestrate flags>"] [--keep] [--dry-run]')
     process.exit(2)
   }
   const steps = plan(o)
