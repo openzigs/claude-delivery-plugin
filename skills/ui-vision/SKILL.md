@@ -367,6 +367,4 @@ When another agent invokes UI Vision as a phase of a larger pipeline:
   attributes; stale refs fail in ways that impersonate application bugs
 - **Console and network after every API call** — `browser_console_messages` and
   `browser_network_requests` after form submissions catch silent failures the UI never shows
-- **Screenshot before and after anything that filters or toggles** — comparing the two is the
-  only way to tell a working control from one nothing renders from
 - **Leave the browser closed** — call `browser_close` when the walkthrough is done

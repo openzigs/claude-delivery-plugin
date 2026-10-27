@@ -18,14 +18,11 @@ than no review. If the repository has an `AGENTS.md` and no `CLAUDE.md`, read `A
 **`.claude/delivery.md`**, if it exists, is often where the blocking-versus-advisory line is drawn.
 Step 1's batched call reads it, along with `AGENTS.md`, so do not spend a separate turn on either.
 
-If the project states no commands or conventions, infer them from the repository — package
+If the repository has neither file, or states no commands or conventions, infer them from the repository — package
 manifests, `Makefile`, the CI workflow — and **say in the review what you inferred**. A finding
 that rests on an inferred standard must be labelled as such, not asserted as a rule.
 
 ## Tools
-
-GitHub work is done with the **`gh` CLI**; MCP servers are optional and may be absent — never make
-a step depend on one. Every command in Step 9 is `gh`, deliberately.
 
 The reviewer has **no web tools**: everything a review needs is in the repository, the PR and
 GitHub. For a dependency the PR added or bumped, read its advisories with the ecosystem's audit

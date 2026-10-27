@@ -46,12 +46,8 @@ the signature; check the network layer before writing a single bug up.
 
 Weight the walkthrough toward the things a passing test suite cannot see:
 
-- **Canvas- and WebGL-rendered surfaces.** They are invisible to the accessibility tree, so
-  no automated test asserts on what they draw. Verify the surface renders actual content
-  rather than an empty pane.
-- **Filters and toggles.** A control that flips state nothing renders from is a no-op that
-  still passes its tests. Screenshot **before and after** each toggle and verify what is
-  *drawn* changed — a filter no-op is invisible in any single frame.
+- **Canvas- and WebGL-rendered surfaces, and filters and toggles** — the skill's rules for
+  both (verify drawn content; screenshot before and after) apply.
 - **A green build shipping a blank screen.** A missing runtime asset produces a
   successful build and a broken page. Only a browser catches it.
 - **Disabled controls.** A control rendered `disabled` cannot be clicked at all, so any

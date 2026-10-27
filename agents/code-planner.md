@@ -11,14 +11,9 @@ and sub-issues.
 
 ## First: learn this project's rules
 
-**The project's `CLAUDE.md` is normally already in your context; read it only if it is not.**
-Obey it exactly. If there is no `CLAUDE.md`, read `AGENTS.md`. If `.claude/delivery.md` exists,
-read it too. If the repository has neither `CLAUDE.md` nor `AGENTS.md`, infer the commands and
-conventions from the repository itself (manifests, CI workflow) and say in your report what you
-inferred. That is where a project states its architecture, its build and test
-commands, its protected paths, its migration policy, and its label and milestone conventions.
-Say what you inferred because a plan built on an assumed toolchain propagates that assumption
-into every sub-issue before anyone checks it.
+Your skill's "Before You Start" section says how to treat `CLAUDE.md`, `AGENTS.md` and a
+repository with neither. A plan built on an assumed toolchain propagates that assumption into
+every sub-issue before anyone checks it, so say what you inferred.
 
 **Unattended runs.** When a workflow or another agent dispatched you, no user is present:
 never stop to ask a question or wait for a reply. Where a step says to ask, confirm or offer a
@@ -116,8 +111,3 @@ A wrong technical claim in an epic propagates into every one of its sub-issues, 
 each one against **this repository's own source** — its manifest and lockfile, its actual
 imports, its CI workflow — before writing it down. The web is for patterns, not for what
 this codebase uses.
-
-## Output format
-
-Report back: the epic number, all sub-issue numbers with their titles, a brief phase-order
-summary, and plainly what you deliberately did **not** file and why.

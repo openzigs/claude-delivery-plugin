@@ -30,16 +30,11 @@ export const meta = {
 const RULES = `
 Ground rules for this dispatch:
 
-1. The repository's CLAUDE.md is already in your context; do not re-read it. It is the
-   authority on commands, coverage floors, changelog, branch and remote conventions,
-   protected paths and data handling, and it wins over anything in this prompt. If the
-   repository has an AGENTS.md and no CLAUDE.md, read AGENTS.md instead. If it has neither,
-   infer the commands and conventions from the repository (manifests, CI workflow) and say
-   in your report what you inferred.
-2. Orient in one batched Bash call, as your procedure's first step describes, and include
-   \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file separately: it
-   holds delivery constraints this project wants every dispatched agent to carry. Its absence
-   is normal. Then read every file you need in one response of parallel reads.
+1. The project's rules win over anything in this prompt. Your procedure's Step 0 says how to
+   treat CLAUDE.md, AGENTS.md and a repository with neither.
+2. Orient as your procedure's Step 1 describes: one batched call, which includes
+   \`cat .claude/delivery.md 2>/dev/null\` (its absence is normal), then one response of
+   parallel reads.
 3. Where the project states no gate, infer it from the CI workflow and say in your report
    what you inferred.
 4. Do not merge. Merging is the caller's decision.
@@ -77,7 +72,10 @@ const REVIEW_SCHEMA = {
     },
     durableFinding: {
       type: 'string',
-      description: 'Optional: a lesson a future reviewer could not derive from the code',
+      description:
+        'Optional: a lesson a future reviewer could not derive by reading the code -- a defect class that ' +
+        'recurs in this project, a check that keeps paying, a fixture pattern that hides a real hole -- stated ' +
+        'plainly so the caller can record it. Leave it out for a one-off finding: the review is already its record.',
     },
   },
   required: ['recommendation', 'blocking', 'findings', 'verification'],

@@ -24,11 +24,8 @@ export const meta = {
 const RULES = `
 Ground rules for this dispatch:
 
-1. The repository's CLAUDE.md is already in your context; do not re-read it. It is the
-   authority on architecture, commands, label and milestone conventions, protected paths
-   and data handling, and it wins over anything in this prompt. If the repository has an
-   AGENTS.md and no CLAUDE.md, read AGENTS.md instead. If it has neither, infer from the
-   repository (manifests, CI workflow) and say in your report what you inferred.
+1. The project's rules win over anything in this prompt. Your skill's "Before You Start"
+   section says how to treat CLAUDE.md, AGENTS.md and a repository with neither.
 2. Orient in one batched Bash call, joined with \`;\` so a missing file does not abort it, and
    include \`cat .claude/delivery.md 2>/dev/null\` in it rather than reading that file
    separately: it holds constraints this project wants every dispatched agent to carry. Its
