@@ -8,7 +8,7 @@ section.
 
 **Goal:** Evaluate high-level architecture and design decisions.
 
-Based on [Google's design review criteria](https://google.github.io/eng-practices/review/reviewer/looking-for.html#design):
+After Google's engineering-practices design criteria:
 
 - **Does this change belong here?** Or should it live in a library, another module, or configuration?
 - **Integration:** does it fit the existing architecture, or fight it?
@@ -21,7 +21,9 @@ Based on [Google's design review criteria](https://google.github.io/eng-practice
   field nothing renders from are both untested-by-construction. Building an endpoint's first
   consumer is when its defects surface, so an unconsumed one should be called out as unproven.
 
-Verify library APIs against real documentation rather than memory when the usage looks unusual.
+When a library API's usage looks unusual, verify it against the installed package's source at the
+version the lockfile pins (`node_modules/<pkg>`, site-packages, the module cache), not memory. If
+it is not installed, say "could not verify" rather than guess: the reviewer has no web tools.
 
 ### Step 6: Performance Review
 

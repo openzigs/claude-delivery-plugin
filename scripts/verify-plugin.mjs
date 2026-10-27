@@ -167,6 +167,18 @@ for (const file of agentFiles) {
     for (const m of text.matchAll(LOOSE)) if (m[2] !== agentName && !allow.includes(m[2])) impossible.push(`${agentName} (skill ${skill}): "${m[0]}"`)
   }
   ;(impossible.length === 0 ? ok : bad)(`no skill or agent tells its agent to dispatch an agent outside its Agent(...) allowlist${impossible.length ? ` (${impossible.join('; ')})` : ''}`)
+  // #62: an agent with no web tools is not told to use them -- no WebFetch/WebSearch, no link
+  // to follow, no "check the real documentation" -- in its body or its skill's files.
+  const webless = []
+  for (const [skill, agentName] of Object.entries(SKILL_AGENT)) {
+    const agentSrc = readFileSync(join(ROOT, 'agents', `${agentName}.md`), 'utf8')
+    if (/\bWeb(Fetch|Search)\b/.test(frontmatter(agentSrc, `${agentName}.md`)?.tools || '')) continue
+    for (const f of [`agents/${agentName}.md`, ...readdirSync(join(ROOT, 'skills', skill)).filter((x) => x.endsWith('.md')).map((x) => `skills/${skill}/${x}`)]) {
+      const t = readFileSync(join(ROOT, f), 'utf8')
+      if (/\bWeb(Fetch|Search)\b|\]\(https?:\/\/|against (the )?(real|official|vendor'?s?) documentation/i.test(t)) webless.push(f)
+    }
+  }
+  ;(webless.length === 0 ? ok : bad)(`no agent without WebFetch/WebSearch, or its skill, is told to use the web${webless.length ? ` (${webless.join(', ')})` : ''}`)
   const texts = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.flatMap((d) => readdirSync(join(ROOT, 'skills', d)).filter((f) => f.endsWith('.md')).map((f) => `skills/${d}/${f}`))]
   const hits = (re) => texts.filter((f) => re.test(readFileSync(join(ROOT, f), 'utf8')))
   const stalePw = hits(/browser_go_(back|forward)|browser_navigate_forward/)
