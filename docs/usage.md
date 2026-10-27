@@ -52,8 +52,8 @@ the issue anyway and reports what the later steps route on.
   none of its labels look risky (`security`, `auth`, `migration`, `breaking`, `payment`,
   `billing`, `privacy`, `infra`, `data-loss`), **and** the PR changes at most 5 files and 150
   lines (additions + deletions). A light review covers requirements, correctness, tests and
-  security of the changed lines, and skips the design, performance and documentation
-  passes. Anything else — or anything unknown — gets the full review on the session model.
+  security of the changed lines, reads only the changed files it needs, and skips the
+  design, performance and documentation passes. Anything else — or anything unknown — gets the full review on the session model.
 - *Fix* runs on Sonnet, or on the session model if Sonnet did the implementing.
 - *Re-review* runs on Sonnet, or on the session model, at full scope, if the first review
   was a light one that still found something blocking.

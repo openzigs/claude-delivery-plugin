@@ -287,6 +287,8 @@ then publish (Step 9). Skip Step 3 (design), Step 6 (performance) and Step 8
 (documentation), and say in the review's "Scope of this review" section that they were
 skipped and why. If the diff touches authentication, authorisation, secrets, payments,
 data migration or anything destructive, do the full review procedure instead and say so.
+In Step 1, read the diff plus only the changed files you need to judge the changed lines,
+not every changed file in full.
 `.trim()
 
 const ISOLATED = `

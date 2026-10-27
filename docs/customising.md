@@ -179,7 +179,9 @@ result reports the effort, output tokens and finding counts per phase ([usage](u
 so a change to these choices can be measured.
 
 A light review runs the `code-review` skill's requirements, security (changed lines),
-correctness and test steps, and skips design, performance and documentation; it is told to
+correctness and test steps, and skips design, performance and documentation (which live in
+`skills/code-review/FULL_REVIEW_STEPS.md`, read only by a full review). It reads the diff plus
+only the changed files it needs, where a full review reads every changed file in full. It is told to
 widen to the full skill if the diff touches auth, secrets, payments, migrations or anything
 destructive. Lines are GitHub's additions + deletions, so a lockfile or a generated file
 counts towards the limit — that errs towards the full review, which is the direction to err.
