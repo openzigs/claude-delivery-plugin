@@ -233,6 +233,33 @@ workflow scripts ([plugins reference, "Reference a saved value"](https://code.cl
 [workflows, "Edit a saved script"](https://code.claude.com/docs/en/workflows)). A `userConfig`
 option nothing could read would be a setting that silently does nothing.
 
+### The small tier's effort: `--small-effort`
+
+`--small-effort medium|high` sets the effort of **one** dispatch: the implementer of a
+small-tier batch (`--small`, or `--points N` ≤ 2), whatever model `--small-model` gave it. The
+default is `high`, so a run without the flag is unchanged. Every other phase keeps its effort:
+the full review, an escalated re-review and every non-small implementer stay `high`, and the fix
+and the confirming re-review stay `medium`.
+
+```
+/delivery:orchestrate 412 --small --small-effort medium
+```
+
+**It is unmeasured.** Explicit `high` effort (#48) raised orchestrate output by 44% and cost by
+16% on the N=3 replay, most of it in Implement. A small issue should gain least from `high`, so
+it is the place to try `medium`, but whether quality holds has not been measured. Compare the two
+on one ref before changing anything:
+
+```bash
+node scripts/bench-run.mjs --ref HEAD --repo <you>/scratch --reset-scratch --scenario orchestrate
+node scripts/bench-run.mjs --ref HEAD --repo <you>/scratch --reset-scratch --scenario orchestrate --orchestrate-args "--small-effort medium"
+node scripts/bench-report.mjs
+```
+
+Each batch records `implementEffort` and `implementEffortWhy` in the result, and the
+cost-report prints them on the Implement row. Any value other than `medium` or `high`, or the
+flag with no value, stops the run before anything is dispatched.
+
 ### Comparing tiers before changing them: `evals/`
 
 Before moving a review tier, compare the candidates on the same inputs. `evals/` holds a
