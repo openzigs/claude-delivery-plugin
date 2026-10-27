@@ -1388,5 +1388,60 @@ console.log('\n== cost-report --discover ==')
   rmSync(uconf, { recursive: true, force: true })
 }
 
+// The light-review eval suite (#59) and its tier table. The graders are checked here against
+// canned replies, so each is proven able to fail without spending a model call.
+console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
+{
+  const c = (cond, msg) => (cond ? ok(`evals: ${msg}`) : bad(`evals: ${msg}`))
+  const EV = join(ROOT, 'evals')
+  const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'results').map((e) => e.name).sort() : []
+  const grader = (name) => {
+    const fm = frontmatter(readFileSync(join(EV, name, 'graders', 'found-seeded-defect.md'), 'utf8'), `evals/${name}/graders/found-seeded-defect.md`) || {}
+    return fm.type === 'regex' ? new RegExp(fm.pattern, fm.flags || '') : null
+  }
+  const HIT = {
+    'seeded-sql-injection': 'src/routes/users.js:16 — high — SQL injection: name is concatenated into the query; use a parameterized query',
+    'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — high — getInvoice ignores tenantId, so any tenant can read another tenant\'s invoice (IDOR)',
+    'seeded-auth-bypass': 'src/middleware/auth.js:6 — critical — a request with no token now calls next(), so unauthenticated requests pass',
+  }
+  const MISS = 'src/x.js:1 — nit — consider renaming this variable for clarity\nRecommendation: merge'
+  const seeded = cases.filter((n) => n.startsWith('seeded-')), controls = cases.filter((n) => n.startsWith('control-'))
+  c(seeded.length >= 3 && controls.length >= 1, `at least 3 seeded-defect cases and 1 control (found ${seeded.length} / ${controls.length})`)
+  for (const n of cases) {
+    const prompt = readFileSync(join(EV, n, 'prompt.md'), 'utf8')
+    c(/```diff\n[\s\S]+```/.test(prompt) && /do not run `gh`/.test(prompt) && existsSync(join(EV, n, 'case.yaml')),
+      `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml`)
+    const re = grader(n)
+    c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
+    if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
+  }
+  for (const n of controls) {
+    const re = grader(n)
+    c(re && Object.values(HIT).every((h) => !re.test(h)), `${n}: the control grader matches no real finding, so the case can only score 0`)
+  }
+  c(/^evals\/results\/$/m.test(readFileSync(join(ROOT, '.gitignore'), 'utf8')), 'eval run results (evals/results/) are gitignored')
+
+  const SCRIPT = join(ROOT, 'scripts/eval-tiers.mjs')
+  const FX = join(ROOT, 'scripts/fixtures/eval-tiers')
+  const src = existsSync(SCRIPT) ? readFileSync(SCRIPT, 'utf8') : ''
+  const specs = [...src.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)].map((m) => m[1])
+  c(specs.length > 0 && specs.every((x) => x.startsWith('node:')) && !/\b(writeFile|appendFile|mkdir|rm|unlink|rename)(Sync)?\s*\(/.test(src),
+    'eval-tiers.mjs imports only node: builtins and writes nothing')
+  const t = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json'), join(FX, 'sonnet.json')], { encoding: 'utf8' })
+  c(t.status === 0 && /^haiku\s+3\/3\s+100%\s+ok \(1 scored 0\)\s+\$0\.0094/m.test(t.stdout) && /^sonnet\s+3\/3\s+100%\s+ok \(1 scored 0\)\s+\$0\.1507/m.test(t.stdout)
+    && /Output tokens are not reported/.test(t.stdout), `two tiers give one row each with recall, control status and cost (exit ${t.status})`)
+  const b = spawnSync(process.execPath, [SCRIPT, join(FX, 'broken-control.json')], { encoding: 'utf8' })
+  c(b.status === 1 && /SCORER CANNOT FAIL/.test(b.stdout), `a control case that scored above 0 is flagged and exits 1 (exit ${b.status})`)
+  try {
+    const { summarise } = await import(SCRIPT)
+    const doc = JSON.parse(readFileSync(join(FX, 'haiku.json'), 'utf8'))
+    doc.cases.find((x) => x.name === 'seeded-auth-bypass').arms.with[0].score = 0
+    const r = summarise(doc, 'x')
+    c(r.found === 2 && Math.abs(r.recall - 2 / 3) < 1e-9 && JSON.stringify(r.missed) === '["seeded-auth-bypass"]',
+      `a missed seeded defect lowers recall and is named (got ${r.found}/${r.seeded}, missed ${JSON.stringify(r.missed)})`)
+    c(summarise({ foo: 1 }, 'y') === null, 'a file that is not an eval result is rejected')
+  } catch (e) { c(false, `summarise() import threw — ${e.message}`) }
+}
+
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)
 process.exit(fails === 0 ? 0 : 1)
