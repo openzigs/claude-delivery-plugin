@@ -3,7 +3,6 @@ name: research
 description: "Gathers and synthesizes research material from local files, web pages and library documentation into a structured research summary that feeds planning. Use before planning when the user provides document paths, URLs, or an unfamiliar standard governs the work."
 tools: Read, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
 disallowedTools: Write, Edit
-model: inherit
 color: yellow
 ---
 

@@ -113,6 +113,17 @@ for (const file of agentFiles) {
   if (unknown.length) bad(`${file}: unsupported frontmatter field(s): ${unknown.join(', ')}`)
 }
 
+// No agent sets `model:` (#56). Since Claude Code v2.1.251 an explicit frontmatter model,
+// `inherit` included, outranks CLAUDE_CODE_SUBAGENT_MODEL; omitting it lets the variable
+// apply. Model routing is the workflow's job, per call. An agent that genuinely needs a pin
+// goes on this allowlist, with the reason, in the same PR.
+const MODEL_PIN_ALLOWED = new Set([])
+{
+  const pinned = agentFiles.filter((f) => !MODEL_PIN_ALLOWED.has(basename(f, '.md'))
+    && /^model:/m.test(readFileSync(join(ROOT, 'agents', f), 'utf8').split('\n---')[0]))
+  ;(pinned.length === 0 ? ok : bad)(`no agent sets model: in its frontmatter, not even inherit${pinned.length ? ` (found in ${pinned.join(', ')})` : ''}`)
+}
+
 // every Agent(...) reference must be namespaced and resolve to a real agent
 for (const file of agentFiles) {
   const src = readFileSync(join(ROOT, 'agents', file), 'utf8')

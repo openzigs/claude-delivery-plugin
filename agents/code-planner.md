@@ -2,7 +2,6 @@
 name: code-planner
 description: "Autonomous project planning agent. Turns a feature request or a research summary into a structured GitHub epic and its sub-issues, with Mermaid diagrams, checkable acceptance criteria, story points and a phased dependency order. Writes no code and opens no pull request."
 tools: Read, Write, Edit, Bash, Skill, WebFetch, WebSearch, mcp__tavily__*, mcp__context7__*
-model: inherit
 color: blue
 ---
 

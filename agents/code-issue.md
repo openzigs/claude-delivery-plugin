@@ -3,7 +3,6 @@ name: code-issue
 description: "Autonomous senior developer. Use to implement ONE GitHub issue end to end: TDD, coverage gate, branch, PR, CI watch. Dispatch one per issue — the caller sequences an epic's waves."
 tools: Read, Write, Edit, Bash, Skill, WebFetch, WebSearch, Agent(delivery:e2e-test)
 skills: delivery:code-issue
-model: inherit
 color: green
 ---
 

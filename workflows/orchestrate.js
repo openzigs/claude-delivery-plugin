@@ -185,13 +185,18 @@ const metered = async (call) => {
   return [out, before == null || after == null ? null : after - before]
 }
 
-// Model tiering lives here, in the script, and NOT in agent frontmatter. Every
-// agent stays `model: inherit`: a frontmatter pin applies however the agent is
-// reached and is invisible to the caller (a pinned research agent once dropped
-// an opus-driven run to sonnet for its whole phase). A choice made here applies
-// only to this pipeline, is decided by code, and is logged on every run.
+// Model tiering lives here, in the script, and NOT in agent frontmatter. No agent
+// sets `model:` at all: a frontmatter pin applies however the agent is reached and
+// is invisible to the caller (a pinned research agent once dropped an opus-driven
+// run to sonnet for its whole phase). Not even `model: inherit`: since Claude Code
+// v2.1.251 an explicit frontmatter `model`, `inherit` included, takes precedence over
+// the CLAUDE_CODE_SUBAGENT_MODEL environment variable, while an omitted field falls
+// through to that variable and then to the main conversation's model
+// (code.claude.com/docs/en/sub-agents, "Choose a model"). A choice made here applies
+// only to this pipeline, is decided by code, and is logged on every run; a `model`
+// passed per call still takes precedence over the variable.
 //
-// INHERIT means "omit `model`", i.e. run on whatever the session runs on. Aliases
+// INHERIT means "omit `model`", i.e. the variable if set, otherwise the session model. Aliases
 // rather than model IDs, so the plugin tracks new releases without an edit.
 const INHERIT = null
 const SONNET = 'sonnet'
