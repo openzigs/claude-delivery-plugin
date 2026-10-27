@@ -222,17 +222,23 @@ If the issue involves UI changes:
 
 ### Step 4: Security Scan
 
-Before creating the PR, perform a security review of your own change:
+Before creating the PR, perform a security review of your own change.
 
-1. **Dependency audit** — run the ecosystem's audit command (`npm audit --audit-level=moderate`,
+**Security blocking rule** (stated in `skills/code-issue/SKILL.md` Step 4; every other copy
+quotes it word for word): a `critical` or `high` security finding blocks the PR. A `medium`
+one is a follow-up, and blocks only if it is exploitable in the changed code; say which.
+`low` and `nit` never block. Dependency audits run at `--audit-level=high`. The severity
+scale is `critical | high | medium | low | nit`, the same words as the review's structured output.
+
+1. **Dependency audit** — run the ecosystem's audit command (`npm audit --audit-level=high`,
    `pip-audit`, `cargo audit`, `govulncheck ./...`, `mvn dependency-check:check`). Start with the
    dependencies **you added or bumped**; a tree-wide audit over a legacy dependency set is
    background noise unless the project treats it as a gate.
 2. **CVE lookup** — for any advisory ID the audit returns, read the full record before acting on it.
    Web search reaches the NVD and the GitHub advisory database; a CVE MCP server is a convenience if
    one is present, never a requirement.
-3. **Severity gate** — CVSS 7.0 and above (High/Critical) **blocks the PR**. CVSS 4.0–6.9 (Medium)
-   is noted but does not block unless it is exploitable in this codebase's context. Say which it is.
+3. **Severity gate** — apply the security blocking rule above. As a guide, CVSS 9.0+ is
+   `critical`, 7.0–8.9 `high`, 4.0–6.9 `medium`.
 4. **Static review of changed files** — injection (SQL/NoSQL/OS command/LDAP), XSS, CSRF, insecure
    deserialization, path traversal, hardcoded credentials, weak crypto, and the rest of the OWASP
    Top 10.
