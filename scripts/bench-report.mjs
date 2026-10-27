@@ -6,7 +6,8 @@
 //   node scripts/bench-report.mjs [bench/results] [--json]
 //
 // Layout read (written by bench-run.mjs):
-//   <results>/<ref>/<scenario>/run-<n>/meta.json            ref, sha, scenario, wall time per call
+//   <results>/<ref>/<scenario>/run-<n>/meta.json            ref, sha, scenario, wall time per call,
+//                                                            and the --orchestrate-args the run was given
 //   <results>/<ref>/<scenario>/run-<n>/claude-<k>.json       `claude -p --output-format json` output
 //   <results>/<ref>/<scenario>/run-<n>/sessions/<id>/workflows/wf_*.json            workflow results
 //   <results>/<ref>/<scenario>/run-<n>/sessions/<id>/subagents/workflows/wf_*/agent-*.jsonl (+ .meta.json)
@@ -22,8 +23,10 @@
 //   #48  every FULL review ran at `high` effort
 //   #49  the fix phase created no branch and no PR
 //   #51  no agent read CLAUDE.md (it is already in context), and none asked the user a question
-// and the highest turn count per agent type, which is what the provisional maxTurns (#58)
-// should be set from.
+// and the highest turn count per agent type, which is what the agents' maxTurns are set from
+// (#97; docs/benchmarks.md says how). A run given --orchestrate-args is reported as
+// "<ref> [<args>]", apart from the same ref's plain run, with the implement effort each
+// orchestrate batch recorded (#96).
 import { readFileSync, readdirSync, existsSync, statSync, realpathSync } from 'node:fs'
 import { join, resolve, dirname, basename } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -158,6 +161,7 @@ function epicFiledOf(calls) {
 
 export function analyseRun(runDir) {
   const meta = readJson(join(runDir, 'meta.json')) || {}
+  const orchestrateArgs = typeof meta.orchestrateArgs === 'string' && meta.orchestrateArgs ? meta.orchestrateArgs.replace(/\s+/g, ' ').trim() : null
   const sessions = ls(join(runDir, 'sessions')).map((s) => join(runDir, 'sessions', s))
   const agents = sessions.flatMap(agentsOf)
   const results = sessions.flatMap(resultsOf)
@@ -181,6 +185,9 @@ export function analyseRun(runDir) {
       for (const s of SEVERITIES) findings[s] += num(c[s])
     }
   }
+  // The implement effort each batch recorded (#96: a small-tier batch may run at medium).
+  const efforts = [...new Set(results.flatMap((r) => (Array.isArray(r.result?.batches) ? r.result.batches : [])
+    .map((b) => b?.implementEffort).filter((e) => typeof e === 'string')))].sort()
   const fullIssues = new Set(prs.filter((p) => p?.reviewScope === 'full').map((p) => String(p.issue)))
   const fullReviews = agents.filter((a) => a.phase === 'Review' && fullIssues.has(a.label.replace(/^review:/, '')))
   const fixAgents = agents.filter((a) => a.phase === 'Fix')
@@ -188,7 +195,9 @@ export function analyseRun(runDir) {
   const turnsByType = {}
   for (const a of agents) turnsByType[a.agentType] = Math.max(turnsByType[a.agentType] || 0, a.turns)
   return {
-    ref: meta.ref ?? basename(dirname(dirname(runDir))),
+    ref: (meta.ref ?? basename(dirname(dirname(runDir)))) + (orchestrateArgs ? ` [${orchestrateArgs}]` : ''),
+    orchestrateArgs,
+    implementEfforts: efforts,
     sha: meta.sha ?? null,
     scenario: meta.scenario ?? basename(dirname(runDir)),
     run: basename(runDir),
@@ -274,6 +283,7 @@ export function aggregate(runs) {
       fixRan: rs.some((r) => r.fixCycles > 0),
       reviewOutcomes: [...outcomes.values()],
       isolation: [...new Set(rs.map((r) => r.isolation ?? 'none'))].sort().join(', '),
+      implementEffort: [...new Set(rs.flatMap((r) => r.implementEfforts))].sort().join(', ') || null,
       epicFiled: rs[0].scenario === 'plan-epic' ? (rs.some((r) => r.epicFiled === false) ? false : rs.every((r) => r.epicFiled === true) ? true : null) : null,
       incompleteRuns: rs.filter((r) => r.incomplete > 0).length,
       checks,
@@ -314,10 +324,16 @@ export function render(groups) {
     groups.flatMap((g) => [...Object.entries(g.tokensByPhase), ['all', sum(Object.values(g.tokensByPhase))]]
       .map(([p, t]) => [g.ref, g.scenario, p, ...TOKEN_TYPES.map((k) => fmt(t[k]))]))))
   out.push('')
+  const orch = groups.filter((g) => g.scenario === 'orchestrate')
+  if (orch.length) {
+    out.push('Implement effort recorded by the orchestrate results (#96: --small-effort; small and non-small issues can differ)')
+    out.push(table(['ref', 'scenario', 'implement effort'], orch.map((g) => [g.ref, g.scenario, g.implementEffort ?? 'n/a'])))
+    out.push('')
+  }
   out.push(table(['ref', 'scenario', '#48 full review at high', '#49 fix: no new branch/PR', '#51 no CLAUDE.md read', '#51 no ask-user'],
     groups.map((g) => [g.ref, g.scenario, ck(g.checks.fullReviewHigh), ck(g.checks.fixNoNewBranchOrPr), ck(g.checks.noClaudeMdRead), ck(g.checks.noAskUser)])))
   out.push('')
-  out.push('Highest turn count per agent type (#58: set maxTurns at about twice the highest observed)')
+  out.push('Highest turn count per agent type (#97: maxTurns is set from this with headroom; see docs/benchmarks.md)')
   const types = [...new Set(groups.flatMap((g) => Object.keys(g.maxTurns)))].sort()
   out.push(table(['ref', 'scenario', ...types], groups.map((g) => [g.ref, g.scenario, ...types.map((t) => g.maxTurns[t] ?? '-')])))
   out.push('')

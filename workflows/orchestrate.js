@@ -2,7 +2,7 @@ export const meta = {
   name: 'orchestrate',
   description: 'Run GitHub issues through implement -> review -> fix -> re-review, one PR each',
   whenToUse:
-    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small; --small-model sonnet|inherit|haiku picks the model of the small tier (default sonnet). Experimental --batch-review reviews a batch of PRs in one review instead of one per PR (cheaper, less independent; ignored for a batch with a risk label). Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
+    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small; --small-model sonnet|inherit|haiku picks the model of the small tier (default sonnet); --small-effort medium|high picks the effort of the small-tier implementer only (default high; medium is unmeasured, for a replay to compare). Experimental --batch-review reviews a batch of PRs in one review instead of one per PR (cheaper, less independent; ignored for a batch with a risk label). Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
   phases: [
     { title: 'Implement', detail: 'delivery:code-issue takes each issue in the batch to a green PR' },
     { title: 'Review', detail: 'delivery:code-review reads each PR independently, scoped to its risk' },
@@ -278,11 +278,13 @@ const LIGHT_REVIEW_MAX_LINES = 150
 // the issue yet and paying an agent just to read it cost more than it saved. No
 // hint means the session model: an unknown size is never a reason to use a
 // cheaper model.
+// `small` marks the small tier, whatever model --small-model gave it (inherit included), so
+// that --small-effort follows the tier rather than the model.
 const routeImplement = (hint) => {
-  if (hint.small) return { model: SMALL, why: 'caller hint --small' }
-  if (hint.points == null) return { model: INHERIT, why: 'no size hint' }
-  if (hint.points <= SMALL_POINTS) return { model: SMALL, why: `caller hint ${hint.points} story points` }
-  return { model: INHERIT, why: `caller hint ${hint.points} story points` }
+  if (hint.small) return { small: true, model: SMALL, why: 'caller hint --small' }
+  if (hint.points == null) return { small: false, model: INHERIT, why: 'no size hint' }
+  if (hint.points <= SMALL_POINTS) return { small: true, model: SMALL, why: `caller hint ${hint.points} story points` }
+  return { small: false, model: INHERIT, why: `caller hint ${hint.points} story points` }
 }
 
 // The review is routed on facts the implementer reported from GitHub -- the
@@ -328,6 +330,15 @@ const rereviewModel = (route) => (route.light ? INHERIT : SMALL)
 // and the result records the level passed, never "inherit".
 const IMPLEMENT_EFFORT = HIGH
 const REVIEW_EFFORT = HIGH
+// The one exception is --small-effort (#96): the small tier's implementer may run at medium,
+// because a small issue gains least from high and the Implement phase is most of what high
+// cost. It is UNMEASURED, so the default stays high until a replay (bench-run.mjs
+// --orchestrate-args) compares the two. Nothing else follows it: reviews, the fix, the
+// re-reviews and every non-small implementer keep the effort above.
+const implementEffort = (route) =>
+  route.small
+    ? { effort: SMALL_EFFORT, why: `small tier (${route.why}), ${smallEffortFlag ? `--small-effort ${smallEffortFlag[1]}` : 'default high, no --small-effort'}` }
+    : { effort: IMPLEMENT_EFFORT, why: `not the small tier (${route.why}), always high` }
 const FIX_EFFORT = MEDIUM
 const rereviewEffort = (route) => (route.light ? HIGH : MEDIUM)
 
@@ -418,6 +429,19 @@ if (/(?:^|\s)--small-model(?=[\s=]|$)/.test(raw)
 }
 const SMALL = smallFlag ? SMALL_MODELS[smallFlag[1]] : SONNET
 if (smallFlag) log(`Small tier (small implementations, light reviews, fixes, confirming re-reviews) runs on ${modelName(SMALL)} (--small-model ${smallFlag[1]}).`)
+// --small-effort is whole-run too, and fails the same way: an unknown value is an error, never
+// a silent high. Only the implementer of a small-tier batch follows it (implementEffort above).
+const SMALL_EFFORTS = { medium: MEDIUM, high: HIGH }
+const smallEffortFlag = /(?:^|\s)--small-effort(?:=|\s+)(\S+)/.exec(raw)
+if (/(?:^|\s)--small-effort(?=[\s=]|$)/.test(raw)
+  && !(smallEffortFlag && Object.prototype.hasOwnProperty.call(SMALL_EFFORTS, smallEffortFlag[1]))) {
+  throw new Error(
+    `--small-effort must be one of ${Object.keys(SMALL_EFFORTS).join(', ')} ` +
+      `(got ${smallEffortFlag ? JSON.stringify(smallEffortFlag[1]) : 'no value'}). Nothing was dispatched.`,
+  )
+}
+const SMALL_EFFORT = smallEffortFlag ? SMALL_EFFORTS[smallEffortFlag[1]] : HIGH
+if (smallEffortFlag) log(`Small-tier implementers run at ${SMALL_EFFORT} effort (--small-effort ${smallEffortFlag[1]}, unmeasured); every other phase keeps its effort.`)
 // --batch-review (cheap mode, EXPERIMENTAL, off by default) reviews each batch of two or more
 // PRs in ONE review dispatch instead of one per PR. It trades the independence of a per-PR
 // review for cost, which is why it is opt-in: without it, every PR gets its own review. It is
@@ -428,7 +452,7 @@ if (smallFlag) log(`Small tier (small implementations, light reviews, fixes, con
 // criterion is in docs/benchmarks.md.
 const BATCH_REVIEW = /(?:^|\s)--batch-review(?=\s|$)/.test(raw)
 if (BATCH_REVIEW) log('Cheap mode (--batch-review, EXPERIMENTAL): a batch of PRs with no risk label is reviewed once, not once per PR.')
-const target = raw.replace(/(^|\s)--small-model(=|\s+)\S+/g, ' ').replace(/(^|\s)--batch-review(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim()
+const target = raw.replace(/(^|\s)--small-(?:model|effort)(=|\s+)\S+/g, ' ').replace(/(^|\s)--batch-review(?=\s|$)/g, ' ').replace(/\s+/g, ' ').trim()
 
 const parseSegment = (text) => {
   // Commas are accepted as separators too: `412, 413` is a batch, not a description.
@@ -469,7 +493,7 @@ if (segments.length && segments.every((s) => s.issues)) {
 if (!target) {
   log(
     'No target given. Usage: /delivery:orchestrate <issue number> [more issue numbers] ' +
-      '[; another batch] [--points N | --small] [--small-model sonnet|inherit|haiku] [--batch-review]  or  ' +
+      '[; another batch] [--points N | --small] [--small-model sonnet|inherit|haiku] [--small-effort medium|high] [--batch-review]  or  ' +
         '/delivery:orchestrate <what you want done>',
   )
 }
@@ -521,12 +545,12 @@ const implementPrompt = (lane, rules) => {
 // `batch`, when set, is this PR's entry from a batch review that already ran: the review step
 // is not dispatched again, and the fix and re-review below run per PR exactly as they would
 // after a per-PR review.
-async function reviewOne(it, lane, implementModel, iso, rules, batch = null) {
+async function reviewOne(it, lane, implementModel, implementedAt, iso, rules, batch = null) {
   const tag = it.issue ?? `pr${it.pr}`
   const subject = it.issue ? `issue #${it.issue}` : subjectOf(lane)
   const route = batch ? BATCH_ROUTE : routeReview(it)
   const models = { implement: implementModel, review: route.model }
-  const effort = { implement: IMPLEMENT_EFFORT, review: REVIEW_EFFORT }
+  const effort = { implement: implementedAt, review: REVIEW_EFFORT }
   // A batch review's tokens are the batch's, recorded on the lane, not split across its PRs.
   const outputTokens = batch ? {} : { review: null }
   log(
@@ -716,7 +740,8 @@ async function runLane(lane, isolated) {
   const rules = isolated ? `${RULES}\n\n${ISOLATED}` : RULES
   const name = lane.issues.length ? lane.issues.join('+') : 'task'
   const route = routeImplement(lane.hint)
-  log(`Implement ${subjectOf(lane)} on ${modelName(route.model)} (${route.why}).`)
+  const impl = implementEffort(route)
+  log(`Implement ${subjectOf(lane)} on ${modelName(route.model)} at ${impl.effort} effort (${route.why}).`)
 
   const [built, implementTokens] = await metered(() => agent(implementPrompt(lane, rules), {
     label: `implement:${name}`,
@@ -724,13 +749,15 @@ async function runLane(lane, isolated) {
     agentType: 'delivery:code-issue',
     schema: IMPLEMENT_SCHEMA,
     ...modelOpt(route.model),
-    ...effortOpt(IMPLEMENT_EFFORT),
+    ...effortOpt(impl.effort),
     ...iso,
   }))
   const laneResult = {
     issues: lane.issues,
     description: lane.description || null,
     implementModel: modelName(route.model),
+    implementEffort: effortName(impl.effort),
+    implementEffortWhy: impl.why,
     outputTokens: { implement: implementTokens },
   }
 
@@ -769,7 +796,7 @@ async function runLane(lane, isolated) {
   // fight over the branch, and the batch is meant to be one lane of work. After a batch
   // review, a PR it returned no entry for counts as not reviewed (reviewOne says so).
   for (const it of withPr) {
-    prs.push(await reviewOne(it, lane, route.model, iso, rules, batchByPr ? { review: batchByPr.get(it.pr) ?? null } : null))
+    prs.push(await reviewOne(it, lane, route.model, impl.effort, iso, rules, batchByPr ? { review: batchByPr.get(it.pr) ?? null } : null))
   }
 
   return {

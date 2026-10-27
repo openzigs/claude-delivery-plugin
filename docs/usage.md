@@ -25,6 +25,7 @@ If you want a phase to definitely happen, run the workflow.
 /delivery:orchestrate <issues> ; <issues>              (independent batches, run concurrently)
 /delivery:orchestrate <issue...> --points N | --small  (size hint for that batch's implementation)
 /delivery:orchestrate <issue...> --small-model sonnet|inherit|haiku  (the small tier's model, whole run)
+/delivery:orchestrate <issue...> --small-effort medium|high          (the small-tier implementer's effort, whole run; unmeasured)
 /delivery:orchestrate <issue> <issue> --batch-review   (experimental: one review per batch, whole run)
 /delivery:orchestrate <a description of what you want done>
 /delivery:orchestrate                                  (uses what you described in conversation)
@@ -84,11 +85,13 @@ explicitly rather than inherited: Claude Code's default effort on Opus 5.5 is `m
 usually mean medium. The fix and the re-review run at `medium`, except a re-review escalated
 from a light review: that is the change's first full-scope review, so it runs at `high` too.
 Medium effort is known to lose real findings for quality and performance reviewers, which is
-why the first review never drops.
+why the first review never drops. `--small-effort medium` drops only the implementer of a
+small-tier batch (`--small`, or `--points N` ≤ 2) to `medium`; it is unmeasured, and the
+default stays `high` until a replay compares the two ([customising](customising.md#the-small-tiers-effort---small-effort)).
 
 | Step | Effort |
 |---|---|
-| Implement | `high` |
+| Implement | `high`; a small-tier implementer follows `--small-effort` (default `high`) |
 | Review (light or full) | `high` |
 | Fix | `medium` |
 | Re-review | `medium`; `high` when escalated from a light review |
@@ -105,6 +108,7 @@ rather than assumed:
 |---|---|---|
 | `models` | each PR | The model of each phase that ran (`session model` when inherited) |
 | `effort` | each PR | The effort passed to each phase that ran: `implement`, `review`, and `fix` / `rereview` when they ran. Always `high` or `medium`; results from before 0.8.0 show `inherit` where no effort was set |
+| `implementEffort`, `implementEffortWhy` | each batch | The effort the batch's implementer ran at, and why: the small tier with or without `--small-effort`, or not the small tier. Recorded even when no PR was opened. The cost-report shows both on the Implement row |
 | `outputTokens` | each PR: `review`, `fix`, `rereview`; each batch: `implement` | Output tokens per phase, as the difference in `budget.spent()` around that agent call. `null` when the runtime provides no `budget` |
 | `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output, after low-confidence findings are dropped. `rereview` is `null` when no re-review ran |
 | `suppressedFindings` | each PR | How many non-blocking findings the review and re-review rated below confidence 50 and the workflow dropped before the fix pass. A blocking finding is never dropped, whatever its confidence. The cost-report shows it on the PR's Review row and in its totals |

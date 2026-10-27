@@ -130,6 +130,8 @@ command on the same line.
 /delivery:orchestrate 412 413 ; 500 501       two batches, run concurrently in separate worktrees
 /delivery:orchestrate 412 --points 2          size hint for that batch (or --small)
 /delivery:orchestrate 412 --small-model haiku the small tier's model: sonnet (default), inherit or haiku
+/delivery:orchestrate 412 --small --small-effort medium
+                                              the small-tier implementer's effort: high (default) or medium; unmeasured
 /delivery:orchestrate 412 413 --batch-review  experimental cheap mode: one review for the whole batch
 /delivery:orchestrate make the audit filter honour a date range
                                               a description: the implementer files the issue first
@@ -162,7 +164,7 @@ conversation.
 
 | Phase | Model | Effort |
 |---|---|---|
-| Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | `high` |
+| Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | `high`; a small-tier implementer follows `--small-effort` (default `high`) |
 | Review | Sonnet when light; the session model when full | `high` |
 | Fix | Sonnet (the session model if Sonnet did the implementing) | `medium` |
 | Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked | `medium`, or `high` when escalated |
@@ -173,6 +175,14 @@ review — unless you pass `--batch-review`, which reviews a batch with no risk 
 The result then records `cheapMode: true` and each batch's `reviewMode` (`batch` or
 `per-pr`, with the reason). Separate batches with `;` and they run **concurrently**, every agent in its own git
 worktree. A size hint belongs to the batch it is written in.
+
+**`--small-effort medium|high`** sets the effort of the small tier's implementer only (a batch
+sized `--small` or `--points N` ≤ 2), for the whole run. The default, `high`, is unchanged
+behaviour. `medium` is **unmeasured**: it exists so a replay can compare the two
+(`bench-run.mjs --orchestrate-args "--small-effort medium"`, see
+[benchmarks](docs/benchmarks.md)) before any default changes. Reviews, fixes, re-reviews and
+every non-small implementer keep the effort in the table above. Each batch records
+`implementEffort` and `implementEffortWhy`, and the cost-report shows both on its Implement row.
 
 **Stacked PRs and merge order.** When an issue in a batch depends on an earlier one that is
 not merged yet, its branch is stacked on that issue's branch instead of the default branch,

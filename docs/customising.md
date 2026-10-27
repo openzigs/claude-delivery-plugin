@@ -44,10 +44,12 @@ Three things to keep when you edit it:
    Edit` is load-bearing: it makes "just fix the code under review" stop being the
    near-at-hand move.
 4. **Keep or tune `maxTurns`.** The `research`, `ui-vision` and `code-review` agents set a turn
-   ceiling (60, 80 and 50), so a runaway agent stops and returns partial output rather than
-   running on. The values are provisional — no run has recorded turn counts yet — so raise one
-   if a legitimate run is cut short. No other agent sets it, and `cacheTtl` is left at its
-   default.
+   ceiling (30, 80 and 30), so a runaway agent stops and returns partial output rather than
+   running on. `research` and `code-review` are set with headroom over the highest turns the
+   benchmark replay observed (8 and 7, on a small fixture); `ui-vision` has no data yet and
+   keeps its conservative 80. Raise one if a legitimate run is cut short; see
+   [benchmarks](benchmarks.md) for how to re-derive them. No other agent sets it, and
+   `cacheTtl` is left at its default.
 
 **Remember this file exists.** A forgotten project override is the single most common cause
 of "my plugin changes are not taking effect" — see
@@ -232,6 +234,33 @@ keeps the small tier on the session model, or pin the alias with
 workflow scripts ([plugins reference, "Reference a saved value"](https://code.claude.com/docs/en/plugins-reference);
 [workflows, "Edit a saved script"](https://code.claude.com/docs/en/workflows)). A `userConfig`
 option nothing could read would be a setting that silently does nothing.
+
+### The small tier's effort: `--small-effort`
+
+`--small-effort medium|high` sets the effort of **one** dispatch: the implementer of a
+small-tier batch (`--small`, or `--points N` ≤ 2), whatever model `--small-model` gave it. The
+default is `high`, so a run without the flag is unchanged. Every other phase keeps its effort:
+the full review, an escalated re-review and every non-small implementer stay `high`, and the fix
+and the confirming re-review stay `medium`.
+
+```
+/delivery:orchestrate 412 --small --small-effort medium
+```
+
+**It is unmeasured.** Explicit `high` effort (#48) raised orchestrate output by 44% and cost by
+16% on the N=3 replay, most of it in Implement. A small issue should gain least from `high`, so
+it is the place to try `medium`, but whether quality holds has not been measured. Compare the two
+on one ref before changing anything:
+
+```bash
+node scripts/bench-run.mjs --ref HEAD --repo <you>/scratch --reset-scratch --scenario orchestrate
+node scripts/bench-run.mjs --ref HEAD --repo <you>/scratch --reset-scratch --scenario orchestrate --orchestrate-args "--small-effort medium"
+node scripts/bench-report.mjs
+```
+
+Each batch records `implementEffort` and `implementEffortWhy` in the result, and the
+cost-report prints them on the Implement row. Any value other than `medium` or `high`, or the
+flag with no value, stops the run before anything is dispatched.
 
 ### Comparing tiers before changing them: `evals/`
 

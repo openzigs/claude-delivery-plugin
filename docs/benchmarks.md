@@ -258,7 +258,22 @@ node scripts/bench-run.mjs --ref 6567d82 --ref HEAD --repo <you>/bench-a --repo 
 
 Options: `--repo` once (every ref shares it) or once per `--ref` (each ref gets its own),
 `--scenario orchestrate|plan-epic|all` (default all), `--runs N` (default 1),
-`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies.
+`--timeout-min M` (per `claude` call, default 120), `--out DIR` (default `bench/results/`, gitignored), `--keep` to keep the temporary copies,
+`--orchestrate-args "<flags>"` to append orchestrate flags to every orchestrate call.
+
+**Two settings on one ref.** `--orchestrate-args` (for example `"--small-effort medium"`) is
+appended to each `/delivery:orchestrate` call of the invocation, never to plan-epic. It must be
+flags: the first word a `--flag`, each word letters, digits, `=`, `.`, `_` or `-`. Its results
+go to `bench/results/<ref>+<flags>/`, so a plain run of the same ref is neither cleared nor
+mixed in; `meta.json` records the flags, and the report labels the ref `<ref> [<flags>]` and
+prints the implement effort each orchestrate result recorded. Run the ref once without and
+once with the flags, then report:
+
+```bash
+node scripts/bench-run.mjs --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch --scenario orchestrate
+node scripts/bench-run.mjs --ref HEAD --repo <you>/delivery-bench-scratch --reset-scratch --scenario orchestrate --orchestrate-args "--small-effort medium"
+node scripts/bench-report.mjs
+```
 
 **Isolation.** A step is one ref, one run and one scenario. Before every step, `bench-run.mjs`
 resets that step's scratch repository: it deletes every issue, open or closed, closes every open
@@ -382,8 +397,22 @@ every run it applied to:
 | #51 no CLAUDE.md read | any agent's `Read` of `CLAUDE.md`, or a `cat`/`head`/`sed`… of it (it is already in context) |
 | #51 no ask-user | any agent calling `AskUserQuestion` |
 
-The last table is the highest turn count per agent type. That is the number the provisional
-`maxTurns` ceilings (#58) should be set from, at about twice the highest observed.
+The last table is the highest turn count per agent type, per ref and scenario. The `maxTurns`
+ceilings in `agents/*.md` are set from it (#97).
+
+**Re-deriving `maxTurns`.** Run the replay with `--runs 3`, then `bench-report.mjs`, and take
+the largest number in an agent's column across every row of that table. The current values
+come from the N=3 replay recorded on #86 (6 runs per scenario): code-issue 13, code-review 7,
+code-planner 9, research 8. `code-review` and `research` are set to 30, not to #58's twice
+the highest observed (14 and 16). The fixture's PRs and topic are small, so real reviews
+and research take more turns, and an agent cut off by its cap returns nothing, which costs
+more than a few extra turns. `ui-vision` stays at 80 because no scenario drives a browser,
+so there is no data for it. When you change a value, update the comment above it in the
+agent's frontmatter: the verifier wants it to name the replay (`bench replay on #<issue>`)
+and either `highest observed <n>` or `no data yet`, and fails one that still says
+provisional. Lower a
+ceiling only on runs from real repositories: a fixture's maximum is a floor for real work,
+not an estimate of it.
 
 **What it proves.** On this fixture, with these four issues and this topic, how many tokens
 each ref spent per delivered issue and per phase, what its reviews found, and whether the

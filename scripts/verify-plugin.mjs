@@ -141,6 +141,12 @@ for (const file of agentFiles) {
   ;(bad3.length === 0 ? ok : bad)(`research, ui-vision and code-review each set maxTurns to a positive integer${bad3.length ? ` (missing or invalid: ${bad3.map((a) => `${a}=${turns[a]}`).join(', ')})` : ` (${MAX_TURNS.map((a) => `${a} ${turns[a]}`).join(', ')})`}`)
   const others = Object.keys(turns).filter((a) => !MAX_TURNS.includes(a) && turns[a] !== undefined)
   ;(others.length === 0 ? ok : bad)(`no other agent sets maxTurns${others.length ? ` (found on ${others.join(', ')})` : ''}`)
+  // #97: each ceiling's frontmatter comment states its evidence -- the bench replay it read
+  // and the highest turn count observed there, or that there is no data yet -- not a stale
+  // "provisional" note.
+  const note = (a) => { const l = readFileSync(join(ROOT, 'agents', `${a}.md`), 'utf8').split('\n'); return l.slice(1, l.indexOf('---', 1)).filter((x) => /^#/.test(x)).join(' ') }
+  const unsourced = MAX_TURNS.filter((a) => { const n = note(a); return /provisional/i.test(n) || !/bench replay on #\d+/.test(n) || !/highest observed \d+|no data yet/i.test(n) })
+  ;(unsourced.length === 0 ? ok : bad)(`each maxTurns comment names its bench replay and the highest observed turns, or says there is no data yet${unsourced.length ? ` (not on ${unsourced.join(', ')})` : ''}`)
   const ttl = [...agentFiles.map((f) => `agents/${f}`), ...SKILLS.map((d) => `skills/${d}/SKILL.md`), '.claude-plugin/plugin.json',
     ...readdirSync(join(ROOT, 'workflows')).map((f) => `workflows/${f}`)].filter((f) => /cacheTtl/.test(readFileSync(join(ROOT, f), 'utf8')))
   ;(ttl.length === 0 ? ok : bad)(`cacheTtl is not set anywhere${ttl.length ? ` (found in ${ttl.join(', ')})` : ''}`)
@@ -1042,6 +1048,74 @@ for (const file of workflowFiles) {
   r = await run()
   check(r.dispatches.every((d) => d.effort === 'high') && JSON.stringify(pr0(r).effort) === JSON.stringify({ implement: 'high', review: 'high' }),
     'a clean run passes high effort on both dispatches and reports both as "high", none as "inherit"')
+
+  // --- --small-effort (#96): the effort of the small tier's implementer, and nothing else.
+  // Default high, so a run without the flag is unchanged until a replay measures medium.
+  {
+    const lane0 = (x) => x.result.batches[0]
+    const otherEfforts = (x) => JSON.stringify(['review:412', 'fix:412', 'rereview:412'].map((l) => optsOf(x, l).effort))
+    for (const [argv, facts, want, name] of [
+      ['412 --small', SMALL_ISSUE, 'high', 'with no --small-effort a small-tier implementer stays at high'],
+      ['412 --points 1', SMALL_ISSUE, 'high', 'with no --small-effort a 1-point implementer stays at high'],
+      ['412 --small --small-effort high', SMALL_ISSUE, 'high', '--small-effort high keeps a small-tier implementer at high'],
+      ['412 --small --small-effort medium', SMALL_ISSUE, 'medium', '--small-effort medium drops a --small implementer to medium'],
+      ['412 --points 2 --small-effort=medium', SMALL_ISSUE, 'medium', '--small-effort=medium drops a 2-point implementer to medium'],
+      ['412 --small --small-model inherit --small-effort medium', SMALL_ISSUE, 'medium', '--small-effort medium applies to the small tier on the session model too'],
+      ['412 --points 3 --small-effort medium', MEDIUM_ISSUE, 'high', '--small-effort medium leaves a 3-point implementer at high'],
+      ['412 --small-effort medium', MEDIUM_ISSUE, 'high', '--small-effort medium leaves an unsized implementer at high'],
+    ]) {
+      const baseArgv = argv.replace(/\s--small-effort(=|\s+)\S+/, '')
+      const got = await run({ argv, review: BLOCKING_REVIEW, facts: { 412: facts } })
+      const base = await run({ argv: baseArgv, review: BLOCKING_REVIEW, facts: { 412: facts } })
+      check(optsOf(got, 'implement:412').effort === want && pr0(got).effort?.implement === want && lane0(got).implementEffort === want,
+        `${name} (dispatch, PR result and batch result agree)`,
+        `${name} — dispatch=${optsOf(got, 'implement:412').effort} pr=${pr0(got).effort?.implement} lane=${lane0(got).implementEffort}`)
+      check(otherEfforts(got) === otherEfforts(base) && modelOf(got.dispatches, 'implement:412') === modelOf(base.dispatches, 'implement:412'),
+        `${argv}: review, fix and re-review effort and the implementer's model are exactly as without --small-effort`,
+        `${argv}: ${otherEfforts(got)} vs ${otherEfforts(base)}`)
+      check(typeof lane0(got).implementEffortWhy === 'string' && lane0(got).implementEffortWhy.length > 0
+        && got.logs.some((l) => l.startsWith('Implement ') && l.includes(`at ${want} effort`)),
+        `${argv}: the implement effort's reason is recorded on the batch and the effort is logged`)
+    }
+    let x = await run({ argv: '412 --small --small-effort medium' })
+    check(/--small-effort medium/.test(lane0(x).implementEffortWhy) && /small tier/.test(lane0(x).implementEffortWhy),
+      'the recorded reason names the small tier and the flag', lane0(x).implementEffortWhy)
+    x = await run({ argv: '412 --small' })
+    check(/default/.test(lane0(x).implementEffortWhy), 'with no flag the recorded reason says the small tier kept the default', lane0(x).implementEffortWhy)
+    x = await run({ argv: '412 --points 5 --small-effort medium' })
+    check(/not the small tier/.test(lane0(x).implementEffortWhy), 'a non-small issue records that it is not the small tier', lane0(x).implementEffortWhy)
+    // Concurrent batches: the flag applies per batch, by that batch's own size hint.
+    x = await run({ argv: '412 --small ; 500 --points 5 --small-effort medium' })
+    check(optsOf(x, 'implement:412').effort === 'medium' && optsOf(x, 'implement:500').effort === 'high'
+      && x.result.batches[0].implementEffort === 'medium' && x.result.batches[1].implementEffort === 'high',
+      'across concurrent batches only the small one\'s implementer drops to medium')
+    x = await run({ argv: 'make the export honour a date range --small-effort medium --small' })
+    check(x.dispatches[0].prompt.includes('this request: make the export honour a date range end to end') && optsOf(x, 'implement:task').effort === 'medium',
+      '--small-effort is taken out of a description, not left in it')
+    // An implementer that opened no PR still has its effort on the batch.
+    x = await run({ argv: '412 --small --small-effort medium', implement: { issues: [{ issue: 412, pr: null, ...SMALL_ISSUE, headRefName: null, report: 'blocked' }] } })
+    check(lane0(x).implementEffort === 'medium', 'a batch with no PR still records its implement effort')
+    for (const bad of ['412 --small-effort low', '412 --small-effort', '412 --small-effort=', '412 --small-effort constructor', '412 --small-effort inherit']) {
+      let threw = null, dispatched = 0
+      try { const y = await run({ argv: bad }); dispatched = y.dispatches.length } catch (e) { threw = e.message }
+      check(threw && /--small-effort must be one of medium, high/.test(threw) && dispatched === 0,
+        `an invalid --small-effort ("${bad}") fails loudly at start and dispatches nothing`, `"${bad}": threw=${threw} dispatched=${dispatched}`)
+    }
+    // cost-report shows the implement effort and its reason, from the batch, on the Implement row.
+    const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
+    x = await run({ argv: '412 --small --small-effort medium' })
+    const out = cr.render(cr.summarise([{ id: 'eff', data: x.result }]))
+    check(/^1\s+#412\s+-\s+Implement\s+\S.*\smedium\s+sonnet\s+n\/a\s+.*--small-effort medium/m.test(out),
+      'the cost-report shows the implement effort and why on the Implement row', out.split('\n').slice(0, 4).join(' | '))
+    x = await run({ argv: '412 --small --small-effort medium', implement: { issues: [{ issue: 412, pr: null, ...SMALL_ISSUE, headRefName: null, report: 'blocked' }] } })
+    check(/^1\s+#412\s+-\s+Implement\s+\S.*\smedium\s+sonnet\s/m.test(cr.render(cr.summarise([{ id: 'nopr', data: x.result }]))),
+      'the cost-report shows the implement effort of a batch that opened no PR')
+    const docs = ['README.md', 'docs/usage.md', 'docs/customising.md'].map((f) => readFileSync(join(ROOT, f), 'utf8'))
+    const meta = extractMeta(src)
+    check(/--small-effort medium\|high/.test(meta) && docs.every((d) => /--small-effort/.test(d))
+      && /--small-effort[\s\S]{0,600}(unmeasured|not (yet )?measured)/.test(docs[2]),
+      'whenToUse, README, usage and customising document --small-effort, and customising says it is unmeasured')
+  }
 
   // --- output tokens per phase, as budget.spent() deltas
   r = await run({ review: BLOCKING_REVIEW, budget: 'metered' })
@@ -2179,6 +2253,22 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       c(existsSync(join(exp, '.claude-plugin', 'plugin.json')) && !existsSync(join(exp, '.git')) && !existsSync(join(exp, 'bench')) && leaks.length === 0,
         `the exported plugin has its manifest, no .git and no file naming a planted defect (leaks: ${JSON.stringify(leaks)})`)
     } finally { rmSync(exp, { recursive: true, force: true }) }
+    // --orchestrate-args (#96): extra flags on every orchestrate call, with results kept apart
+    // from the same ref's plain run, so one ref can be replayed under two settings.
+    const plain = run.plan(run.parseArgs(['--ref', 'HEAD', '--repo', 'o/s', '--dry-run', '--out', '/r']))
+    const eff = run.plan(run.parseArgs(['--ref', 'HEAD', '--repo', 'o/s', '--dry-run', '--out', '/r', '--orchestrate-args', '--small-effort medium']))
+    const orch = (ps) => ps.find((st) => st.scenario === 'orchestrate'), epicStep = (ps) => ps.find((st) => st.scenario === 'plan-epic')
+    c(orch(eff).calls.every((k) => k.prompt.endsWith(' --small-effort medium') && /^\/delivery:orchestrate <#\w+> --points \d --small-effort medium$/.test(k.prompt))
+      && orch(plain).calls.every((k) => !/small-effort/.test(k.prompt))
+      && epicStep(eff).calls[0].prompt === '/delivery:plan-epic ./PLAN-TOPIC.md',
+    '--orchestrate-args is appended to every orchestrate call and to no plan-epic call')
+    c(orch(eff).out !== orch(plain).out && dirname(orch(eff).out) !== dirname(orch(plain).out)
+      && orch(eff).orchestrateArgs === '--small-effort medium' && orch(plain).orchestrateArgs === null,
+    `a run with --orchestrate-args writes to its own results directory, so it neither clears nor mixes with the plain run (${orch(eff).out})`)
+    for (const v of ['412', '--points 1; rm -rf /', '--small-effort $(id)', '', '--small-effort "medium"']) {
+      c(/--orchestrate-args/.test(bad('--ref', 'HEAD', '--repo', 'o/s', '--dry-run', '--orchestrate-args', v)),
+        `--orchestrate-args ${JSON.stringify(v)} is refused: it must be flags, in letters, digits, = . _ - and spaces`)
+    }
     const args = run.claudeArgs('/delivery:orchestrate 3 --points 1', '/tmp/p')
     c(JSON.stringify(args) === JSON.stringify(['-p', '/delivery:orchestrate 3 --points 1', '--plugin-dir', '/tmp/p', '--output-format', 'json', '--dangerously-skip-permissions']),
       'each pipeline call is claude -p with --plugin-dir pointed at the ref\'s worktree, prompt first')
@@ -2266,6 +2356,19 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
       && !rep.matchesPlanted(F('src/reorder.js:9'), P) && !rep.matchesPlanted(F('src/reorder.js'), P) && !rep.matchesPlanted(F('src/notreorder.js:6'), P)
       && !rep.matchesPlanted(F('general'), P) && !rep.matchesPlanted(F('src/inventory.js:14'), P) && !rep.matchesPlanted(F('x'), { locations: [], keywords: [''] }),
     'the planted-defect matcher takes a file (and a line range when given) or a keyword, case-insensitively, and nothing else')
+    // #96: the implement effort each batch recorded, and the orchestrate args a run was given.
+    c(neu.implementEffort === 'high, medium' && old.implementEffort === null
+      && /^new\s+orchestrate\s+high, medium$/m.test(out) && /^old\s+orchestrate\s+n\/a$/m.test(out),
+    `the report shows the implement effort the orchestrate results recorded (got new=${neu.implementEffort}, old=${old.implementEffort})`)
+    const tmpA = mkdtempSync(join(tmpdir(), 'bench-args-'))
+    const runA = join(tmpA, 'new+--small-effort_medium', 'orchestrate', 'run-1')
+    mkdirSync(runA, { recursive: true })
+    writeFileSync(join(runA, 'meta.json'), JSON.stringify({ ref: 'new', scenario: 'orchestrate', orchestrateArgs: '--small-effort medium', calls: [] }))
+    const argsRun = rep.analyseRun(runA)
+    rmSync(tmpA, { recursive: true, force: true })
+    c(argsRun.ref === 'new [--small-effort medium]' && argsRun.orchestrateArgs === '--small-effort medium'
+      && rep.analyseRun(join(ROOT, 'scripts/fixtures/bench/new/orchestrate/run-1')).ref === 'new',
+    `a run given --orchestrate-args is labelled with them, so it is reported apart from the plain run of its ref (got ${argsRun.ref})`)
     c(epic.isolation === 'repo-per-ref' && crashed.isolation === 'none' && /^new\s+plan-epic\s.*\syes\s+repo-per-ref$/m.test(out)
       && /WARNING: stalled \/ plan-epic: no scratch-repo isolation recorded/.test(out) && !/WARNING: new \/ orchestrate: no scratch-repo isolation/.test(out),
     'the report names the isolation each ref ran with, and warns on results that recorded none')

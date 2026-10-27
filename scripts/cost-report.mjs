@@ -115,10 +115,15 @@ function orchestrateRows(data) {
     const batch = i + 1
     const prs = Array.isArray(b?.prs) ? b.prs : []
     const issues = Array.isArray(b?.issues) ? b.issues : []
+    // The batch records its implement effort and why (#96, --small-effort); a result from
+    // before that has it only on each PR.
+    const implementEffort = cell(b, 'implementEffort', isStr)
     rows.push({
       batch, issue: issues.length ? issues : NA, pr: NA, phase: 'Implement',
       outputTokens: cell(b?.outputTokens, 'implement', isNum),
-      effort: prs.length ? cell(prs[0]?.effort, 'implement', isStr) : NA,
+      effort: implementEffort !== NA ? implementEffort : prs.length ? cell(prs[0]?.effort, 'implement', isStr) : NA,
+      // Free text, printed in the note column: kept to one line.
+      effortWhy: isStr(b?.implementEffortWhy) ? b.implementEffortWhy.replace(/\s+/g, ' ').trim().slice(0, 200) : NA,
       model: cell(b, 'implementModel', isStr),
       findings: NA, reviewDidNotReturn: false,
     })
@@ -289,7 +294,7 @@ export function render(report, opts = {}) {
         run.rows.map((r) => [String(r.batch), ref(r.issue, '#'), ref(r.pr, '#'), r.phase, fmtNum(r.outputTokens),
           fmtCell(r.effort), fmtCell(r.model), fmtCell(r.findings),
           [r.reviewDidNotReturn ? 'REVIEW DID NOT RETURN' : '', isNum(r.suppressed) && r.suppressed ? `${r.suppressed} suppressed` : '',
-            r.inBatch ? 'in batch review' : '']
+            r.inBatch ? 'in batch review' : '', isStr(r.effortWhy) ? `effort: ${r.effortWhy}` : '']
             .filter(Boolean).join('; ')])))
     } else {
       out.push(table(['phase', 'outputTokens', 'effort', 'model', 'findings'],
