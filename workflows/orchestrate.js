@@ -2,7 +2,7 @@ export const meta = {
   name: 'orchestrate',
   description: 'Run GitHub issues through implement -> review -> fix -> re-review, one PR each',
   whenToUse:
-    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small. Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
+    'Type /delivery:orchestrate <issue number> to take an issue end to end without naming agents; /delivery:orchestrate 412 413 415 to have one implementer work related issues in turn (one PR each, each reviewed); /delivery:orchestrate 412 413 ; 500 501 to run independent batches concurrently in separate git worktrees. Optional size hint: --points N or --small; --small-model sonnet|inherit|haiku picks the model of the small tier (default sonnet). Unlike dispatching an implementer by hand, the review phase cannot be skipped: it is a step in this script rather than something a model has to remember. Works in any repository — the constraints come from the project\'s own CLAUDE.md, not from this file. Stops before merging.',
   phases: [
     { title: 'Implement', detail: 'delivery:code-issue takes each issue in the batch to a green PR' },
     { title: 'Review', detail: 'delivery:code-review reads each PR independently, scoped to its risk' },
@@ -200,6 +200,16 @@ const metered = async (call) => {
 // rather than model IDs, so the plugin tracks new releases without an edit.
 const INHERIT = null
 const SONNET = 'sonnet'
+// The small tier -- a small issue's implementer, the light review, the fix after a full
+// review and the confirming re-review -- runs on SMALL, chosen with --small-model
+// (sonnet | inherit | haiku; default sonnet, so a run without the flag is unchanged). It is
+// an argument rather than a plugin userConfig option because a workflow script can read
+// only `args`: `${user_config.KEY}` is substituted in skill, agent, hook, MCP and LSP
+// content, not in workflow scripts (code.claude.com/docs/en/plugins-reference, "Reference a
+// saved value"). On Bedrock and Google Cloud's Agent Platform the `sonnet` alias resolves to
+// Sonnet 4.5 and `haiku` to Haiku 4.5, and on Foundry `sonnet` is Sonnet 4.5
+// (code.claude.com/docs/en/model-config), which is why the choice is the caller's.
+const SMALL_MODELS = { sonnet: SONNET, inherit: INHERIT, haiku: 'haiku' }
 const modelOpt = (m) => (m ? { model: m } : {})
 const modelName = (m) => m || 'session model'
 // effortOpt(INHERIT) would omit `effort` and report "inherit", but this pipeline
@@ -230,9 +240,9 @@ const LIGHT_REVIEW_MAX_LINES = 150
 // hint means the session model: an unknown size is never a reason to use a
 // cheaper model.
 const routeImplement = (hint) => {
-  if (hint.small) return { model: SONNET, why: 'caller hint --small' }
+  if (hint.small) return { model: SMALL, why: 'caller hint --small' }
   if (hint.points == null) return { model: INHERIT, why: 'no size hint' }
-  if (hint.points <= SMALL_POINTS) return { model: SONNET, why: `caller hint ${hint.points} story points` }
+  if (hint.points <= SMALL_POINTS) return { model: SMALL, why: `caller hint ${hint.points} story points` }
   return { model: INHERIT, why: `caller hint ${hint.points} story points` }
 }
 
@@ -253,7 +263,7 @@ const routeReview = (it) => {
   }
   return {
     light: true,
-    model: SONNET,
+    model: SMALL,
     why: `${it.storyPoints} story points, no risk label, ${it.filesChanged} files / ${it.linesChanged} lines`,
   }
 }
@@ -262,12 +272,12 @@ const routeReview = (it) => {
 // fix drops to sonnet, unless sonnet did the implementing and still produced
 // blocking findings: that is evidence the task was harder than it looked, so the
 // fix escalates to the session model rather than asking sonnet to try again.
-const fixModel = (implementedOn) => (implementedOn === SONNET ? INHERIT : SONNET)
+const fixModel = (implementedOn) => (SMALL !== INHERIT && implementedOn === SMALL ? INHERIT : SMALL)
 // The re-review only confirms that listed findings are gone, so it runs on
 // sonnet -- unless the first review was the light one. A small change that a
 // light review still blocked was misjudged as low-risk, and cycle 2 is its first
 // full-scope look, so that re-review escalates to the session model.
-const rereviewModel = (route) => (route.light ? INHERIT : SONNET)
+const rereviewModel = (route) => (route.light ? INHERIT : SMALL)
 // Effort. Medium effort was measured (by Cloudflare) to lose real findings for
 // quality and performance reviewers, so the implementer and the first full review
 // pass `high` explicitly. They do not inherit: Claude Code's default effort on Opus
@@ -356,6 +366,21 @@ const IMPLEMENT_SCHEMA = {
 // audit filter...`, which reads as a real reference and is not one.
 const raw = (Array.isArray(args) ? args.join(' ') : args ? String(args) : '').trim()
 
+// --small-model applies to the whole run, so it is taken out before batches are split. An
+// unknown or missing value stops the run here: a silent fallback would run the small tier on
+// a model the caller did not choose.
+const smallFlag = /(?:^|\s)--small-model(?:=|\s+)(\S+)/.exec(raw)
+if (/(?:^|\s)--small-model(?=[\s=]|$)/.test(raw)
+  && !(smallFlag && Object.prototype.hasOwnProperty.call(SMALL_MODELS, smallFlag[1]))) {
+  throw new Error(
+    `--small-model must be one of ${Object.keys(SMALL_MODELS).join(', ')} ` +
+      `(got ${smallFlag ? JSON.stringify(smallFlag[1]) : 'no value'}). Nothing was dispatched.`,
+  )
+}
+const SMALL = smallFlag ? SMALL_MODELS[smallFlag[1]] : SONNET
+if (smallFlag) log(`Small tier (small implementations, light reviews, fixes, confirming re-reviews) runs on ${modelName(SMALL)} (--small-model ${smallFlag[1]}).`)
+const target = raw.replace(/(^|\s)--small-model(=|\s+)\S+/g, ' ').replace(/\s+/g, ' ').trim()
+
 const parseSegment = (text) => {
   // Commas are accepted as separators too: `412, 413` is a batch, not a description.
   const tokens = text.split(/[\s,]+/).filter(Boolean)
@@ -375,7 +400,7 @@ const parseSegment = (text) => {
   return { hint, issues, description }
 }
 
-const segments = raw.split(';').map((s) => s.trim()).filter(Boolean).map(parseSegment)
+const segments = target.split(';').map((s) => s.trim()).filter(Boolean).map(parseSegment)
 let lanes
 if (segments.length && segments.every((s) => s.issues)) {
   // An issue listed twice would get two implementers racing for one branch.
@@ -388,14 +413,15 @@ if (segments.length && segments.every((s) => s.issues)) {
     .filter((l) => l.issues.length)
 } else {
   // A description may itself contain ';' -- only all-numeric segments are batches.
-  const whole = parseSegment(raw)
+  const whole = parseSegment(target)
   lanes = [{ hint: whole.hint, issues: [], description: whole.description }]
 }
 
-if (!raw) {
+if (!target) {
   log(
     'No target given. Usage: /delivery:orchestrate <issue number> [more issue numbers] ' +
-      '[; another batch] [--points N | --small]  or  /delivery:orchestrate <what you want done>',
+      '[; another batch] [--points N | --small] [--small-model sonnet|inherit|haiku]  or  ' +
+        '/delivery:orchestrate <what you want done>',
   )
 }
 
@@ -510,8 +536,8 @@ async function reviewOne(it, lane, implementModel, iso, rules) {
     effort.rereview = rereviewEffort(route)
     log(
       `#${tag}: blocking findings — fix on ${modelName(models.fix)}` +
-        (models.fix === INHERIT && implementModel === SONNET
-          ? ' (escalated: the sonnet implementation did not pass review)'
+        (SMALL !== INHERIT && models.fix === INHERIT && implementModel === SMALL
+          ? ` (escalated: the ${modelName(SMALL)} implementation did not pass review)`
           : '') +
         `, re-review on ${modelName(models.rereview)}` +
         (route.light ? ' (escalated: a light review found blocking findings, so cycle 2 is full scope).' : '.'),

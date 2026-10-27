@@ -745,6 +745,38 @@ for (const file of workflowFiles) {
     check(/Skip Step 3 \(design\), Step 6 \(performance\) and Step 8/.test(lightP), 'the light review is still told to skip Steps 3, 6 and 8')
   }
 
+  // --- --small-model picks the small tier's model (#57). No flag = sonnet, unchanged above.
+  for (const [flag, want] of [['--small-model inherit', null], ['--small-model haiku', 'haiku'], ['--small-model=haiku', 'haiku'], ['--small-model sonnet', 'sonnet']]) {
+    const smallImpl = await run({ argv: `412 --small ${flag}` })
+    const light = await run({ argv: `412 ${flag}`, review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+    const full = await run({ argv: `412 ${flag}`, review: BLOCKING_REVIEW })
+    const got = {
+      implement: modelOf(smallImpl.dispatches, 'implement:412'),
+      light: modelOf(light.dispatches, 'review:412'),
+      fix: modelOf(full.dispatches, 'fix:412'),
+      rereview: modelOf(full.dispatches, 'rereview:412'),
+    }
+    check(Object.values(got).every((m) => m === want)
+      && light.dispatches.find((d) => d.label === 'review:412')?.prompt.includes('Review scope: LIGHT')
+      && JSON.stringify(smallImpl.result.batches[0].issues) === '[412]',
+      `${flag}: the small-issue implementer, the light review, the fix and the confirming re-review run on ${want ?? 'the session model'}`,
+      `${flag}: got ${JSON.stringify(got)}`)
+    check(modelOf(full.dispatches, 'review:412') === null && modelOf(light.dispatches, 'rereview:412') === null,
+      `${flag}: the full review and an escalated re-review stay on the session model`)
+  }
+  r = await run({ argv: '412 --small --small-model haiku', review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } })
+  check(modelOf(r.dispatches, 'fix:412') === null && r.logs.some((l) => l.includes('escalated: the haiku implementation')),
+    'a haiku implementation that fails review escalates the fix to the session model')
+  r = await run({ argv: 'make the export honour a date range --small-model haiku --small' })
+  check(r.dispatches[0].prompt.includes('this request: make the export honour a date range end to end') && modelOf(r.dispatches, 'implement:task') === 'haiku',
+    '--small-model is taken out of a description, not left in it')
+  for (const bad of ['412 --small-model gpt-4', '412 --small-model', '412 --small-model=', '412 --small-model constructor']) {
+    let threw = null, dispatched = 0
+    try { const x = await run({ argv: bad }); dispatched = x.dispatches.length } catch (e) { threw = e.message }
+    check(threw && /--small-model must be one of sonnet, inherit, haiku/.test(threw) && dispatched === 0,
+      `an invalid --small-model ("${bad}") fails loudly at start and dispatches nothing`, `"${bad}": threw=${threw} dispatched=${dispatched}`)
+  }
+
   // --- the fix branch is decided by structured output
   r = await run({ review: BLOCKING_REVIEW })
   check(JSON.stringify(r.phases) === JSON.stringify(['Implement', 'Review', 'Fix', 'Re-review'])

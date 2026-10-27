@@ -125,6 +125,7 @@ command on the same line.
 /delivery:orchestrate 412 413 415             one batch: one implementer, one PR per issue
 /delivery:orchestrate 412 413 ; 500 501       two batches, run concurrently in separate worktrees
 /delivery:orchestrate 412 --points 2          size hint for that batch (or --small)
+/delivery:orchestrate 412 --small-model haiku the small tier's model: sonnet (default), inherit or haiku
 /delivery:orchestrate make the audit filter honour a date range
                                               a description: the implementer files the issue first
 ```
