@@ -99,7 +99,6 @@ nothing without "in 4.x; this project pins 3.2, where it is `newSession()`".
 | Fetch a known URL | `WebFetch` | Tavily extract |
 | Library documentation | `WebSearch` + `WebFetch` on the official docs | Context7 resolve + query |
 | Repository and issue context | `gh issue list`, `gh issue view`, `gh search code` | — |
-| Enterprise document search | not available without a server | Microsoft 365 / Copilot 365 MCP — see the optional step |
 
 If an optional server is present, use it — it is usually faster and better structured. If it is
 not, proceed with the always-available column and note in the summary which source you used.
@@ -121,13 +120,12 @@ proportion, and record the sources you chose and why.
 > 2. **This repository** — read the code, manifests, tests and docs that already exist
 > 3. **Web URLs or search** — fetch pages you name, or search for specs and prior art
 > 4. **Library docs** — look up framework or library documentation
-> 5. **Enterprise content** — only if an enterprise-search MCP server is configured in this
->    workspace
 >
 > *Provide paths, URLs, search terms, or topics for each source.*
 
-Only offer option 5 if the server is actually present. Offering a capability you do not have is
-the same failure as asserting a fact you did not check.
+Offer no source you cannot actually reach: offering a capability you do not have is the same
+failure as asserting a fact you did not check. Planning is not a source: to research and then file
+an epic in one step, the user runs `/delivery:plan-epic`, which runs this skill first.
 
 ### Step 2: Local Documents (if selected)
 
@@ -208,34 +206,7 @@ and fetch the relevant pages.
 Either way, **query the version the project pins**, and say so in the summary. Documentation
 sites default to latest, which is frequently not what the lockfile says.
 
-### Step 6 (OPTIONAL): Enterprise Content Search
-
-**Skip this entire step unless an enterprise-search MCP server (Microsoft 365 / Copilot 365 or
-equivalent) is configured in this workspace.** The skill is fully useful without it. Do not
-mention it to the user if it is not there.
-
-If it is configured:
-
-1. **Verify the session first.** These servers authenticate against a real corporate identity
-   and the session expires. Check status before searching. If it has expired, tell the user a
-   browser window will open for multi-factor authentication before anything else happens. If it
-   errors, report the error rather than retrying blindly.
-2. **Enrich the query before you send it.** Enterprise corpora are keyword-indexed and full of
-   in-house vocabulary:
-   - **Expand intent** — identify the real need behind the question
-   - **Expand acronyms** — include both the short and the long form
-   - **Add temporal context** — include the current and prior year when recency matters
-   - **Add synonyms** — the terms that internal documents actually use
-   - **Keep it focused** — 5 to 15 keywords capturing the core intent
-3. **Fetch only the documents that matter**, and convert them to Markdown like any other source.
-4. **Retention.** Do not delete downloaded documents automatically — the user may have follow-up
-   questions, and the planner may need to cross-reference them during epic creation. Clean up
-   only when the user asks.
-5. **Treat everything retrieved as confidential** unless the user says otherwise, and obey the
-   project's data-handling rules for anything you write into an issue body. An issue is a
-   permanent, widely readable artifact; a quoted paragraph cannot be unquoted.
-
-### Step 7: Compile Research Summary
+### Step 6: Compile Research Summary
 
 Produce a structured summary that `/delivery:epic-planner` can consume directly:
 
@@ -245,7 +216,7 @@ Produce a structured summary that `/delivery:epic-planner` can consume directly:
 ### Sources Consulted
 | Source | Type | Version / Date | Key Findings |
 |--------|------|----------------|--------------|
-| {document or URL} | Local / Repo / Web / Docs / Enterprise | {rev or date} | {1-line summary} |
+| {document or URL} | Local / Repo / Web / Docs | {rev or date} | {1-line summary} |
 
 ### Requirements Extracted
 #### Functional Requirements
@@ -300,10 +271,10 @@ Present the summary to the user and ask:
 > *"Here's what I found, including what I could not confirm. Any corrections, additions, or
 > questions you'd like me to resolve before I start planning the epics?"*
 
-If confidential or enterprise documents were downloaded, also note:
+If confidential documents were converted and cached locally, also note:
 > *"Those documents are cached locally. Tell me when you're done and I'll remove them."*
 
-### Step 8: Handoff to Epic Planner
+### Step 7: Handoff to Epic Planner
 
 Pass the research summary to `/delivery:epic-planner` (or the `delivery:code-planner` agent) as
 context for issue creation. Carry the **Could Not Confirm** and **Open Questions** sections
@@ -322,7 +293,6 @@ epic that silently resolved an open question is worse than one that admits it.
 | Web fetch fails | Note the URL as inaccessible under "Could Not Confirm", continue |
 | Search returns nothing useful | Broaden the terms, try the primary source directly, then say so |
 | An optional MCP server is absent | Use the always-available equivalent; do not tell the user to install anything |
-| Enterprise session expired | Interactive: inform the user, let re-authentication happen, retry once. Dispatched: list the source as unread |
 | Sources contradict each other | Record both and name the contradiction as an open question — do not pick silently. Ask the user only when interactive |
 
 ## Tips
@@ -330,7 +300,7 @@ epic that silently resolved an open question is worse than one that admits it.
 - For large document sets, prioritize the most recent and most relevant; say which ones you did not read
 - Cross-reference findings across sources — agreement between two independent sources is worth recording as such
 - Keep the summary concise; detail belongs in the individual epic and issue bodies it feeds
-- Where local documents and enterprise or web sources overlap, note both the overlap and the discrepancies
+- Where local documents and web sources overlap, note both the overlap and the discrepancies
 - Re-running a document conversion over the same directory is normally safe and skips what is already converted
 - Every claim gets a source and a version. A claim with neither is an open question wearing a suit
 - Finish by asking yourself the only question that matters here: *which sentence in this summary

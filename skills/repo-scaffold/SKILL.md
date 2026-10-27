@@ -160,103 +160,11 @@ Based on the project type and description, research the best tech stack. Everyth
 a **starting point for a recommendation**, not a house style — present each concrete stack as
 one option among alternatives, and let the user's requirements pick the winner.
 
-#### Frontend Projects (Web App, Full-Stack frontend)
-
-**A common default**: React + Tailwind CSS + an accessible headless component library
-(Radix UI, Ark UI, or React Aria). Vue + Nuxt, Svelte + SvelteKit and Solid are legitimate
-answers when the user or the team already leans that way — ask before assuming React.
-
-Research the shortlist before recommending:
-- Resolve the framework in Context7 if configured and query "project setup / scaffolding /
-  getting started", otherwise `WebSearch` for the framework's current quickstart.
-- Confirm the **current major version** and its scaffolding command. These change often, and
-  a stale `create-*` invocation is the most common scaffold failure.
-
-**Decision tree**:
-- Needs SSR, SEO, or file-based routing → a meta-framework (**Next.js** App Router,
-  **Nuxt**, **SvelteKit**, **Remix**)
-- Pure SPA, no SSR needed → **Vite** + the chosen UI library
-- Content-heavy site → **Astro** (with islands)
-- Simple static site → **Astro** or a Vite SPA
-
-**Usually include, whatever the framework**:
-- A styling approach the team will actually keep (utility CSS, CSS modules, or a
-  design-system package)
-- Accessible component primitives rather than hand-rolled dialogs and menus
-- TypeScript in strict mode
-- A linter and a formatter, configured and wired into the CI gate
-- A unit test runner (Vitest, Jest, or the framework's own)
-- A browser e2e runner (Playwright or Cypress) if there is a UI
-
-#### Backend Projects (API Server, Full-Stack backend)
-
-Research the best fit based on the project requirements. None of these is the default; the
-requirements pick one:
-
-| Consideration | Candidate stack | When |
-|---------------|-----------------|------|
-| Simple REST API, rapid development | **Node.js/TypeScript + Fastify or Express**, or **Hono** on an edge runtime | Most web APIs, CRUD apps, real-time features |
-| Complex business logic, enterprise integration | **Java + Spring Boot**, or **C# + ASP.NET Core** | Heavy ORM needs, complex transactions, existing JVM/.NET estate |
-| Data science, ML, scientific computing | **Python + FastAPI** (or Litestar/Django REST) | ML pipelines, data processing, numeric workloads |
-| High performance, high concurrency | **Go + Chi/Gin/Echo** | Microservices, high-throughput, low-latency |
-| Systems programming, WASM, strict resource limits | **Rust + Axum/Actix** | Performance-critical, memory-safe systems |
-| Team already fluent in something else | **That** | Fluency beats benchmark deltas on almost every project |
-
-Persistence, likewise, is a question and not a given — relational (PostgreSQL, MySQL,
-SQLite), document, key-value, or no database at all. Ask what the data looks like and how it
-will be queried before naming a product, and let the ORM/query-builder follow the database
-rather than the other way round.
-
-For each candidate, check current setup docs (Context7 if configured, otherwise
-`WebSearch`/`WebFetch`) so the scaffold command and version pins you emit are real.
-
-Present the recommendation with reasoning:
-
-```markdown
-## Tech Stack Recommendation
-
-### Frontend
-- **Framework**: {framework + major version}
-- **Styling**: {approach}
-- **Components**: {library}
-- **Language**: {language + mode}
-
-### Backend
-- **Runtime**: {runtime + LTS version}
-- **Framework**: {framework + version}
-- **Language**: {language + mode}
-- **Data**: {database + access layer, or "none"}
-
-### Reasoning
-[Why this stack fits the described project — tie each choice to a stated requirement]
-
-### Alternatives Considered
-[What else was on the shortlist and the specific reason it lost]
-```
+Read `${CLAUDE_PLUGIN_ROOT}/skills/repo-scaffold/STACK_GUIDE.md`, section "Choosing a stack", for the per-type
+starting points (frontend, backend, CLI, library, MCP server) and the recommendation format.
 
 Wait for user confirmation before proceeding. Do not scaffold on an unconfirmed stack —
 undoing a scaffold is more work than asking.
-
-#### CLI Tools
-
-Ask how it will be distributed, because that decides the language more than anything else:
-a single static binary points at **Go** or **Rust**; `npx`-able tooling for a JS ecosystem
-points at **Node.js/TypeScript**; something that must sit alongside a data stack points at
-**Python** with a modern packaging tool. Whatever wins, include argument parsing, `--help`
-output, exit codes, and a test that runs the binary end to end.
-
-#### Libraries / Packages
-
-The registry the consumers already use decides the language. Pin down the public API surface
-and the supported runtime versions in the interview, and set up the release and versioning
-story (semver, a changelog convention, a publish workflow) at scaffold time rather than
-retrofitting it under time pressure later.
-
-#### MCP Server Projects
-
-**A common default**: TypeScript + the official MCP SDK for Node, or Python + the official
-Python MCP SDK. Look up the SDK's current quickstart before scaffolding — the protocol and
-its SDKs move quickly and the transport story in particular has changed more than once.
 
 ### Step 3: Create Repository
 
@@ -294,54 +202,8 @@ illustrative shapes, not pinned truth — verify the current invocation for the 
 resolved in Step 2 before running it, and adjust. Run each scaffold and confirm it exits
 clean; a command that fails here becomes a wrong command in `CLAUDE.md` later.
 
-#### Meta-framework + utility CSS + accessible primitives (example: Next.js)
-```bash
-npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir --import-alias "@/*"
-npm install <accessible-component-library>
-npm install -D vitest @testing-library/react @testing-library/jest-dom @playwright/test
-npx playwright install chromium
-```
-
-#### SPA bundler + React (example: Vite)
-```bash
-npm create vite@latest . -- --template react-ts
-npm install <styling-toolchain> <accessible-component-library>
-npm install -D vitest @testing-library/react @testing-library/jest-dom @playwright/test
-npx playwright install chromium
-```
-
-#### Node.js + Fastify + TypeScript
-```bash
-npm init -y
-npm install fastify @fastify/cors @fastify/helmet
-npm install -D typescript @types/node tsx vitest eslint prettier
-npx tsc --init --strict --target ES2022 --module NodeNext --moduleResolution NodeNext --outDir dist
-```
-
-#### Python + FastAPI
-```bash
-# Use whichever environment manager the project standardises on (uv, Poetry, PDM, or
-# stdlib venv). Record the choice — CLAUDE.md must name the exact interpreter path or
-# runner prefix, because a bare `pytest`/`ruff` on PATH is frequently NOT this project's.
-python3 -m venv <env-dir> && <env-dir>/bin/python -m pip install --upgrade pip
-<env-dir>/bin/python -m pip install fastapi "uvicorn[standard]" pydantic
-<env-dir>/bin/python -m pip install pytest pytest-asyncio httpx ruff mypy
-```
-
-#### Go + Chi
-```bash
-go mod init github.com/<OWNER>/<PROJECT_NAME>
-go get github.com/go-chi/chi/v5
-go get github.com/go-chi/cors
-```
-
-#### Rust + Axum
-```bash
-cargo init .
-cargo add axum tokio --features tokio/full
-cargo add serde --features derive
-cargo add tower-http --features cors
-```
+The per-stack scaffold commands are in `${CLAUDE_PLUGIN_ROOT}/skills/repo-scaffold/STACK_GUIDE.md`, section
+"Scaffold commands".
 
 Whatever the stack, before you leave this step **run the gate once and record what it
 actually prints**: install, build, test, lint. Those verified commands are the single most
@@ -597,18 +459,9 @@ Then transition to the **`/delivery:epic-planner`** skill.
 
 **Critical — follow these so runs stay non-interactive and terminate:**
 
-1. **Batch commands** — chain related commands into a SINGLE call using `&&`. Do not split
-   one logical step across several invocations.
-   ```bash
-   # CORRECT — one call
-   npm install && npm run lint && npm run test && npm run build
-
-   # WRONG — four calls
-   npm install
-   npm run lint
-   npm run test
-   npm run build
-   ```
+1. **Batch commands** — chain related commands into a SINGLE call using `&&`
+   (`npm install && npm run lint && npm run test && npm run build`). Do not split one logical
+   step across several invocations.
 
 2. **No watch mode** — never run watch or interactive commands. Always enforce one-shot
    execution:
@@ -644,10 +497,3 @@ Then transition to the **`/delivery:epic-planner`** skill.
    the exact commands. Run those, in that form, including any directory prefix or explicit
    interpreter path. Do not substitute the command you would expect for the command the
    project documents.
-
-## Prerequisites
-
-- `gh` CLI installed and authenticated (`gh auth status`)
-- `git` configured with a name, email, and push access
-- The chosen stack's toolchain available locally (language runtime, package manager)
-- Permission to create a repository under the intended owner
