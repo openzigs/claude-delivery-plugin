@@ -8,7 +8,8 @@
 //
 // Options: --tier haiku|sonnet|session (repeatable; default all three), --scope light|full|batch
 // (repeatable; default all three), --runs N (default 3), -j N (concurrent runs, default 4),
-// --max-cost-usd X (a ceiling per tier x scope call), --out DIR (default
+// --max-cost-usd X (a ceiling per tier x scope call), --case GLOB (only the matching cases; a
+// full-scope case is named <case>-full), --out DIR (default
 // evals/results/matrix-<timestamp>, gitignored), --dry-run.
 //
 // One `claude plugin eval` call per tier x scope, each with:
@@ -33,7 +34,7 @@ export const TIERS = ['haiku', 'sonnet', 'session']
 export const SCOPES = ['light', 'full', 'batch']
 
 export function parseArgs(argv) {
-  const o = { tiers: [], scopes: [], runs: 3, concurrency: 4, maxCost: null, out: null, dryRun: false }
+  const o = { tiers: [], scopes: [], runs: 3, concurrency: 4, maxCost: null, cases: null, out: null, dryRun: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     const val = () => {
@@ -46,6 +47,7 @@ export function parseArgs(argv) {
     else if (a === '--runs') o.runs = Number(val())
     else if (a === '-j' || a === '--concurrency') o.concurrency = Number(val())
     else if (a === '--max-cost-usd') o.maxCost = Number(val())
+    else if (a === '--case') o.cases = val()
     else if (a === '--out') o.out = val()
     else if (a === '--dry-run') o.dryRun = true
     else throw new Error(`unknown option ${a}`)
@@ -74,6 +76,7 @@ export function evalArgs(o, tier, scope, json) {
     '-j', String(o.concurrency),
     ...(tier === 'session' ? [] : ['--model', tier]),
     ...(o.maxCost != null ? ['--max-cost-usd', String(o.maxCost)] : []),
+    ...(o.cases ? ['--case', o.cases] : []),
     '--json', json,
   ]
 }

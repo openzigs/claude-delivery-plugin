@@ -1099,8 +1099,9 @@ for (const file of workflowFiles) {
     'suppressed findings from the review and the re-review are counted in the result, not discarded silently',
     `suppressedFindings = ${pr0(r).suppressedFindings}, findingCounts = ${JSON.stringify(pr0(r).findingCounts)}`)
     check(r.logs.some((l) => /#412: 1 non-blocking finding\(s\) below confidence 50 suppressed/.test(l)), 'a suppression is logged with the threshold')
-    check(/const CONFIDENCE_THRESHOLD = 50\n/.test(src) && /PROVISIONAL default, not an eval result/.test(src),
-      'the threshold and its source (a provisional default, no eval data yet) are recorded in the code comment')
+    check(/const CONFIDENCE_THRESHOLD = 50\n/.test(src) && /measured by the #92 eval matrix \(docs\/benchmarks\.md/.test(src)
+      && /### Results at #92/.test(readFileSync(join(ROOT, 'docs/benchmarks.md'), 'utf8')),
+      'the threshold and its source (the #92 eval matrix, whose results docs/benchmarks.md records) are in the code comment')
     r = await run()
     check(pr0(r).suppressedFindings === 0, 'a run with nothing below the threshold records suppressedFindings 0')
     const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
@@ -1677,6 +1678,18 @@ console.log('\n== evals/, scripts/eval-build.mjs, eval-scaffold.mjs, eval-run.mj
     'seeded-large-diff': L('src/refunds/service.js:44', 'high', 85, 'approveRefund never checks refund.requested_by against the approver, so a finance user can approve their own refund; docs/refunds.md rule 6 (four-eyes) forbids it'),
   }
   for (const k of Object.keys(HIT)) HIT[k] += VERDICT
+  // Correct replies from the #92 matrix that an earlier pattern missed: each grader must keep
+  // passing them.
+  const REAL_HIT = {
+    'seeded-race-lock-helper': L('src/inventory/reserve.js:9-12', 'high', 95, 'The lock does not cover the read-check-write. `withLock` (`src/lib/lock.js:11-13`) returns `fn()`\'s pending promise and deletes the key in `finally` before the first `await` resolves.'),
+    'seeded-wrong-branch-coverage': [
+      L('test/coupons.test.js:3', 'high', 97, 'No test covers the new behaviour. The issue says to cover it with tests, but both tests only pass a future `expiresAt`. Deleting the new `throw` line would leave the suite green.'),
+      L('test/coupons.test.js:3', 'high', 95, 'Nothing tests that an expired coupon throws. Both tests use `expiresAt: Date.now() + 60000`, so they can\'t fail.'),
+      L('test/coupons.test.js:1-9', 'high', 97, 'No test covers the new rejection path. Removing the guard at `src/coupons.js:2` leaves both tests green.'),
+      L('test/coupons.test.js:5-9', 'high', 95, 'The issue asks for tests covering the expiry behaviour, but both tests use `expiresAt: Date.now() + 60000`, so the throw path never runs.'),
+    ].join('\n'),
+  }
+  for (const k of Object.keys(REAL_HIT)) REAL_HIT[k] += VERDICT
   // A reply that names the defect's words but dismisses it and approves must not score.
   const D = (loc, text, sev = 'nit') => `${L(loc, sev, 30, text, false)}\nRecommendation: merge`
   const DISMISS = {
@@ -1818,6 +1831,8 @@ console.log('\n== evals/, scripts/eval-build.mjs, eval-scaffold.mjs, eval-run.mj
       c(re && others.length === 0, `${n}: its grader fails on every other seeded case's hit${others.length ? ` — passed on ${others.join(', ')}` : ''}`)
     }
     if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
+    if (REAL_HIT[n]) c(re && REAL_HIT[n].split('\n').filter((l) => / — /.test(l)).every((l) => re.test(`${l}${VERDICT}`)),
+      `${n}: its grader passes on the correct replies from the #92 matrix that an earlier pattern missed`)
     if (DISMISS[n]) c(re && !re.test(DISMISS[n]), `${n}: its grader fails on a reply that dismisses the defect and says merge`)
     // The full-scope copy carries the same graders and tags.
     const fd = join(EV, 'full', n)
@@ -1919,6 +1934,10 @@ console.log('\n== evals/, scripts/eval-build.mjs, eval-scaffold.mjs, eval-run.mj
     && /^sonnet and weak-tier \(light\): recall ranges do not overlap at N=3$/m.test(t.stdout),
   'two tiers whose recall ranges overlap are reported as not distinguishable at N, and two that do not, as distinguishable')
   c(/Effort was not compared: claude plugin eval has no effort flag/.test(t.stdout), 'the report says effort was not compared')
+  const rr = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json'), join(FX, 'haiku-rerun.json')], { encoding: 'utf8' })
+  c(rr.status === 0 && /^haiku\s+light\s+3\s+78% \[67%-100%\] of 3/m.test(rr.stdout) && /\s0% \[0%-0%\] of 1\s/.test(rr.stdout.split('\n')[1] || '')
+    && (rr.stdout.match(/^haiku\s+light/gm) || []).length === 1 && !/false-blocked/.test(rr.stdout),
+  `two files of one tier merge into one row, and a case re-run in the later file replaces its earlier runs (exit ${rr.status})`)
   const mx = spawnSync(process.execPath, [SCRIPT, join(FX, 'mixed-scopes.json')], { encoding: 'utf8' })
   c(mx.status === 0 && /^sonnet\s+full\s+3\s+0% \[0%-0%\] of 3/m.test(mx.stdout) && /^sonnet\s+light\s+3\s+100% \[100%-100%\] of 3/m.test(mx.stdout),
     `a file with both scopes gives a light and a full row (exit ${mx.status})`)
@@ -1932,13 +1951,15 @@ console.log('\n== evals/, scripts/eval-build.mjs, eval-scaffold.mjs, eval-run.mj
   c(bt.status === 0 && /^sonnet\s+batch\s+3\s+67% \[50%-100%\] of 2\s+0\.0 \[0\.0-0\.0\]/m.test(bt.stdout) && /^sonnet\s+per-pr\s+3\s+83% \[50%-100%\] of 2\s+0\.3 \[0\.0-1\.0\]/m.test(bt.stdout)
     && /--batch-review graduation criterion \(sonnet\): MET — batch mean recall 67% >= per-PR min 50%; batch false blocks 0\.0 <= per-PR 0\.3/.test(bt.stdout),
   `the batch-review comparison reports recall per mode and the graduation criterion with its verdict (exit ${bt.status})`)
-  c(/^seeded\s+2\s+1\s+0\s+1\s+1\s+0\s+1\s+1$/m.test(bt.stdout) && /^clean\s+1\s+0\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(bt.stdout),
-    'the calibration classes batch findings by the PR section they sit under')
+  c(/^seeded\s+2\s+1\s+0\s+1\s+1\s+0\s+1\s+1$/m.test(bt.stdout) && /^clean\s+1\s+0\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(bt.stdout)
+    && /of 2 found: <30: 0, <50: 1, <70: 1/.test(bt.stdout) && /highest tested threshold that loses no seeded defect is 30/.test(bt.stdout),
+  'the calibration classes batch findings by the PR section they sit under, and counts a defect lost per PR')
   const cal = spawnSync(process.execPath, [SCRIPT, join(FX, 'haiku.json')], { encoding: 'utf8' })
   c(/^seeded\s+2\s+1\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(cal.stdout) && /^decoy\s+1\s+1\s+0\s+0\s+0\s+0\s+0\s+1$/m.test(cal.stdout)
     && /^clean\s+1\s+0\s+1\s+1\s+1\s+1\s+1\s+1$/m.test(cal.stdout) && /^other\s+1\s+0\s+0\s+1\s+1\s+0\s+1\s+1$/m.test(cal.stdout)
-    && /Every threshold tested would drop at least one seeded-defect finding/.test(cal.stdout),
-  'the confidence calibration counts seeded, decoy, clean-change and other findings under 30, 50 and 70, split by what the threshold would drop')
+    && /Seeded defects lost \(every finding naming it in that reply dropped\), of 2 found: <30: 1, <50: 1, <70: 1/.test(cal.stdout)
+    && /Every threshold tested would lose at least one seeded defect/.test(cal.stdout),
+  'the confidence calibration counts seeded, decoy, clean-change and other findings under 30, 50 and 70, split by what the threshold would drop, and the seeded defects a threshold would lose')
   try {
     const m = await import(SCRIPT)
     c(m.batchVerdict({ runs: 3, invalid: 0, recall: { mean: 0.4 }, falseBlocks: { mean: 0 } }, { runs: 3, invalid: 0, recall: { min: 0.5, mean: 0.8 }, falseBlocks: { mean: 0 } }).met === false

@@ -45,8 +45,28 @@ MIT
 {
   "name": "inventory",
   "private": true,
-  "scripts": { "test": "jest", "test:integration": "jest -c jest.integration.config.js" }
+  "scripts": { "test": "jest --testPathIgnorePatterns test/integration", "test:integration": "jest -c jest.integration.config.js" },
+  "devDependencies": { "jest": "^29.7.0", "pg": "^8.11.0" }
 }
+@@@ base jest.integration.config.js
+// Integration tests: they need the database from docker-compose.yml (postgres on localhost:5432,
+// password "postgres"; test/integration/setup.js reads DATABASE_URL or falls back to that).
+module.exports = {
+  testMatch: ['<rootDir>/test/integration/**/*.test.js'],
+  setupFiles: ['<rootDir>/test/integration/setup.js'],
+}
+@@@ base test/integration/setup.js
+process.env.DATABASE_URL ||= 'postgres://postgres:postgres@localhost:5432/postgres'
+@@@ base test/integration/stock.test.js
+const { Client } = require('pg')
+
+test('the stock table exists', async () => {
+  const db = new Client({ connectionString: process.env.DATABASE_URL })
+  await db.connect()
+  const { rows } = await db.query("SELECT to_regclass('public.stock') AS t")
+  await db.end()
+  expect(rows[0].t).toBe('stock')
+})
 @@@ base docker-compose.yml
 services:
   db:

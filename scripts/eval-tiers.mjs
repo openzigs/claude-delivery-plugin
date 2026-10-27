@@ -5,6 +5,8 @@
 //   node scripts/eval-run.mjs                      # runs the matrix and calls this script
 //   node scripts/eval-tiers.mjs <result.json>... [--json]
 //
+// Files of the same tier are merged; a case in more than one of them is taken from the last.
+//
 // Input: `claude plugin eval` result documents (schemaVersion 1), one per tier and scope, as
 // scripts/eval-run.mjs writes them. The tier is the run's --model; the scope is LIGHT for a case
 // named `<case>`, FULL for `<case>-full`, and BATCH for the batch-review comparison cases.
@@ -239,13 +241,13 @@ export function parseFindings(reply) {
 // Class every finding in every valid run: seeded, decoy, clean or other.
 export function calibrate(docs, tags = loadTags()) {
   const findings = []
-  for (const { doc, dir } of docs) {
+  for (const [id, { doc, dir }] of docs.entries()) {
     for (const c of doc?.cases || []) {
       const n = base(c)
       const defs = Object.fromEntries((c.graders || []).filter((g) => g.type === 'regex').map((g) => [g.name, g.config || {}]))
       const re = (g) => (g && g.pattern ? new RegExp(findingPattern(g.pattern), (g.flags || '').replace('g', '')) : null)
       const isDecoy = (tags[n] || []).includes('decoy')
-      for (const r of runsOf(c)) {
+      for (const [i, r] of runsOf(c).entries()) {
         if (!isValid(r)) continue
         const f = traceFacts(tracePathOf(r, dir))
         if (!f?.reply) continue
@@ -262,7 +264,7 @@ export function calibrate(docs, tags = loadTags()) {
             const lure = re(defs['avoids-decoy'])
             cls = isDecoy && lure && lure.test(x.line) ? 'decoy' : 'clean'
           }
-          findings.push({ case: c.name, cls, confidence: x.confidence, blocking: x.blocking, severity: x.severity })
+          findings.push({ case: c.name, run: `${id}|${c.name}#${i}|${x.pr ?? ''}`, cls, confidence: x.confidence, blocking: x.blocking, severity: x.severity })
         }
       }
     }
@@ -278,9 +280,14 @@ export function calibrate(docs, tags = loadTags()) {
       below: Object.fromEntries(THRESHOLDS.map((t) => [t, mine.filter((f) => f.confidence < t).length])),
     }
   }
-  // The highest threshold that would drop no seeded-defect finding, and what it would drop.
-  const safe = [...THRESHOLDS].reverse().find((t) => table.seeded.dropped[t] === 0) ?? null
-  return { findings, table, safest: safe }
+  // A seeded defect is lost to a threshold only when every finding in that reply that names it
+  // would be dropped; a low-confidence repeat of a blocking finding loses nothing.
+  const byRun = new Map()
+  for (const f of findings.filter((x) => x.cls === 'seeded')) byRun.set(f.run, [...(byRun.get(f.run) || []), f])
+  const lost = Object.fromEntries(THRESHOLDS.map((t) => [t, [...byRun.values()].filter((fs) => fs.every((f) => !f.blocking && f.confidence < t)).length]))
+  // The highest threshold that would lose no seeded defect, and what it would drop.
+  const safe = [...THRESHOLDS].reverse().find((t) => lost[t] === 0) ?? null
+  return { findings, table, lost, defectsFound: byRun.size, safest: safe }
 }
 
 // Tiers in the same scope whose recall ranges overlap cannot be told apart at this N.
@@ -302,6 +309,26 @@ export function overlaps(rows) {
     }
   }
   return out
+}
+
+// One document per tier: every case from every file of that tier, with a case that appears in
+// more than one file taken from the LAST file named, so a re-run of a few cases (eval-run.mjs
+// --case) replaces their earlier results. Trace paths are made absolute first, since each was
+// relative to its own file.
+export function mergeByTier(loaded) {
+  const tiers = new Map()
+  for (const { doc, dir, id } of loaded) {
+    const tier = doc.suite?.modelOverride || 'session model'
+    if (!tiers.has(tier)) tiers.set(tier, { doc: { ...doc, cases: [] }, byName: new Map(), ids: [] })
+    const t = tiers.get(tier)
+    t.ids.push(id)
+    t.doc.partial = Boolean(t.doc.partial || doc.partial)
+    for (const c of doc.cases || []) {
+      const runs = runsOf(c).map((r) => ({ ...r, tracePath: tracePathOf(r, dir) }))
+      t.byName.set(c.name, { ...c, arms: { ...c.arms, with: runs } })
+    }
+  }
+  return [...tiers.values()].map((t) => ({ doc: { ...t.doc, cases: [...t.byName.values()] }, dir: null, id: t.ids.join('+') }))
 }
 
 const pct = (x) => (x == null ? 'n/a' : `${Math.round(x * 100)}%`)
@@ -344,9 +371,11 @@ export function render(rows, batch, cal) {
     const ct = [ch, ...Object.entries(cal.table).map(([k, v]) => [k, String(v.findings), String(v.blocking), ...THRESHOLDS.map((t) => String(v.dropped[t])), ...THRESHOLDS.map((t) => String(v.below[t]))])]
     const cw = ch.map((_, i) => Math.max(...ct.map((t) => String(t[i]).length)))
     for (const t of ct) lines.push(t.map((c, i) => String(c).padEnd(cw[i])).join('  ').trimEnd())
+    lines.push(`Seeded defects lost (every finding naming it in that reply dropped), of ${cal.defectsFound} found: ` +
+      THRESHOLDS.map((t) => `<${t}: ${cal.lost[t]}`).join(', '))
     lines.push(cal.safest == null
-      ? 'Every threshold tested would drop at least one seeded-defect finding.'
-      : `The highest tested threshold that drops no seeded-defect finding is ${cal.safest}; it drops ${cal.table.decoy.dropped[cal.safest] + cal.table.clean.dropped[cal.safest]} decoy or clean-change finding(s) and ${cal.table.other.dropped[cal.safest]} other(s).`)
+      ? 'Every threshold tested would lose at least one seeded defect.'
+      : `The highest tested threshold that loses no seeded defect is ${cal.safest}; it drops ${cal.table.decoy.dropped[cal.safest] + cal.table.clean.dropped[cal.safest]} decoy or clean-change finding(s) and ${cal.table.other.dropped[cal.safest]} other(s).`)
   }
   lines.push('Recall and false blocks are means over N passes of the suite, with the lowest and highest pass. costUsd is list price.')
   lines.push('Effort was not compared: claude plugin eval has no effort flag, so every row ran at the CLI default effort.')
@@ -362,25 +391,28 @@ if (isMain) {
     console.log('usage: node scripts/eval-tiers.mjs <result.json>... [--json]')
     process.exit(2)
   }
-  const rows = []
-  const batch = []
-  const docs = []
+  const loaded = []
   let status = 0
   const categories = loadCategories()
   for (const p of paths) {
     let doc
     try { doc = JSON.parse(readFileSync(p, 'utf8')) } catch (e) { console.error(`cannot read ${p}: ${e.message}`); status = 1; continue }
-    const got = summarise(doc, basename(p), categories, dirname(resolve(p)))
-    if (!got) { console.error(`${p}: not a claude plugin eval result (schemaVersion 1)`); status = 1; continue }
+    if (!Array.isArray(doc?.cases) || doc.schemaVersion !== 1) { console.error(`${p}: not a claude plugin eval result (schemaVersion 1)`); status = 1; continue }
+    loaded.push({ doc, dir: dirname(resolve(p)), id: basename(p) })
+  }
+  const docs = mergeByTier(loaded)
+  const rows = []
+  const batch = []
+  for (const { doc, id } of docs) {
+    const got = summarise(doc, id, categories, null)
     if (got.some((r) => !r.controlsFailedAsExpected || r.invalid.length)) status = 1
     rows.push(...got)
-    const b = summariseBatch(doc, basename(p))
+    const b = summariseBatch(doc, id)
     if (b.some((x) => x.invalid)) status = 1
     batch.push(...b)
-    docs.push({ doc, dir: dirname(resolve(p)) })
   }
   const cal = calibrate(docs)
-  if (asJson) console.log(JSON.stringify({ rows, batch, overlaps: overlaps(rows), calibration: { table: cal.table, safest: cal.safest } }, null, 2))
+  if (asJson) console.log(JSON.stringify({ rows, batch, overlaps: overlaps(rows), calibration: { table: cal.table, lost: cal.lost, defectsFound: cal.defectsFound, safest: cal.safest } }, null, 2))
   else console.log(render(rows, batch, cal))
   process.exit(status)
 }

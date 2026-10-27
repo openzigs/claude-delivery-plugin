@@ -1,6 +1,8 @@
 # Benchmarks: prompt footprint, review evals and pipeline replay
 
-> **Cost.** Scenarios 1 and 2 are free or cheap. Scenarios 3–5, the pipeline replay, are
+> **Cost.** Scenario 1 is free. Scenario 2's full matrix (three tiers, two scopes, N=3) cost
+> about **$83 at list price** at #92, most of it the session model; one tier on one scope is
+> cents to dollars. Scenarios 3–5, the pipeline replay, are
 > **expensive**: one full run of both scenarios on two refs (0.7.1 and 0.8.0, N=1) is in the
 > order of **a few million tokens** — every issue goes through a real implement, review and,
 > for the trap issue, fix and re-review, on a real GitHub scratch repository. Each `--runs`
@@ -13,7 +15,7 @@ change that moves a prompt, a skill or a review tier, and compare.
 | Scenario | Command | Cost | Deterministic |
 |----------|---------|------|---------------|
 | 1. Static prompt footprint | `node scripts/footprint.mjs --ref <a> --ref <b>` | free | yes |
-| 2. Review precision and recall | `node scripts/eval-run.mjs` (`claude plugin eval` + `scripts/eval-tiers.mjs`) | MATRIX_COST at list price for the full matrix at N=3 | no |
+| 2. Review precision and recall | `node scripts/eval-run.mjs` (`claude plugin eval` + `scripts/eval-tiers.mjs`) | about $83 at list price for the full matrix at N=3 (haiku $2, sonnet $23, session model $58) | no |
 | 3–5. Pipeline replay and behaviour checks | `node scripts/bench-run.mjs` + `node scripts/bench-report.mjs` | a few million tokens for two refs | no |
 
 ## Scenario 1 — static prompt footprint per dispatch
@@ -145,7 +147,10 @@ cases build their repository), `--allow-tools Bash` (the reviewer reads and runs
 under the eval sandbox), `--ablation none` (without the plugin there is no reviewer agent to
 compare against) and `--keep-temp`. It copies each run's trace next to its result, so the
 report can count the reviewer's turns and read its findings, and deletes the kept run
-directory. `--tier`, `--scope`, `--runs N` (default 3), `-j N` and `--max-cost-usd` narrow it.
+directory. `--tier`, `--scope`, `--case GLOB`, `--runs N` (default 3), `-j N` and
+`--max-cost-usd` narrow it. `eval-tiers.mjs` merges every file of one tier, and a case found in
+more than one file is taken from the last one named, so after fixing a fixture or a grader you
+re-run only that case (`--case 'seeded-x*' --out <dir>`) and list its results after the rest.
 The session tier passes no `--model`; every agent the session dispatches inherits its model, so
 the reviewer runs on the tier under test.
 
@@ -174,6 +179,53 @@ approves, five that block on a different defect, and every other seeded case's h
 race cases share a defect class and are allowed to match each other); every clean grader
 against a do-not-merge reply; each decoy's bait pattern against a finding that takes the bait;
 each batch grader against a reply with the two defects swapped between PR sections.
+
+### Results at #92 (Claude Code 2.1.311, N=3)
+
+Tiers: haiku is `claude-haiku-5-5`, sonnet `claude-sonnet-5-5`, the session model
+`claude-opus-5-5`; the reviewer inherits the session's model. 504 runs, none invalid: every run
+dispatched `delivery:code-review`. Recall is the mean over three passes of the suite, with the
+lowest and highest pass.
+
+| tier | scope | recall (21 seeded) | tests category (3) | false blocks (5 clean) | cost per pass | turns per run |
+|------|-------|--------------------|--------------------|------------------------|---------------|---------------|
+| haiku | light | 97% [95–100%] | 78% [67–100%] | 13% [0–20%] | $0.34 | 5.7 [4–10] |
+| haiku | full | 100% [100–100%] | 100% | 0% | $0.35 | 6.2 [4–11] |
+| sonnet | light | 98% [95–100%] | 89% [67–100%] | 0% | $3.76 | 4.0 [3–5] |
+| sonnet | full | 100% [100–100%] | 100% | 0% | $3.56 | 4.2 [3–6] |
+| session model | light | 100% [100–100%] | 100% | 0% | $9.39 | 4.8 [4–7] |
+| session model | full | 100% [100–100%] | 100% | 0% | $8.45 | 4.9 [4–8] |
+
+Every pair of tiers overlaps on recall in both scopes: **not distinguishable at N=3**. Security,
+correctness, performance and requirements were found in every run by every tier. The misses were
+`seeded-fixture-hides-bug` (haiku and sonnet at light scope rated the case-sensitive comparison
+`low`), and haiku's light-scope false blocks were a docs change it blocked over a pre-existing
+gap in the integration setup and the publishable-key decoy, which it blocked as a live key in
+non-production builds. Turns are few because the procedure orients with one batched read.
+
+Batch review, two seeded PRs and one clean one, three runs per mode:
+
+| tier | batch recall | per-PR recall | false blocks (both modes) | batch cost / per-PR cost | criterion |
+|------|--------------|---------------|---------------------------|--------------------------|-----------|
+| haiku | 100% | 100% | 0 | $0.019 / $0.033 | met |
+| sonnet | 67% [50–100%] | 100% | 0 | $0.149 / $0.293 | **not met** |
+| session model | 100% | 100% | 0 | $0.497 / $0.837 | met |
+
+Sonnet's batch review twice assumed `pg` returns `Date` objects without reading `src/db.js`,
+and approved PR #1413; reviewed on its own, it read the file every time.
+
+Confidence calibration over 2,481 findings (`dropped` counts the non-blocking ones under the
+threshold, which is all `CONFIDENCE_THRESHOLD` removes):
+
+| finding is | count | blocking | dropped <30 | dropped <50 | dropped <70 |
+|------------|-------|----------|-------------|-------------|-------------|
+| the seeded defect | 836 | 599 | 0 | 11 | 68 |
+| a decoy's bait | 1 | 1 | 0 | 0 | 0 |
+| on a clean change | 234 | 1 | 2 | 36 | 134 |
+| other (truth unknown) | 1,410 | 285 | 10 | 191 | 621 |
+
+No threshold tested would have lost a seeded defect: in each of the 400 replies that named one,
+some finding naming it was blocking or rated 70 or more.
 
 **What it proves.** Whether a model, at a scope, running the plugin's real review procedure,
 names a known defect in a small repository and blocks on it, and whether it blocks a change

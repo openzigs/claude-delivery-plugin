@@ -3,7 +3,8 @@
   "name": "catalog-api",
   "private": true,
   "scripts": { "test": "jest" },
-  "dependencies": { "express": "^4.19.0", "pg": "^8.11.0" }
+  "dependencies": { "express": "^4.19.0", "pg": "^8.11.0" },
+  "devDependencies": { "jest": "^29.7.0", "supertest": "^7.0.0" }
 }
 @@@ base src/db.js
 const { Pool } = require('pg')
@@ -35,7 +36,8 @@ const SORTABLE = new Map([
 router.get('/products', async (req, res) => {
   const column = SORTABLE.get(String(req.query.sort)) ?? 'created_at'
   const direction = req.query.dir === 'asc' ? 'ASC' : 'DESC'
-  const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 50, 1), 200)
+  const requested = Number.parseInt(req.query.limit, 10)
+  const limit = Number.isNaN(requested) ? 50 : Math.min(Math.max(requested, 1), 200)
   // ORDER BY cannot take a bound parameter, so the column and direction come from the
   // fixed values above; the limit is bound.
   const rows = await db.query(`SELECT id, name, price_cents FROM products ORDER BY ${column} ${direction} LIMIT $1`, [limit])
@@ -49,7 +51,10 @@ const db = require('../src/db')
 const request = require('supertest')
 const app = require('express')().use(require('../src/routes/products'))
 
-beforeEach(() => db.query.mockResolvedValue([]))
+beforeEach(() => {
+  db.query.mockReset()
+  db.query.mockResolvedValue([])
+})
 
 test.each([
   ['name', 'asc', 'ORDER BY name ASC'],
@@ -61,13 +66,19 @@ test.each([
   expect(db.query.mock.calls[0][0]).toContain(sql)
 })
 
-test('the limit is clamped and bound', async () => {
-  await request(app).get('/products').query({ limit: '100000' })
-  expect(db.query.mock.calls[0][1]).toEqual([200])
+test.each([
+  ['100000', 200],
+  ['0', 1],
+  ['abc', 50],
+  [undefined, 50],
+])('limit=%s is clamped and bound as %i', async (limit, bound) => {
+  await request(app).get('/products').query(limit === undefined ? {} : { limit })
+  expect(db.query.mock.calls[0][1]).toEqual([bound])
+  expect(db.query.mock.calls[0][0]).not.toMatch(/DROP|;/)
 })
 @@@ issue
 Sort the product list
 
-GET /products takes ?sort=name|price|newest, ?dir=asc|desc and ?limit (at most 200).
+GET /products takes ?sort=name|price|newest (default newest), ?dir=asc|desc (default desc) and ?limit (1 to 200, default 50).
 @@@ pr
 Adds sorting and a clamped limit to GET /products. The sort column comes from a fixed map, never from the request, and the limit is a bound parameter; the tests include an injection attempt. Closes #412.
