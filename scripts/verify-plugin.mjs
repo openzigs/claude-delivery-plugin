@@ -1396,28 +1396,45 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
   const EV = join(ROOT, 'evals')
   const cases = existsSync(EV) ? readdirSync(EV, { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== 'results').map((e) => e.name).sort() : []
   const grader = (name) => {
-    const fm = frontmatter(readFileSync(join(EV, name, 'graders', 'found-seeded-defect.md'), 'utf8'), `evals/${name}/graders/found-seeded-defect.md`) || {}
+    const gp = join(EV, name, 'graders', 'found-seeded-defect.md')
+    if (!existsSync(gp)) return null
+    const fm = frontmatter(readFileSync(gp, 'utf8'), `evals/${name}/graders/found-seeded-defect.md`) || {}
     return fm.type === 'regex' ? new RegExp(fm.pattern, fm.flags || '') : null
   }
+  const VERDICT = '\nRecommendation: do not merge'
   const HIT = {
     'seeded-sql-injection': 'src/routes/users.js:16 — high — SQL injection: name is concatenated into the query; use a parameterized query',
     'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — high — getInvoice ignores tenantId, so any tenant can read another tenant\'s invoice (IDOR)',
     'seeded-auth-bypass': 'src/middleware/auth.js:6 — critical — a request with no token now calls next(), so unauthenticated requests pass',
   }
+  for (const k of Object.keys(HIT)) HIT[k] += VERDICT
+  // A reply that names the defect's words but dismisses it and approves must not score.
+  const DISMISS = {
+    'seeded-sql-injection': 'src/routes/users.js:16 — nit — no SQL injection concern noted here, the query is concatenated but admin-only\nRecommendation: merge',
+    'seeded-missing-tenant-scope': 'src/invoices/repository.ts:9 — nit — tenant handling is not a concern in this change\nRecommendation: merge',
+    'seeded-auth-bypass': 'src/middleware/auth.js:6 — nit — health checks with no token are now allowed through; fine for the load balancer\nRecommendation: merge',
+  }
+  // The control's defect (RETRY_LIMIT in an unseen config) can be named only by guessing its value.
+  const CONTROL_HIT = 'src/jobs/retry.js:5 — high — RETRY_LIMIT is 4096 in config, so a failing call retries for hours\nRecommendation: do not merge'
   const MISS = 'src/x.js:1 — nit — consider renaming this variable for clarity\nRecommendation: merge'
   const seeded = cases.filter((n) => n.startsWith('seeded-')), controls = cases.filter((n) => n.startsWith('control-'))
   c(seeded.length >= 3 && controls.length >= 1, `at least 3 seeded-defect cases and 1 control (found ${seeded.length} / ${controls.length})`)
   for (const n of cases) {
-    const prompt = readFileSync(join(EV, n, 'prompt.md'), 'utf8')
+    const pp = join(EV, n, 'prompt.md')
+    const prompt = existsSync(pp) ? readFileSync(pp, 'utf8') : ''
     c(/```diff\n[\s\S]+```/.test(prompt) && /do not run `gh`/.test(prompt) && existsSync(join(EV, n, 'case.yaml')),
       `${n}: a synthetic diff in the prompt, no GitHub access, and a case.yaml`)
     const re = grader(n)
     c(re && !re.test(MISS), `${n}: its grader is a regex that fails on a reply that misses the defect`)
-    if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect`)
+    if (HIT[n]) c(re && re.test(HIT[n]), `${n}: its grader passes on a reply that names the seeded defect and says do not merge`)
+    if (DISMISS[n]) c(re && !re.test(DISMISS[n]), `${n}: its grader fails on a reply that dismisses the defect and says merge`)
   }
   for (const n of controls) {
     const re = grader(n)
-    c(re && Object.values(HIT).every((h) => !re.test(h)), `${n}: the control grader matches no real finding, so the case can only score 0`)
+    c(re && Object.values(HIT).every((h) => !re.test(h)) && Object.values(DISMISS).every((h) => !re.test(h)),
+      `${n}: the control grader matches no real finding, so a real reply scores 0`)
+    c(re && re.test(CONTROL_HIT) && !re.test(CONTROL_HIT.replace('do not merge', 'merge')),
+      `${n}: the control grader is shaped like the seeded ones (defect named plus do-not-merge verdict), so it can pass and fail`)
   }
   c(/^evals\/results\/$/m.test(readFileSync(join(ROOT, '.gitignore'), 'utf8')), 'eval run results (evals/results/) are gitignored')
 
@@ -1432,6 +1449,11 @@ console.log('\n== evals/ and scripts/eval-tiers.mjs ==')
     && /Output tokens are not reported/.test(t.stdout), `two tiers give one row each with recall, control status and cost (exit ${t.status})`)
   const b = spawnSync(process.execPath, [SCRIPT, join(FX, 'broken-control.json')], { encoding: 'utf8' })
   c(b.status === 1 && /SCORER CANNOT FAIL/.test(b.stdout), `a control case that scored above 0 is flagged and exits 1 (exit ${b.status})`)
+  const sl = join(tmpdir(), `eval-tiers-link-${process.pid}.mjs`)
+  rmSync(sl, { force: true }); symlinkSync(SCRIPT, sl)
+  const sy = spawnSync(process.execPath, [sl, join(FX, 'haiku.json')], { encoding: 'utf8' })
+  rmSync(sl, { force: true })
+  c(sy.status === 0 && /^haiku\s+3\/3/m.test(sy.stdout), `eval-tiers.mjs run through a symlink still prints its table (exit ${sy.status})`)
   try {
     const { summarise } = await import(SCRIPT)
     const doc = JSON.parse(readFileSync(join(FX, 'haiku.json'), 'utf8'))

@@ -2,7 +2,7 @@
 type: regex
 target: last_message
 flags: i
-pattern: 'EVAL-CONTROL-7f3a9c'
+pattern: 'RETRY_LIMIT[^\n]{0,80}\b4096\b[\s\S]*Recommendation:\s*do not merge'
 ---
 
-The seeded defect is outside the diff (the value of RETRY_LIMIT in an unseen config file), so no reviewer can name it; the pattern is a sentinel that never appears. This case must score 0: it proves the scorer can fail.
+The seeded defect is outside the diff: config.js sets RETRY_LIMIT to 4096, and no reviewer can see that value. The grader is shaped like the seeded ones (defect named, then a do-not-merge verdict), so it can pass, but only by guessing a number the diff does not show. This case should score 0 on a real run.

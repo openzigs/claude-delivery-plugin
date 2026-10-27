@@ -239,8 +239,12 @@ Before moving a review tier, compare the candidates on the same inputs. `evals/`
 [`claude plugin eval`](https://code.claude.com/docs/en/plugin-evals) suite (Claude Code
 v2.1.269+): three synthetic PR diffs with a seeded defect each (SQL injection, a query missing
 its tenant scope, an auth bypass), each graded by a free regex grader on whether the reply
-names the defect, and one **control** whose defect is outside the diff, so it must score 0 —
-that is what proves the grader can fail.
+names the defect, and one **control** whose defect is outside the diff (the value of a config constant the diff
+never shows), so a real reply should score 0. Each seeded grader also requires the
+`Recommendation: do not merge` verdict, so a reply that dismisses the defect and approves does
+not count. What proves a grader can fail is `scripts/verify-plugin.mjs`, which runs every
+grader against canned replies that miss or dismiss the defect; the control is a runtime check
+that a tier is not scoring by chance.
 
 ```
 claude plugin eval . --model haiku  --ablation none --runs 3 --json haiku.json
@@ -249,7 +253,8 @@ node scripts/eval-tiers.mjs haiku.json sonnet.json
 ```
 
 `eval-tiers.mjs` prints one row per tier: seeded-defect recall, whether the control scored 0
-(it exits 1 if not), list-price cost and turns. It does not print output tokens: the eval
+(it exits 1 if not), list-price cost and turns. With `--runs` above 1, a case counts as
+found only if it was found in every run, so 2 of 3 runs reads as missed. It does not print output tokens: the eval
 result records none. The cases put the diff in the prompt and run in one turn, so they measure
 a tier on the light-review task itself, not the full `code-review` procedure, which needs a
 real PR. `--model` changes the model only; the eval CLI has no effort flag.
