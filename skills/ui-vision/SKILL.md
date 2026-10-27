@@ -1,6 +1,6 @@
 ---
 name: ui-vision
-description: Drives a real headed Chrome browser through a running web app to validate UI behaviour visually. Use when asked to walk through, click through, visually test, or QA a page or flow in a browser, or to reproduce a UI bug live. Collects findings with screenshots, console errors, and network failures, then files them and hands off to code-issue for batch fixes. Requires the app to be running and writes no tests — use e2e-test for durable Playwright specs.
+description: Drives a real headed Chrome browser through a running web app to validate UI behaviour visually. Use when asked to walk through, click through, visually test, or QA a page or flow in a browser, or to reproduce a UI bug live. Collects findings with screenshots, console errors, and network failures, then files them as issues and recommends them for batch fixing. Requires the app to be running and writes no tests — use e2e-test for durable Playwright specs.
 argument-hint: "Describe the walkthrough scenario — e.g. 'walk through the layer controls' or 'test the settings page against the local dev server'"
 ---
 
@@ -11,8 +11,8 @@ argument-hint: "Describe the walkthrough scenario — e.g. 'walk through the lay
 This skill drives the **UI Vision** agent through a structured walkthrough of a web application
 in a real Chrome browser. It navigates pages, interacts with elements, takes screenshots at
 every step, validates expected behaviour, and documents bugs with full evidence. After the
-walkthrough it hands any discovered bugs to the `delivery:code-issue` agent for batch fixing,
-then re-tests to verify the fixes.
+walkthrough it files any discovered bugs as GitHub issues and recommends them for batch fixing,
+then re-tests once fixes are pushed.
 
 It writes no tests. Anything worth keeping should become a Playwright spec via
 `/delivery:e2e-test` afterwards.
@@ -108,7 +108,7 @@ real bug class, and a high-severity one.
 ├─────────────────────────────────────────────────────────────┤
 │  4. REPORT — Summarize walkthrough results                   │
 ├─────────────────────────────────────────────────────────────┤
-│  5. HANDOFF — File issues, call code-issue for fixes         │
+│  5. HANDOFF — File issues, recommend them for fixing          │
 ├─────────────────────────────────────────────────────────────┤
 │  6. RE-TEST — Re-run failing steps after fixes are pushed    │
 └─────────────────────────────────────────────────────────────┘
@@ -309,7 +309,7 @@ If bugs were found during the walkthrough:
    filed issues are ready for `/delivery:orchestrate <issue numbers>` (or the
    `delivery:code-issue` agent), which fixes them test-first, runs the project's gates and opens
    a PR, with the bug issues as one batch.
-3. **If called by another agent**, report the issue numbers and the PR number back rather than
+3. **If called by another agent**, report the issue numbers back rather than
    proceeding. The caller routes through its own Review → Fix → Re-Review cycle before calling
    back for re-testing.
 
@@ -342,7 +342,7 @@ After the fixes are pushed:
 ### Standalone Mode
 When the user invokes UI Vision directly:
 - Run the full workflow (Prepare → Launch → Walk → Report → Handoff → Re-Test)
-- Manage the entire lifecycle, including the `delivery:code-issue` handoff
+- Manage the lifecycle through filing the issues; report that they are ready to be fixed
 - Report directly to the user at each stage
 
 ### Delegated Mode
@@ -350,7 +350,7 @@ When another agent invokes UI Vision as a phase of a larger pipeline:
 - The caller provides the PR number, branch name, target URL, and scenario
 - Run Prepare → Launch → Walk → Report
 - If bugs are found, report them back with issue numbers; do not start a fix cycle yourself
-- The caller routes through code-issue → review → re-review, then calls UI Vision again
+- The caller runs the fix, review and re-review cycle, then invokes UI Vision again
 - On re-test, verify only the previously failing steps
 
 ## Tips for Effective Walkthroughs

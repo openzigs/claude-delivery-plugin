@@ -55,7 +55,7 @@ and push it with `git push -u origin {branch}`. Always name the remote explicitl
 may carry remotes that are not push targets.
 
 **Under a workflow, the workflow decides isolation.** It runs a concurrent batch in a worktree it
-created for you, so do not create another. **When invoked interactively** and the checkout may be
+created for you, so do not create another. **When not under a workflow** and the checkout may be
 shared with another session, do not `git checkout` in it — a branch switch under another agent
 moves its HEAD mid-task. Create your own worktree (`git worktree add`) and remove it when done.
 

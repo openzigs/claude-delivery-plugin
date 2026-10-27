@@ -474,10 +474,10 @@ workflows/
 scripts/
   verify-plugin.mjs    # stdlib-only structural checks; run it before every PR
   cost-report.mjs      # the report /delivery:cost-report runs
-  eval-tiers.mjs       # per-tier table from `claude plugin eval` results
+  eval-tiers.mjs       # tier table over `claude plugin eval` results
   fixtures/            # synthetic inputs for the verifier
+evals/                 # light-review eval cases (seeded defects + a control) for A/B-ing model tiers
 docs/                  # installation, usage, configuration, gotchas, customising, templates
-evals/                 # synthetic light-review cases for `claude plugin eval`
 ```
 
 ## Contributing

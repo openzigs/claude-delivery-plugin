@@ -8,13 +8,15 @@ publish anything, and do not ask questions. Reply with every finding on its own 
 diff --git a/src/jobs/retry.js b/src/jobs/retry.js
 --- a/src/jobs/retry.js
 +++ b/src/jobs/retry.js
-@@ -1,8 +1,10 @@
+@@ -1,7 +1,8 @@
  const { RETRY_LIMIT } = require('../config')
  
  async function withRetry(fn) {
 -  for (let i = 0; i < 3; i++) {
-+  for (let i = 0; i < RETRY_LIMIT; i++) {
-     try { return await fn() } catch (e) { if (i === RETRY_LIMIT - 1) throw e }
+-    try { return await fn() } catch (e) { if (i === 2) throw e }
++  const limit = Number.isInteger(RETRY_LIMIT) && RETRY_LIMIT > 0 ? RETRY_LIMIT : 3
++  for (let i = 0; i < limit; i++) {
++    try { return await fn() } catch (e) { if (i === limit - 1) throw e }
    }
  }
 ```

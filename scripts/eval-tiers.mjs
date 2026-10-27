@@ -8,14 +8,16 @@
 //
 // One row per result file (`aggregate-result.json`, or a `--json` output): the tier is the
 // run's --model, recall is the share of `seeded-*` cases whose seeded defect was found, and
-// spend is the run's list-price cost and turns. Output tokens are not reported because the
+// spend is the run's list-price cost and turns. With --runs N a case counts as found only if
+// every run scored 1 (a case that missed in one of three runs is listed as missed). Output tokens are not reported because the
 // eval result records none (schemaVersion 1); cost is the per-tier spend it does record.
 //
 // Every `control-*` case seeds a defect no reviewer can see, so it must score 0. If one
 // scores above 0 the grader cannot fail, the recall beside it means nothing, and this
 // script says so and exits 1.
-import { readFileSync } from 'node:fs'
-import { basename } from 'node:path'
+import { readFileSync, realpathSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export function summarise(doc, id) {
   const cases = Array.isArray(doc?.cases) ? doc.cases : null
@@ -44,7 +46,7 @@ export function summarise(doc, id) {
   }
 }
 
-const isMain = process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href
+const isMain = process.argv[1] && realpathSync(resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url))
 if (isMain) {
   const args = process.argv.slice(2)
   const asJson = args.includes('--json')
