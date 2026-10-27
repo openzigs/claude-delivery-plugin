@@ -677,12 +677,36 @@ const batches = parallelLanes
 // parallel() turns a batch that threw into null; report it rather than drop it.
 const results = batches.map((b, i) => b || { issues: lanes[i].issues, prs: [], reviewCompleted: false, note: 'This batch failed before it finished.' })
 
+// The compound step. Each review and re-review may return a durableFinding: a lesson a future
+// reviewer could not derive from the code. Collected across every PR in the run, deduplicated
+// on whitespace- and case-insensitive text, and returned as a SUGGESTION only. Nothing here or
+// in any prompt writes it to CLAUDE.md, AGENTS.md or .claude/delivery.md: those are the
+// project's authority, and only the maintainer edits them. No durable finding means [].
+const suggestedProjectNotes = (() => {
+  const seen = new Set()
+  const notes = []
+  for (const b of results) {
+    for (const p of Array.isArray(b?.prs) ? b.prs : []) {
+      for (const r of [p?.review, p?.reReview]) {
+        const text = typeof r?.durableFinding === 'string' ? r.durableFinding.trim().replace(/\s+/g, ' ') : ''
+        const key = text.toLowerCase()
+        if (!text || seen.has(key)) continue
+        seen.add(key)
+        notes.push(text)
+      }
+    }
+  }
+  return notes
+})()
+
 return {
   batches: results,
   reviewCompleted: results.every((b) => b.reviewCompleted),
   merged: false,
+  suggestedProjectNotes,
   note:
     'Nothing was merged. Two review cycles per PR is the cap; if a re-review still reports ' +
     'blocking findings, that is for the caller to resolve rather than a third ' +
-    'automated pass.',
+    'automated pass. suggestedProjectNotes are suggestions for the project\'s notes file or ' +
+    'CLAUDE.md; nothing was written to either.',
 }

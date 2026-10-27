@@ -89,6 +89,15 @@ rather than assumed:
 | `outputTokens` | each PR: `review`, `fix`, `rereview`; each batch: `implement` | Output tokens per phase, as the difference in `budget.spent()` around that agent call. `null` when the runtime provides no `budget` |
 | `findingCounts` | each PR | `{ review, rereview }`, each a count per severity (`critical`, `high`, `medium`, `low`, `nit`) from the review's structured output. `rereview` is `null` when no re-review ran |
 
+**Suggested project notes.** The run's result also carries `suggestedProjectNotes`: every
+`durableFinding` a review or re-review returned — a lesson a future reviewer could not derive
+from the code, such as a defect class that recurs in this project — collected across all PRs
+in the run and deduplicated (ignoring case and whitespace). It is a list of strings, and an
+empty list when no review returned one. It is a **suggestion only**: nothing in the workflow
+writes it anywhere, and no dispatched prompt tells an agent to edit `CLAUDE.md`, `AGENTS.md` or
+`.claude/delivery.md` (the verifier fails if one does). Read the list after a run and copy what
+you want to keep into your project's notes file or `CLAUDE.md` yourself.
+
 `budget.spent()` counts the whole turn, so when batches run concurrently a phase's delta
 also includes what the other batches spent in the same window. Read token figures from a
 single-batch run when you are comparing them.

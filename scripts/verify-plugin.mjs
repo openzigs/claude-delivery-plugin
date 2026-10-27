@@ -1094,6 +1094,50 @@ for (const file of workflowFiles) {
     'size hints apply to their own batch')
   check(r.result.batches.every((b) => b.prs.every((p) => p.reReview)), 'every PR in every batch gets its review cycles')
 
+  // --- durable findings become suggested project notes (#67): collected, deduplicated,
+  // returned as a suggestion, and never written: no prompt tells an agent to edit the
+  // project's instruction files.
+  {
+    const durable = (o) => {
+      if (o.label === 'review:412') return { ...CLEAN_REVIEW, durableFinding: 'Scoped queries must filter on tenant_id.' }
+      if (o.label === 'review:413') return { ...BLOCKING_REVIEW, durableFinding: '  scoped queries must filter on\n tenant_id. ' }
+      if (o.label === 'rereview:413') return { ...CLEAN_REVIEW, durableFinding: 'The in-memory fixture hides missing indexes.' }
+      return CLEAN_REVIEW
+    }
+    r = await run({ argv: '412 413 415', review: durable })
+    check(JSON.stringify(r.result.suggestedProjectNotes) === JSON.stringify(['Scoped queries must filter on tenant_id.', 'The in-memory fixture hides missing indexes.']),
+      'durable findings from reviews and re-reviews across the run become suggestedProjectNotes, deduplicated',
+      `suggestedProjectNotes = ${JSON.stringify(r.result.suggestedProjectNotes)}`)
+    r = await run({ argv: '412 ; 500', review: (o) => (o.label === 'review:500' ? { ...CLEAN_REVIEW, durableFinding: 'scoped queries must filter on TENANT_ID.' }
+      : { ...CLEAN_REVIEW, durableFinding: 'Scoped queries must filter on tenant_id.' }) })
+    check(JSON.stringify(r.result.suggestedProjectNotes) === '["Scoped queries must filter on tenant_id."]', 'notes are deduplicated across concurrent batches too')
+    r = await run()
+    check(Array.isArray(r.result.suggestedProjectNotes) && r.result.suggestedProjectNotes.length === 0,
+      'a run in which no review returned a durable finding yields an empty list, not a placeholder')
+    r = await run({ review: { ...CLEAN_REVIEW, durableFinding: '   ' } })
+    check(JSON.stringify(r.result.suggestedProjectNotes) === '[]', 'a blank durable finding is not a note')
+    r = await run({ review: null })
+    check(JSON.stringify(r.result.suggestedProjectNotes) === '[]', 'a review that never returned adds no note and does not throw')
+    check(/nothing was written to either/.test(r.result.note), 'the result says the notes were not written anywhere')
+    // No dispatched prompt, in any workflow or route, instructs editing CLAUDE.md, AGENTS.md or
+    // .claude/delivery.md. The matcher is proven able to fail on a prompt that does.
+    const PROTECTED = /\b(edit|edits|editing|write|writes|writing|modify|update|updates|append|add (?:it|them|this|a note|notes)? ?to|commit (?:it|them)? ?to|record (?:it|them)? in)\b[^.\n]{0,60}(CLAUDE\.md|AGENTS\.md|\.claude\/delivery\.md)/i
+    check(PROTECTED.test('Then update CLAUDE.md with the lesson.') && PROTECTED.test('Append the durable finding to .claude/delivery.md')
+      && PROTECTED.test('add it to AGENTS.md') && !PROTECTED.test('Your procedure\'s Step 0 says how to treat CLAUDE.md, AGENTS.md'),
+    'the instruction-file guard matches an instruction to edit them and not a mention of them')
+    const planBody = readFileSync(join(ROOT, 'workflows/plan-epic.js'), 'utf8').replace(/export const meta = \{[\s\S]*?\n\}\n/, '')
+    const prompts = []
+    for (const opts of [{}, { review: BLOCKING_REVIEW }, { review: BLOCKING_REVIEW, facts: { 412: SMALL_ISSUE } },
+      { argv: '412 413 ; 500 501', review: BLOCKING_REVIEW }, { argv: 'make the export honour a date range' }, { review: durable, argv: '412 413' }]) {
+      prompts.push(...(await run(opts)).dispatches.map((d) => d.prompt))
+    }
+    prompts.push(...(await runner(planBody)({ argv: 'a topic' })).dispatches.map((d) => d.prompt))
+    const offending = prompts.filter((t) => PROTECTED.test(t))
+    check(prompts.length >= 20 && offending.length === 0,
+      `no workflow prompt instructs editing CLAUDE.md, AGENTS.md or .claude/delivery.md (${prompts.length} prompts checked)`,
+      `a workflow prompt instructs editing an instruction file: ${offending.map((t) => PROTECTED.exec(t)[0]).join(' | ')}`)
+  }
+
   r = await run({ argv: '412, 413' })
   check(r.dispatches.some((d) => d.label === 'implement:412+413'), 'comma-separated issues are a batch')
 

@@ -278,7 +278,9 @@ Details: [`docs/usage.md`](docs/usage.md#reading-the-cost-of-a-run).
 
 ## What a result contains
 
-`/delivery:orchestrate` returns `{ batches, reviewCompleted, merged: false, note }`. Each batch
+`/delivery:orchestrate` returns `{ batches, reviewCompleted, merged: false, suggestedProjectNotes, note }`.
+`suggestedProjectNotes` lists the reviews' durable findings, deduplicated across the run — lessons
+to copy into your notes or `CLAUDE.md` if you want them; the plugin never writes them there. Each batch
 records its `issues`, `implementModel` and `outputTokens.implement`, and a `prs` list. Each PR
 entry records:
 
