@@ -170,11 +170,13 @@ the **number** of agents per issue and the tier each runs on dominate the bill.
 | Re-review | `sonnet`; the session model, at full scope, if the first review was light | A light review that still blocked means the change was misjudged as low-risk, so cycle 2 is its first full-scope look |
 
 Effort is chosen the same way, per call in the script and never in agent frontmatter. The
-implementer and the first review inherit the session's effort; the fix and the re-review
-pass `effort: 'medium'`; a re-review escalated from a light review inherits, because it is
-that change's first full-scope review. Each PR's result reports the effort, output tokens
-and finding counts per phase ([usage](usage.md)), so a change to these choices can be
-measured.
+implementer and the first review pass `effort: 'high'`; the fix and the re-review pass
+`effort: 'medium'`; a re-review escalated from a light review passes `high`, because it is
+that change's first full-scope review. Nothing inherits the session's effort: on Opus 5.5
+Claude Code's default is `medium` ([model configuration](https://code.claude.com/docs/en/model-config)),
+so inheriting would usually mean the medium the first review must not drop to. Each PR's
+result reports the effort, output tokens and finding counts per phase ([usage](usage.md)),
+so a change to these choices can be measured.
 
 A light review runs the `code-review` skill's requirements, security (changed lines),
 correctness and test steps, and skips design, performance and documentation; it is told to
