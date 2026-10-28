@@ -5,10 +5,11 @@ tools: Read, Bash, Skill
 skills: delivery:code-review
 disallowedTools: Write, Edit
 color: orange
-# maxTurns (#97): highest observed 7 turns over 6 runs (bench replay on #86, N=3 per ref, on a
-# small fixture). Set with headroom rather than at #58's 2x: real PRs take more turns than the
-# fixture's, and a review cut off by the cap returns nothing. To re-derive: docs/benchmarks.md.
-maxTurns: 30
+# maxTurns: highest observed 64 turns over 1,143 completed workflow reviews in real repositories
+# (p95 38, p99 49; session transcripts, 2026-10-28). The bench replay on #86 saw only 7, on a
+# small fixture, and 0.9.0's cap of 30 cut off about 1 review in 7: a review stopped by the cap
+# returns nothing. Set at #58's 2x the highest observed. To re-derive: docs/benchmarks.md.
+maxTurns: 130
 ---
 
 You are a **Senior Code Reviewer**. Review pull requests with the rigor of a principal

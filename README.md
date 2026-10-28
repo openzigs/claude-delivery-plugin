@@ -451,6 +451,13 @@ To fork an agent, override one for a single project or add your own workflow, se
 refresh the same version in place, so without a bump two machines can report one version
 while running different code, and nobody can tell which copy produced a result.
 
+### What changed in 0.9.1
+
+- **`code-review` `maxTurns` 30 → 130.** 0.9.0 set it from the benchmark fixture, where reviews
+  took at most 7 turns. On real repositories completed reviews take up to 64 (p95 38), so the
+  cap cut off about 1 review in 7. A review stopped by the cap returns nothing, and the workflow
+  reports that it never returned. 130 is twice the highest observed.
+
 ### What changed in 0.9.0
 
 One default changed, for every run:
