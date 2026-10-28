@@ -468,11 +468,11 @@ New, off by default:
 Also in 0.9.0, all maintainer tooling with no effect on a run:
 - **Replay isolation.** `bench-run.mjs` deletes the scratch repository's issues and branches,
   and closes its PRs, before every step.
-- **Hidden planted defects.** The replay exports the plugin with `git archive`, leaving out every
-  file that describes a planted defect.
-- **New scenario and report.** A fourth scenario, `caller`, has its defect in an existing caller
-  of the changed function. The report gains a token-type table and blocking-finding and
-  planted-defect rates per scenario.
+- **Scenario answers stay hidden.** The replay exports the plugin with `git archive`, leaving
+  out the benchmark files the agents under test must not read.
+- **New scenario and report.** A fourth scenario, `caller`, targets the review of a changed
+  function's existing callers. The report gains a token-type table and per-scenario rates of
+  blocking reviews and of reviews that found the scenario's target.
 - **`--orchestrate-args`** lets one ref be replayed under two settings.
 - **Harder review evals.** The suite now has 21 seeded cases and an `eval-run.mjs` matrix runner.
   Results are in [docs/benchmarks.md](docs/benchmarks.md).
