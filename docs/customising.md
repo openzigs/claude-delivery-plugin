@@ -44,10 +44,11 @@ Three things to keep when you edit it:
    Edit` is load-bearing: it makes "just fix the code under review" stop being the
    near-at-hand move.
 4. **Keep or tune `maxTurns`.** The `research`, `ui-vision` and `code-review` agents set a turn
-   ceiling (30, 80 and 30), so a runaway agent stops and returns partial output rather than
-   running on. `research` and `code-review` are set with headroom over the highest turns the
-   benchmark replay observed (8 and 7, on a small fixture); `ui-vision` has no data yet and
-   keeps its conservative 80. Raise one if a legitimate run is cut short; see
+   ceiling (30, 80 and 130), so a runaway agent stops rather than running on. An agent stopped by
+   its cap returns nothing to the workflow, so set a ceiling well above legitimate runs.
+   `code-review` is twice the highest turns of 1,143 completed reviews on real repositories
+   (64). `research` has headroom over the benchmark replay's 8. `ui-vision` has no data yet
+   and keeps its conservative 80. Raise one if a legitimate run is cut short; see
    [benchmarks](benchmarks.md) for how to re-derive them. No other agent sets it, and
    `cacheTtl` is left at its default.
 

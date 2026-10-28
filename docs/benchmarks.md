@@ -403,10 +403,13 @@ ceilings in `agents/*.md` are set from it (#97).
 **Re-deriving `maxTurns`.** Run the replay with `--runs 3`, then `bench-report.mjs`, and take
 the largest number in an agent's column across every row of that table. The current values
 come from the N=3 replay recorded on #86 (6 runs per scenario): code-issue 13, code-review 7,
-code-planner 9, research 8. `code-review` and `research` are set to 30, not to #58's twice
-the highest observed (14 and 16). The fixture's PRs and topic are small, so real reviews
-and research take more turns, and an agent cut off by its cap returns nothing, which costs
-more than a few extra turns. `ui-vision` stays at 80 because no scenario drives a browser,
+code-planner 9, research 8. `research` is set to 30. **Do not set `code-review` from the
+replay:** 0.9.0 set it to 30 from the fixture's 7 and cut off about 1 review in 7 on real
+repositories, where completed reviews took up to 64 turns (p95 38, p99 49, over 1,143
+reviews). A review stopped by its cap returns nothing, so the workflow gets no result.
+`code-review` is now 130, twice the highest observed on real runs. Re-derive it from real
+session transcripts (`~/.claude/projects/*/*/subagents/workflows/*/agent-*.jsonl`, whose
+`.meta.json` names the agent type), not from the fixture. `ui-vision` stays at 80 because no scenario drives a browser,
 so there is no data for it. When you change a value, update the comment above it in the
 agent's frontmatter: the verifier wants it to name the replay (`bench replay on #<issue>`)
 and either `highest observed <n>` or `no data yet`, and fails one that still says
