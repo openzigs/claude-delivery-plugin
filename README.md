@@ -451,6 +451,32 @@ To fork an agent, override one for a single project or add your own workflow, se
 refresh the same version in place, so without a bump two machines can report one version
 while running different code, and nobody can tell which copy produced a result.
 
+### What changed in 0.9.0
+
+One default changed, for every run:
+
+- **`maxTurns` set from replay data.** `code-review` drops from 50 to 30 and `research` from 60
+  to 30. The highest observed over the benchmark replays was 7 and 8, on a small fixture, so 30
+  leaves headroom for real repositories. `ui-vision` keeps 80 until there is data for it.
+
+New, off by default:
+
+- **`--small-effort medium|high`** sets the effort of the small-tier implementer. The default
+  stays `high`: a replay measured `medium` at about 5% (~$0.02) cheaper per small issue, inside
+  run-to-run noise, so it is not worth the quality risk by default.
+
+Also in 0.9.0, all maintainer tooling with no effect on a run:
+- **Replay isolation.** `bench-run.mjs` deletes the scratch repository's issues and branches,
+  and closes its PRs, before every step.
+- **Hidden planted defects.** The replay exports the plugin with `git archive`, leaving out every
+  file that describes a planted defect.
+- **New scenario and report.** A fourth scenario, `caller`, has its defect in an existing caller
+  of the changed function. The report gains a token-type table and blocking-finding and
+  planted-defect rates per scenario.
+- **`--orchestrate-args`** lets one ref be replayed under two settings.
+- **Harder review evals.** The suite now has 21 seeded cases and an `eval-run.mjs` matrix runner.
+  Results are in [docs/benchmarks.md](docs/benchmarks.md).
+
 ### What changed in 0.8.0
 
 Four defaults changed. Each is a behaviour change for a run that passes no new flag:
