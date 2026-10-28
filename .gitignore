@@ -29,3 +29,4 @@ evals/results/
 
 # pipeline replay benchmark output (scripts/bench-run.mjs)
 bench/results/
+bench/results-*/
