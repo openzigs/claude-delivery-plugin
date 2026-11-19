@@ -202,9 +202,10 @@ So, in practice:
 2. **Write the note after the agents report back.** Their results arrive in the session when
    they finish. A note written before that can only list them under "In flight", and the next
    session has to find out what happened from GitHub.
-3. **If you did dispatch agents by hand, say what they found when you write the note.** Anything
-   that did not end in a PR (a decision, an investigation's answer, a dead end) belongs in the
-   note's "Decisions" or "Do not redo" section, or it is gone after `/clear`.
+3. **Agents you dispatched by hand are collected when you write the note.** `/delivery:handoff`
+   goes through this session's agent results and records what each found that did not end in a
+   PR (a decision, an investigation's answer, a dead end) under "Decisions" or "Do not redo". An
+   agent still running is listed under "In flight", and you are told not to `/clear` yet.
 4. **Do not `/clear` or close while any agent is still running.** A workflow is a background task
    of its session and was seen to end with it; treat a hand-dispatched background agent the same
    way.

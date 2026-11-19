@@ -684,6 +684,15 @@ checkSkill(/Nothing is written to `CLAUDE\.md`, `AGENTS\.md` or `\.claude\/deliv
   checkSkill(/`\.claude\/handoff-<name>\.md` when a name was\s+given/.test(body) && /\| `resume connect` \| `\.claude\/handoff-connect\.md` \| reads back \|/.test(body)
     && /never `resume`/.test(body) && /say what a\s+valid name looks like and stop, writing nothing/.test(body) && /ask which one; do not pick/.test(body) && /### Scope/.test(body),
     'handoff: a name keeps one note per workstream, an invalid name writes nothing, and resume asks rather than picks when only named notes exist')
+  {
+    const write = sectionOf(body, '## With no argument, or a name: write the note')
+    const agents = write.indexOf('Account for every agent this session dispatched outside a workflow'), note = write.indexOf('Write the note for this run')
+    checkSkill(agents > 0 && note > agents && /dispatched directly from this session, in the\s+foreground or the background/.test(write) && /"Decisions made, and why" or "Do not redo"/.test(write)
+      && /A pull request it opened is already in the facts; do not repeat it/.test(write)
+      && /not to `\/clear` or close the session until it reports back/.test(write) && /listed under "In flight" as unknown, not guessed at/.test(write)
+      && /- <a workflow or agent still running/.test(write),
+      'handoff: before writing, it collects what hand-dispatched agents found, lists running ones as in flight with a warning not to clear, and guesses at none')
+  }
   const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
   checkSkill(cmds.length === 1 && cmds[0] === 'node "${CLAUDE_PLUGIN_ROOT}/scripts/handoff.mjs"', `handoff: the skill's only command is its facts script (found ${JSON.stringify(cmds)})`)
   const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen)\b/, /\bgh\s+pr\s+(create|edit|close|merge|comment|review)\b/, /\bgh\s+api\b/, /\bagent\s*\(/i, /\bAgent tool\b/, /subagent_type/]
