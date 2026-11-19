@@ -35,6 +35,40 @@ There are three kinds of thing a session "remembers", and each has a better home
 Only the third is new. The first two already existed; a long session simply hid how little the
 conversation itself needed to hold.
 
+## What `/delivery:handoff` is
+
+A skill, not an agent: a command you type in the main session. It dispatches nothing. Its whole
+job is to save a short note before you reset a session and to read that note back when you start
+the next one.
+
+```
+1. start a session ── /delivery:handoff resume ──> 2. do the work ──> 3. a reset moment arrives
+        ^                                                                       │
+        │                                                                       v
+6. next session starts small <── 5. /clear, or close <── 4. /delivery:handoff (saves the note)
+```
+
+| You type | When | What happens | What it does not do |
+|---|---|---|---|
+| `/delivery:handoff` | Before `/clear`, before closing, before more than an hour away | A script lists open PRs, open epics and what the last runs left unfinished. Claude adds, in at most 30 lines, what was decided in this conversation and the next step. It saves all of it to `.claude/handoff.md`, replacing the old note | It does not clear the session; you do that next. It changes nothing on GitHub |
+| `/delivery:handoff resume` | First thing in a new session | Reads the note, re-runs the script so the facts are current, and reports what the note said, what has changed since, and the next step | It does not start the next step. It waits for you |
+
+What resuming looks like, the morning after the example note further down was written:
+
+```
+From the note (written yesterday): two PRs open on epic #47. #92 waits on your
+approval of the wording on #75; #91 was still blocking after its re-review.
+Decisions: totals round per line; #76 is deferred.
+
+Changed since: #92 was merged overnight. #91 is unchanged, CI passing.
+
+Next step, updated: only #91 is left, so /delivery:orchestrate --pr 91.
+Shall I run it?
+```
+
+The fresh session knows the two decisions it would otherwise have re-opened, and it noticed that
+the note was already out of date about #92.
+
 ## A working day, start to finish
 
 **Start of a session.** Type:
