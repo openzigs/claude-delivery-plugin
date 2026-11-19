@@ -132,13 +132,14 @@ for (const file of agentFiles) {
 }
 
 // maxTurns guards (#58): a runaway research, browser or review agent stops at a ceiling
-// and returns partial output. Only these three set it, and cacheTtl stays at its default
-// everywhere (#13).
+// and returns partial output. Only these four set it (triage is two batched gh calls on
+// haiku, so a loop there is the one thing its ceiling is for), and cacheTtl stays at its
+// default everywhere (#13).
 {
-  const MAX_TURNS = ['research', 'ui-vision', 'code-review']
+  const MAX_TURNS = ['research', 'ui-vision', 'code-review', 'triage']
   const turns = Object.fromEntries(agentFiles.map((f) => [basename(f, '.md'), frontmatter(readFileSync(join(ROOT, 'agents', f), 'utf8'), f)?.maxTurns]))
   const bad3 = MAX_TURNS.filter((a) => !/^[1-9]\d*$/.test(turns[a] ?? ''))
-  ;(bad3.length === 0 ? ok : bad)(`research, ui-vision and code-review each set maxTurns to a positive integer${bad3.length ? ` (missing or invalid: ${bad3.map((a) => `${a}=${turns[a]}`).join(', ')})` : ` (${MAX_TURNS.map((a) => `${a} ${turns[a]}`).join(', ')})`}`)
+  ;(bad3.length === 0 ? ok : bad)(`research, ui-vision, code-review and triage each set maxTurns to a positive integer${bad3.length ? ` (missing or invalid: ${bad3.map((a) => `${a}=${turns[a]}`).join(', ')})` : ` (${MAX_TURNS.map((a) => `${a} ${turns[a]}`).join(', ')})`}`)
   const others = Object.keys(turns).filter((a) => !MAX_TURNS.includes(a) && turns[a] !== undefined)
   ;(others.length === 0 ? ok : bad)(`no other agent sets maxTurns${others.length ? ` (found on ${others.join(', ')})` : ''}`)
   // #97: each ceiling's frontmatter comment states its evidence -- the bench replay it read
@@ -308,6 +309,7 @@ const sectionOf = (src, heading) => {
   return end === -1 ? rest : rest.slice(0, end)
 }
 const bashBlocks = (text) => [...text.matchAll(/```bash\n([\s\S]*?)```/g)].map((m) => m[1])
+const stepMsFromSkill = () => Number((/`timeout` of at most `(\d+)` ms/.exec(sectionOf(readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8'), '### Step 5: CI Validation')) || [])[1])
 const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
 {
   const review = readFileSync(join(ROOT, 'skills/code-review/SKILL.md'), 'utf8')
@@ -371,6 +373,13 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
   const stepMs = ceilings(ci), ruleMs = [...ceilings(rule2(shellDigest)), ...ceilings(rule2(shellFull))]
   checkSkill(stepMs.length === 1 && ruleMs.length === 2 && stepMs[0] <= BASH_MAX_MS && ruleMs.every((n) => n === stepMs[0]),
     `code-issue Step 5, the shell digest's rule 2 and ${SHELL_FILE} rule 2 state the same CI-wait ceiling, at most ${BASH_MAX_MS} ms (found ${stepMs} / ${ruleMs})`)
+  // A dispatched agent's prompt cache lives about 5 minutes. A wait that outlasts it is paid for
+  // with a full re-write of the context: over ~9,000 real transcripts, about two thirds of the
+  // gaps longer than 5 minutes followed a CI wait, and cache re-writes were 35% of an
+  // implementer's cost. So one wait stays under the cache, and is repeated rather than lengthened.
+  const CACHE_TTL_MS = 300000
+  checkSkill(stepMs[0] < CACHE_TTL_MS - 15000 && /run the same call again, at most \d+ times/.test(ci) && /prompt cache lives about 5 minutes/.test(ci),
+    `code-issue Step 5 keeps one CI wait under the 5-minute prompt cache, says why, and repeats it a bounded number of times (ceiling ${stepMs[0]} ms)`)
   checkSkill(!shell.includes('--no-watch') && shell.includes('--watch=false'),
     'code-issue shell rule 2 gives --watch=false, not --no-watch, as a run-once form')
 
@@ -542,6 +551,167 @@ const checkSkill = (cond, msg) => (cond ? ok(msg) : bad(msg))
     'cost-report: the usage text says a finished run\'s task output can be passed directly, and where it is written')
 }
 
+// The 630-run pass: rules whose absence the data priced. Each is pinned so a later trim cannot
+// drop it without noticing.
+{
+  const issue = readFileSync(join(ROOT, 'skills/code-issue/SKILL.md'), 'utf8')
+  const review = readFileSync(join(ROOT, 'skills/code-review/SKILL.md'), 'utf8')
+  const rpc = readFileSync(join(ROOT, 'skills/resolve-pr-comments/SKILL.md'), 'utf8')
+  const orch = readFileSync(join(ROOT, 'agents/orchestrator.md'), 'utf8')
+  const ck = (cond, msg) => (cond ? ok : bad)(msg)
+  ck(/A changed contract with an unchanged consumer/.test(sectionOf(issue, '#### 3b. Defect shapes worth hunting')) && /`grep` the repository for its other users/.test(issue),
+    'code-issue tells the implementer to grep the consumers of every contract it changed')
+  ck(/\*\*Acceptance criteria\*\*, one line per criterion/.test(sectionOf(issue, '### Step 6: Delivery')) && /`owner:`/.test(sectionOf(issue, '### Step 6: Delivery')),
+    'code-issue has the PR body list each acceptance criterion with its test, or as the owner\'s')
+  ck(/A blocker only a person or time can clear is not yours/.test(sectionOf(issue, '## Fix mode')), 'code-issue Fix mode declines a blocker only a person or time can clear')
+  ck(/`resolvableBy`/.test(review) && /`author`/.test(review) && /`owner`/.test(review) && /`wait`/.test(review) && /never soften a real defect\s+into `owner`/.test(review)
+    && /`headSha`/.test(review), 'code-review says who can clear each blocking finding, forbids softening a defect into an owner gate, and reports the commit it read')
+  ck(/Restore every mutation and leave `git status --short` clean/.test(review), 'code-review restores its mutations and leaves a clean tree')
+  ck(!/git add -A`? \(/.test(rpc) && /never `git add -A`/.test(rpc) && rpc.includes('${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SHELL_RULES.md')
+    && rpc.split('\n').length < 430, 'resolve-pr-comments stages explicit paths, as code-issue does, and points at the shared shell rules instead of repeating them')
+  const desc = frontmatter(orch, 'orchestrator.md')?.description || ''
+  ck(/^Fallback only\./.test(desc) && !/Use whenever/.test(desc) && /Skill tool/.test(desc) && /If you were dispatched as a subagent, return at once/.test(orch),
+    'the orchestrator agent is described as a fallback, not a default, and returns at once when dispatched as a subagent')
+}
+
+// The retro and doctor skills are read-only like cost-report: each one's only command is its own
+// script, on a line of its own, and neither names a GitHub write or an agent dispatch.
+for (const [skill, script, flags] of [['retro', 'findings-report', ['--discover', '--last', '--no-notes']], ['doctor', 'doctor', ['--no-gh']]]) {
+  const body = readFileSync(join(ROOT, `skills/${skill}/SKILL.md`), 'utf8')
+  const ONLY = new RegExp(`^node "\\$\\{CLAUDE_PLUGIN_ROOT\\}/scripts/${script}\\.mjs"(?: +(?:'[^']*'|${flags.join('|')}))*$`)
+  const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
+  checkSkill(cmds.length > 0 && cmds.every((l) => ONLY.test(l)) && !ONLY.test(`${cmds[0]}; rm -rf ~/x`) && !ONLY.test(`${cmds[0]} | tee x`),
+    `${skill}: every command in the body is exactly its script plus quoted paths and its own flags (found ${JSON.stringify(cmds)})`)
+  const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen)\b/, /\bgh\s+pr\s+(create|edit|close|merge|comment|review)\b/, /\bgh\s+api\b/, /\bagent\s*\(/i, /\bAgent tool\b/, /subagent_type/]
+  checkSkill(writes.every((re) => !re.test(body)) && /read-only/i.test(body) && /Do not edit or create files/.test(body) && existsSync(join(ROOT, `scripts/${script}.mjs`)),
+    `${skill}: says it is read-only, names no gh write and no agent dispatch, and its script exists`)
+}
+checkSkill(/Nothing is written to `CLAUDE\.md`, `AGENTS\.md` or `\.claude\/delivery\.md`/.test(readFileSync(join(ROOT, 'skills/retro/SKILL.md'), 'utf8')),
+  'retro: proposes project notes and writes none')
+
+// scripts/findings-report.mjs: counts and classes come from the result's structure, and no
+// finding text is ever printed.
+{
+  const fr = await import(join(ROOT, 'scripts/findings-report.mjs'))
+  const F = (summary, o = {}) => ({ severity: 'medium', location: 'src/db/a.ts:3', summary, blocking: true, ...o })
+  const pr = (o) => ({ pr: 1, issue: 1, reviewCompleted: true, reviewScope: 'full', reviewRouting: '5 story points', review: { findings: [] }, awaiting: [], ...o })
+  const data = { batches: [{ issues: [1, 2], implementModel: 'session model', prs: [
+    pr({ reviewRouting: 'no story points on the issue', review: { findings: [F('HIDDEN-TEXT no test covers the new branch'), F('naming', { blocking: false, severity: 'nit', location: 'general' })] },
+      fix: { changed: [{}], declined: [{}, {}], gates: { passed: false, pushed: false } }, stillBlocking: true, reReview: { findings: [F('x', { resolvableBy: 'owner' })] }, withheldFromFix: 1, suppressedFindings: 2 }),
+    pr({ reviewScope: 'light', review: { findings: [F('owner has not approved the screenshots', { resolvableBy: 'owner', location: 'general' })] }, awaiting: ['owner'] }),
+    pr({ sameReviewAs: 1 }),
+    pr({ reviewCompleted: false }),
+  ] }, { issues: [3], implementModel: 'sonnet', prs: [] }], suggestedProjectNotes: ['Scoped queries filter on tenant_id.', ' Scoped queries filter on\n tenant_id. '] }
+  const t = fr.summarise([data, null, { nope: 1 }])
+  checkSkill(t.runs === 1 && t.batches === 2 && t.multiIssueBatches === 1 && t.smallTierBatches === 1 && t.prs === 3 && t.reviewDidNotReturn === 1
+    && t.lightReviews === 1 && t.noStoryPoints === 1 && t.fixCycles === 1 && t.stillBlocking === 1 && t.awaitingOwner === 1 && t.fixSkippedForOwner === 1
+    && t.fixGatesFailed === 1 && t.fixNotPushed === 1 && t.fixChanged === 1 && t.fixDeclined === 2 && t.withheldFromFix === 1 && t.suppressed === 2,
+    `findings-report: counts runs, batches, PRs (a shared review once), routes and fix outcomes from the result (got ${JSON.stringify({ prs: t.prs, fix: t.fixCycles, still: t.stillBlocking, await: t.awaitingOwner })})`)
+  checkSkill(JSON.stringify(t.blockingClass) === '{"tests":1,"owner-or-wait":1}' && JSON.stringify(t.stillBlockingClass) === '{"owner-or-wait":1}'
+    && JSON.stringify(t.blockingArea) === '{"src/":1,"(general)":1}' && t.notes['Scoped queries filter on tenant_id.'] === 2,
+    `findings-report: blocking findings are classed and placed by area, and repeated notes are counted once each (got ${JSON.stringify([t.blockingClass, t.blockingArea])})`)
+  checkSkill(fr.classOf({ summary: 'the author did not add a test' }) === 'tests' && fr.classOf({ summary: 'missing authz check' }) === 'security'
+    && fr.classOf({ summary: 'a code defect', resolvableBy: 'owner' }) === 'owner-or-wait' && fr.classOf({}) === 'other'
+    && fr.areaOf({ location: 'README.md:4' }) === 'README.md' && fr.areaOf({ location: 'see the PR body' }) === '(general)',
+    'findings-report: "author" is not a security word, resolvableBy outranks wording, and a location that is not a path has no area')
+  const out = fr.render(t)
+  checkSkill(!out.includes('HIDDEN-TEXT') && !out.includes('screenshots') && /fix cycles\s+1 of 3 PRs \(33%\)/.test(out) && /2x  Scoped queries filter on tenant_id\./.test(out)
+    && !fr.render(t, { notes: false }).includes('Scoped queries'),
+    'findings-report: the report prints counts and the suggested notes, never a finding\'s text; --no-notes leaves the notes out')
+  const many = fr.summarise(Array.from({ length: 12 }, () => ({ batches: [{ issues: [1], implementModel: 'session model', prs: [
+    pr({ reviewRouting: 'no story points on the issue', review: { findings: [F('no test covers it')] }, fix: { changed: [], declined: [], gates: { passed: true, pushed: true } }, stillBlocking: true, reReview: { findings: [F('still no test')] } })] }] })))
+  const sug = fr.suggestions(many).join(' | ')
+  checkSkill(/had no Story Points line/.test(sug) && /small tier/.test(sug) && /were about tests/.test(sug) && /still blocking after the re-review/.test(sug) && /point into src\//.test(sug)
+    && fr.suggestions(t).length === 0,
+    'findings-report: suggestions fire by fixed thresholds on enough runs, and a single run suggests nothing')
+  const run = spawnSync(process.execPath, [join(ROOT, 'scripts/findings-report.mjs')], { encoding: 'utf8' })
+  const bogus = spawnSync(process.execPath, [join(ROOT, 'scripts/findings-report.mjs'), '--discover', 'x.json'], { encoding: 'utf8' })
+  const fix = spawnSync(process.execPath, [join(ROOT, 'scripts/findings-report.mjs'), join(ROOT, 'scripts/fixtures/cost-report')], { encoding: 'utf8' })
+  checkSkill(run.status === 2 && /usage:/.test(run.stderr) && bogus.status === 2 && fix.status === 0 && /^runs \d+, batches \d+/.test(fix.stdout) && /skipped \d+ file/.test(fix.stdout),
+    `findings-report: no arguments is a usage error, and a directory of results (the cost-report fixtures) reports and counts what it skipped (exit ${fix.status})`)
+}
+
+// scripts/handoff.mjs and the handoff skill: the facts come from the script, the skill writes one
+// file and nothing else, and resuming reports before it acts.
+{
+  const ho = await import(join(ROOT, 'scripts/handoff.mjs'))
+  checkSkill(ho.recommendationOf([{ body: 'x' }, { body: '## Code Review\n\nRecommendation: do not merge — 1 blocking finding\n' }, { body: 'thanks' }]) === 'do not merge — 1 blocking finding'
+    && ho.recommendationOf([{ body: 'Recommendation: merge' }, { body: 'Recommendation: do not merge' }]) === 'do not merge' && ho.recommendationOf([]) === null && ho.recommendationOf(null) === null,
+    'handoff: a PR\'s recommendation is the newest review\'s Recommendation line, or nothing')
+  checkSkill(ho.ciOf([]) === 'no checks' && ho.ciOf([{ conclusion: 'SUCCESS' }, { conclusion: 'FAILURE' }]) === 'failing'
+    && ho.ciOf([{ conclusion: 'SUCCESS' }, { conclusion: '', status: 'IN_PROGRESS' }]) === 'pending' && ho.ciOf([{ conclusion: 'SUCCESS' }, { conclusion: 'SKIPPED' }]) === 'passing',
+    'handoff: CI is failing if any check failed, pending if any is unfinished, else passing')
+  const u = ho.unfinished([{ batches: [{ notImplemented: [7], noPr: [8, null], prs: [
+    { pr: 1, reviewCompleted: false }, { pr: 2, reviewCompleted: true, awaiting: ['owner'], fix: null },
+    { pr: 3, reviewCompleted: true, awaiting: [], fix: {}, stillBlocking: true }, { pr: 4, reviewCompleted: true, awaiting: [], stillBlocking: false },
+    { pr: 3, reviewCompleted: true, stillBlocking: true }] }] }, null, { nope: 1 }])
+  checkSkill(JSON.stringify(u) === '{"awaitingOwner":[2],"stillBlocking":[3],"notReviewed":[1],"notImplemented":[7,8]}',
+    `handoff: saved runs yield the PRs awaiting the owner, still blocking and unreviewed, and the issues not implemented, each once (got ${JSON.stringify(u)})`)
+  const calls = []
+  const f = ho.gather(ROOT, { config: join(tmpdir(), 'no-such-config'), run: (cmd, args) => { calls.push([cmd, ...args].join(' ')); if (args[0] === 'repo') return '{"nameWithOwner":"a/b"}'
+    if (args[0] === 'pr') return JSON.stringify([{ number: 9, title: 'T'.repeat(200), headRefName: 'feature/x', isDraft: true, updatedAt: '2026-11-18T10:00:00Z', statusCheckRollup: [{ conclusion: 'SUCCESS' }], reviews: [{ body: 'Recommendation: merge — no blocking findings' }] }])
+    return JSON.stringify([{ number: 47, title: '[EPIC] Reporting' }]) } })
+  const WRITE = /\b(create|edit|close|comment|delete|merge|reopen|api|review|ready)\b/
+  checkSkill(f.gh === true && f.prs.length === 1 && f.prs[0].title.length === 90 && f.prs[0].ci === 'passing' && f.prs[0].recommendation === 'merge — no blocking findings'
+    && f.epics[0].number === 47 && f.runsRead === 0 && calls.length === 3 && calls.every((c) => c.startsWith('gh ') && !WRITE.test(c.split(' --json')[0])),
+    `handoff: gathers open PRs and epics through three read-only gh queries (${calls.map((c) => c.split(' ').slice(0, 3).join(' ')).join('; ')})`)
+  const out = ho.render({ ...f, runsRead: 4, unfinished: { awaitingOwner: [92], stillBlocking: [91], notReviewed: [], notImplemented: [] } }, '2026-11-19')
+  checkSkill(/^### State on 2026-11-19 — a\/b/.test(out) && /- #9 T+ \(draft\) — branch `feature\/x`, CI passing, last review: merge — no blocking findings, updated 2026-11-18/.test(out)
+    && /Waiting on the owner or on CI, no fix ran: #92/.test(out) && /`\/delivery:orchestrate --pr 91`/.test(out) && !/--pr 91 92/.test(out),
+    'handoff: the note lists each PR with its branch, CI and last recommendation, and offers --pr only for PRs a re-review can still move')
+  const off = ho.gather(ROOT, { gh: false, config: join(tmpdir(), 'no-such-config'), run: () => { throw new Error('must not run') } })
+  checkSkill(off.gh === null && /GitHub was not queried/.test(ho.render(off)) && /no saved runs found/.test(ho.render(off)), 'handoff: --no-gh runs no gh query and says so; no saved runs is said, not shown as "none"')
+
+  const body = readFileSync(join(ROOT, 'skills/handoff/SKILL.md'), 'utf8')
+  const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
+  checkSkill(cmds.length === 1 && cmds[0] === 'node "${CLAUDE_PLUGIN_ROOT}/scripts/handoff.mjs"', `handoff: the skill's only command is its facts script (found ${JSON.stringify(cmds)})`)
+  const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen)\b/, /\bgh\s+pr\s+(create|edit|close|merge|comment|review)\b/, /\bgh\s+api\b/, /\bagent\s*\(/i, /\bAgent tool\b/, /subagent_type/]
+  checkSkill(writes.every((re) => !re.test(body)) && /\*\*one file\*\*: `\.claude\/handoff\.md`/.test(body) && /never edits\s+`CLAUDE\.md`, `AGENTS\.md` or `\.claude\/delivery\.md`/.test(body),
+    'handoff: writes one file, names no gh write and no agent dispatch, and never edits the project\'s instruction files')
+  checkSkill(/at most 30 lines/.test(body) && /If you are unsure whether something was decided, leave it out/.test(body) && /no secret, token or credential/.test(body)
+    && /Do not start the next step until the user says to/.test(sectionOf(body, '## With `resume`')) && /say so and stop/.test(sectionOf(body, '## With `resume`')),
+    'handoff: the note is short, holds only what was said or shown, carries no secret, and resuming reports and waits')
+  const ls = readFileSync(join(ROOT, 'docs/long-sessions.md'), 'utf8'), readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
+  checkSkill(['/delivery:handoff resume', '/delivery:orchestrate --epic', '/delivery:orchestrate --pr', '/delivery:retro --discover', '.claude/handoff.md', '## What to add to a project', '## Owner-only criteria'].every((t) => ls.includes(t))
+    && readme.includes('docs/long-sessions.md') && readme.includes('/delivery:handoff resume') && /add\s+`\.claude\/handoff\.md` to `\.gitignore`/.test(readme)
+    && readFileSync(join(ROOT, 'docs/templates/delivery.md'), 'utf8').includes('## Owner-only criteria'),
+    'the long-session method is written up with its commands, an example note and what a project adds, and the README carries the commands and links it')
+}
+
+// scripts/doctor.mjs: the assessment is a pure function of the gathered facts.
+{
+  const dr = await import(join(ROOT, 'scripts/doctor.mjs'))
+  const base = { claudeMd: 5000, agentsMd: null, deliveryMd: 900, shadowedAgents: [], workflows: 2, prWorkflows: 1, playwrightConfig: true, gh: true, ciSeconds: 120, ciRuns: 10, openIssues: 10, withPoints: 9 }
+  const lv = (f) => dr.assess(f).map((l) => l.level).join(',')
+  const text = (f) => dr.render(dr.assess(f))
+  checkSkill(!lv(base).includes('WARN'), `doctor: a ready repository draws no warning (${lv(base)})`)
+  checkSkill(/WARN.*over the 40\.0 KB budget/.test(text({ ...base, claudeMd: 90000 })) && /WARN.*No CLAUDE\.md or AGENTS\.md/.test(text({ ...base, claudeMd: null }))
+    && /OK.*AGENTS\.md is/.test(text({ ...base, claudeMd: null, agentsMd: 3000 })),
+    'doctor: warns on an instruction file over budget and on none at all, and accepts AGENTS.md')
+  checkSkill(/WARN.*overrides plugin agent\(s\) code-review\.md/.test(text({ ...base, shadowedAgents: ['code-review.md'] }))
+    && /WARN.*No \.github\/workflows/.test(text({ ...base, workflows: 0, prWorkflows: 0 })) && /WARN.*none triggered by pull_request/.test(text({ ...base, prWorkflows: 0 })),
+    'doctor: warns on a shadowed plugin agent, on no CI, and on CI that does not run on pull requests')
+  checkSkill(/INFO.*120 s over 10 run\(s\), which is 1 bounded wait/.test(text(base)) && /INFO.*which is 3 bounded wait/.test(text({ ...base, ciSeconds: 700 }))
+    && /WARN.*past the 8 waits/.test(text({ ...base, ciSeconds: 2500 })) && dr.CI_WAIT_MS === stepMsFromSkill(),
+    'doctor: states CI duration in bounded waits of the skill\'s own ceiling, and warns only past the 8 an implementer makes')
+  checkSkill(/WARN.*3 of 10 open issues carry a Story Points line \(30%\)/.test(text({ ...base, withPoints: 3 })) && /OK.*9 of 10/.test(text(base))
+    && /INFO.*No open issues/.test(text({ ...base, openIssues: 0, withPoints: 0 })) && /INFO.*GitHub checks skipped/.test(text({ ...base, gh: null, ciSeconds: null, openIssues: null }))
+    && /WARN.*`gh` cannot read/.test(text({ ...base, gh: false, ciSeconds: null, openIssues: null })),
+    'doctor: warns when under 70% of open issues carry story points, and says when GitHub was skipped or unreadable')
+  checkSkill(dr.STORY_POINTS.test('**Story Points**: 3') && dr.STORY_POINTS.test('Story Points: 5') && !dr.STORY_POINTS.test('Story Points: TBD') && !dr.STORY_POINTS.test('points: 3'),
+    'doctor: a Story Points line is the label and an integer, bold or plain')
+  const calls = []
+  const f = dr.gather(ROOT, { run: (cmd, args) => { calls.push([cmd, ...args].join(' ')); if (args[0] === 'repo') return '{"nameWithOwner":"a/b"}'
+    if (args[0] === 'run') return JSON.stringify([{ startedAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:01:40Z' }])
+    return JSON.stringify([{ number: 1, body: '**Story Points**: 2', labels: [] }, { number: 2, body: 'x', labels: [] }, { number: 3, body: '', labels: [{ name: 'epic' }] }]) } })
+  const WRITE = /\b(create|edit|close|comment|delete|merge|reopen|api|review)\b/
+  checkSkill(f.gh === true && f.ciSeconds === 100 && f.openIssues === 2 && f.withPoints === 1 && f.prWorkflows === 1 && calls.length === 3
+    && calls.every((c) => c.startsWith('gh ') && !WRITE.test(c)),
+    `doctor: gathers CI duration and story-point coverage (epics aside) through three read-only gh queries (${calls.map((c) => c.split(' ').slice(0, 3).join(' ')).join('; ')})`)
+  const off = dr.gather(ROOT, { gh: false, run: () => { throw new Error('must not run') } })
+  checkSkill(off.gh === null && off.openIssues === null, 'doctor: --no-gh runs no gh query at all')
+}
+
 // The skill count stated in each manifest and the README must be the real one.
 {
   const NUM = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten',
@@ -693,7 +863,8 @@ function runner(body) {
         if (seq[seq.length - 1] !== p) seq.push(p)
         dispatches.push({ ...o, prompt })
         meter?.charge(o.label || '')
-        if (o.schema?.properties?.issues) {
+        // The implementer's schema, told from triage's (which also has `issues`) by its report field.
+        if (o.schema?.properties?.issues?.items?.properties?.report) {
           if (implement !== undefined) return typeof implement === 'function' ? implement(o) : implement
           const ids = o.label.slice('implement:'.length).split('+').map((x) => (x === 'task' ? 900 : Number(x)))
           return { issues: ids.map((n) => ({ issue: n, pr: n + 1000, headRefName: `feature/issue-${n}-stub`, ...MEDIUM_ISSUE, ...(facts[n] || {}), report: `${REPORT_SENTINEL} ${n}` })) }
@@ -747,6 +918,15 @@ for (const file of workflowFiles) {
       for (const d of dispatches) {
         if (!d.agentType?.startsWith('delivery:')) bad(`${file}: dispatch "${d.label}" has agentType ${d.agentType}`)
       }
+      // Every agent type a workflow names, on any route, must be an agent this plugin ships:
+      // a typo here dispatches nothing the plugin controls, and no stubbed run would notice.
+      if (label === 'with an issue number') {
+        const named = [...new Set([...src.matchAll(/agentType: '([^']+)'/g)].map((m) => m[1]))]
+        const missing = named.filter((n) => !n.startsWith('delivery:') || !agentNames.has(n.slice('delivery:'.length)))
+        named.length && missing.length === 0
+          ? ok(`${file}: every agentType it names is an agent this plugin ships (${named.join(', ')})`)
+          : bad(`${file}: names an agentType with no agent file: ${missing.join(', ') || '(none found)'}`)
+      }
       if (argv === '412' && file === 'orchestrate.js') {
         JSON.stringify(result.batches?.[0]?.issues) === '[412]'
           ? ok('orchestrate.js: bare number parsed as issue 412')
@@ -777,6 +957,29 @@ for (const file of workflowFiles) {
   }
 
   if (file === 'plan-epic.js') {
+    // The planner answers in structure: the epic, each filed issue's points and blockers.
+    {
+      const PLAN = { epic: 47, notFiled: 'nothing', report: 'r', issues: [
+        { number: 48, title: 'a', storyPoints: 2, labels: [], blockedBy: [] },
+        { number: 49, title: 'b', storyPoints: null, labels: [], blockedBy: [48] }] }
+      let x = await run({ review: PLAN })
+      const plan = x.dispatches.find((d) => d.label === 'plan')
+      ;(plan?.schema?.properties?.issues?.items?.required?.includes('storyPoints') && !x.dispatches.find((d) => d.label === 'research')?.schema
+        ? ok : bad)('plan-epic.js: the plan dispatch carries a schema that requires each filed issue\'s story points; research stays free text')
+      ;(x.result.epic === 47 && JSON.stringify(x.result.filedIssues) === '[48,49]' && JSON.stringify(x.result.missingStoryPoints) === '[49]'
+        && x.result.next === '/delivery:orchestrate --epic 47' && x.logs.some((l) => /Filed without a Story Points line: #49/.test(l))
+        ? ok : bad)(`plan-epic.js: the result names the epic, the filed issues, the ones with no points line, and the command that takes it forward (got ${JSON.stringify([x.result.epic, x.result.filedIssues, x.result.missingStoryPoints, x.result.next])})`)
+      x = await run({ review: { ...PLAN, epic: null, issues: [PLAN.issues[0]] } })
+      ;(x.result.next === '/delivery:orchestrate 48' && x.result.missingStoryPoints.length === 0 && !x.logs.some((l) => /Story Points/.test(l))
+        ? ok : bad)('plan-epic.js: a single filed issue with its points is taken forward by number, with no warning')
+      for (const [name, review] of [['null', null], ['a string', 'filed #1'], ['an object with no issues', { epic: 'x' }]]) {
+        try {
+          x = await run({ review })
+          ;(x.result.next === null && JSON.stringify(x.result.filedIssues) === '[]' && x.result.epic === null ? ok : bad)(
+            `plan-epic.js: a planner that returned ${name} yields no filed issues and no next command, and nothing throws`)
+        } catch (e) { bad(`plan-epic.js: a planner that returned ${name} threw — ${e.message}`) }
+      }
+    }
     const { result } = await run({ budget: 'metered' })
     JSON.stringify(result.outputTokens) === JSON.stringify({ research: 500, plan: 60 })
       ? ok('plan-epic.js: output tokens per phase are budget.spent() deltas')
@@ -1153,7 +1356,7 @@ for (const file of workflowFiles) {
     check(it?.properties?.confidence?.type === 'integer' && it.properties.confidence.minimum === 0
       && it.properties.confidence.maximum === 100 && it.required.includes('confidence'),
     'every review finding carries a required integer confidence from 0 to 100')
-    const f = (summary, blocking, confidence) => ({ severity: blocking ? 'high' : 'nit', location: 'a.ts:1', summary, blocking, ...(confidence === undefined ? {} : { confidence }) })
+    const f = (summary, blocking, confidence, severity) => ({ severity: severity ?? (blocking ? 'high' : 'nit'), location: 'a.ts:1', summary, blocking, ...(confidence === undefined ? {} : { confidence }) })
     r = await run({ review: (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW
       : { ...CLEAN_REVIEW, blocking: false, findings: [f('SENTINEL-BLOCKER-AT-10', true, 10)] }) })
     const fx = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
@@ -1163,13 +1366,13 @@ for (const file of workflowFiles) {
     r = await run({ review: (o) => (o.label.startsWith('rereview:')
       ? { ...CLEAN_REVIEW, findings: [f('SENTINEL-RR-LOW', false, 5), f('rr-kept', false, 90)] }
       : { ...BLOCKING_REVIEW, findings: [f('real blocker', true, 95), f('SENTINEL-LOW-CONF', false, 20),
-        f('kept at threshold', false, 50), f('kept, no confidence', false)] }) })
+        f('kept at threshold', false, 50, 'medium'), f('kept, no confidence', false, undefined, 'medium')] }) })
     const fx2 = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
     check(!fx2.includes('SENTINEL-LOW-CONF') && fx2.includes('kept at threshold') && fx2.includes('kept, no confidence')
       && !JSON.stringify(pr0(r).review).includes('SENTINEL-LOW-CONF'),
     'a non-blocking finding below the threshold is dropped; one at the threshold, or with no confidence, is kept')
     check(pr0(r).suppressedFindings === 2 && !JSON.stringify(pr0(r).reReview).includes('SENTINEL-RR-LOW')
-      && pr0(r).findingCounts.review.nit === 2 && pr0(r).findingCounts.rereview.nit === 1,
+      && pr0(r).findingCounts.review.medium === 2 && pr0(r).findingCounts.rereview.nit === 1,
     'suppressed findings from the review and the re-review are counted in the result, not discarded silently',
     `suppressedFindings = ${pr0(r).suppressedFindings}, findingCounts = ${JSON.stringify(pr0(r).findingCounts)}`)
     check(r.logs.some((l) => /#412: 1 non-blocking finding\(s\) below confidence 50 suppressed/.test(l)), 'a suppression is logged with the threshold')
@@ -1190,6 +1393,212 @@ for (const file of workflowFiles) {
   check(rrPrompt(r).includes('- fixed: x — (not reported) (test: (not reported))')
     && rrPrompt(r).includes('- declined: (not reported) — (not reported)') && !rrPrompt(r).includes('undefined'),
   'a partial fix entry reaches the re-review as "(not reported)", never "undefined"')
+
+  // --- who can clear a blocker: a fix pass runs only if something is the author's to change
+  {
+    const blk = (summary, resolvableBy, severity = 'medium') => ({ severity, location: 'general', summary, blocking: true, confidence: 90, ...(resolvableBy ? { resolvableBy } : {}) })
+    const rs = (x) => x.dispatches.find((d) => d.label === 'review:412')?.schema?.properties
+    r = await run()
+    check(JSON.stringify(rs(r)?.findings?.items?.properties?.resolvableBy?.enum) === '["author","owner","wait"]'
+      && !rs(r).findings.items.required.includes('resolvableBy') && rs(r).headSha?.type === 'string',
+    'a finding may say who can clear it (author, owner or wait), and a review may name the commit it read; neither is required')
+    r = await run({ review: { ...BLOCKING_REVIEW, findings: [blk('owner has not approved the screenshots', 'owner'), blk('CI is still pending', 'wait')] } })
+    check(JSON.stringify(r.phases) === '["Implement","Review"]' && pr0(r).blockingFindings === true && pr0(r).fix === null && pr0(r).reReview === null
+      && JSON.stringify(pr0(r).awaiting) === '["owner","wait"]' && JSON.stringify(r.result.awaitingOwner) === '[1412]'
+      && r.logs.some((l) => /#412: blocked only on its owner and waiting/.test(l)),
+    'a review whose only blockers are the owner\'s or time\'s to clear gets no fix and no re-review, and is listed in awaitingOwner',
+    `phases=${r.phases.join('>')} awaiting=${JSON.stringify(pr0(r).awaiting)}`)
+    r = await run({ review: (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW
+      : { ...BLOCKING_REVIEW, findings: [blk('SENTINEL-OWNER-GATE', 'owner'), blk('SENTINEL-CODE-DEFECT', 'author', 'high')] }) })
+    const fxo = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+    check(r.phases.includes('Fix') && fxo.includes('[BLOCKING] high general: SENTINEL-CODE-DEFECT')
+      && fxo.includes('[BLOCKING, owner\'s to clear, not the author\'s] medium general: SENTINEL-OWNER-GATE')
+      && /never stand in for an approval/.test(fxo) && JSON.stringify(r.result.awaitingOwner) === '[]',
+    'one blocker the author can clear still starts the fix, which is told the owner\'s blocker is not its to clear')
+    r = await run({ review: BLOCKING_REVIEW })
+    check(!/never stand in for an approval/.test(r.dispatches.find((d) => d.label === 'fix:412')?.prompt || '') && JSON.stringify(pr0(r).awaiting) === '[]',
+      'a blocker with no resolvableBy is the author\'s: the fix runs and nothing is awaited')
+    r = await run({ review: { ...CLEAN_REVIEW, blocking: true } })
+    check(r.phases.includes('Fix'), 'blocking=true with no blocking finding to say whose it is still starts the fix')
+    r = await run({ review: { ...CLEAN_REVIEW, findings: [{ ...blk('x', 'somebody-else') }] } })
+    check(!r.phases.includes('Fix') && JSON.stringify(pr0(r).awaiting) === '["somebody-else"]',
+      'a blocker marked as anyone but the author is not sent to a fix pass')
+  }
+
+  // --- the fix is given blocking findings and non-blocking ones at medium or above; low and nit stay on the PR
+  {
+    const nb = (summary, severity) => ({ severity, location: 'a.ts:1', summary, blocking: false, confidence: 90 })
+    r = await run({ review: (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW
+      : { ...BLOCKING_REVIEW, findings: [...BLOCKING_REVIEW.findings, nb('SENTINEL-NIT', 'nit'), nb('SENTINEL-LOW', 'low'), nb('SENTINEL-MEDIUM', 'medium'),
+        { severity: 'low', location: 'a.ts:2', summary: 'SENTINEL-LOW-BLOCKER', blocking: true, confidence: 90 }] }) })
+    const fxf = r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''
+    check(!fxf.includes('SENTINEL-NIT') && !fxf.includes('SENTINEL-LOW:') && !/a\.ts:1: SENTINEL-LOW\n/.test(fxf) && fxf.includes('SENTINEL-MEDIUM') && fxf.includes('SENTINEL-LOW-BLOCKER')
+      && fxf.includes('2 low or nit finding(s) stay on the PR') && pr0(r).withheldFromFix === 2,
+    'low and nit non-blocking findings are withheld from the fix and counted; a medium one and a low blocker are not',
+    `withheld=${pr0(r).withheldFromFix}`)
+    check(rrPrompt(r).includes('SENTINEL-NIT') && JSON.stringify(pr0(r).review).includes('SENTINEL-NIT'),
+      'the withheld findings are still in the returned review and in what the re-reviewer is shown')
+    r = await run({ review: BLOCKING_REVIEW })
+    check(pr0(r).withheldFromFix === 0 && !/stay on the PR as comments/.test(r.dispatches.find((d) => d.label === 'fix:412')?.prompt || ''),
+      'a review with nothing to withhold says nothing about withheld findings')
+  }
+
+  // --- a large fix is re-reviewed as new code; the review's commit names the fix exactly
+  {
+    const SHA = 'abc1234def5678'
+    const rv = (o) => (o.label.startsWith('rereview:') ? CLEAN_REVIEW : { ...BLOCKING_REVIEW, headSha: SHA })
+    r = await run({ review: rv, fix: { ...FIX_RESULT, filesChanged: 9, linesChanged: 400 } })
+    check(modelOf(r.dispatches, 'rereview:412') === null && optsOf(r, 'rereview:412').effort === 'high'
+      && /review the fix's own diff as new code/.test(rrPrompt(r)) && pr0(r).models.rereview === 'session model' && pr0(r).effort.rereview === 'high'
+      && JSON.stringify(pr0(r).fixSize) === '{"files":9,"lines":400}' && r.logs.some((l) => /#412: the fix is 9 files \/ 400 lines/.test(l)),
+    'a fix over the light-review limit escalates the re-review to the session model at high effort, reading the fix as new code',
+    `model=${modelOf(r.dispatches, 'rereview:412')} effort=${optsOf(r, 'rereview:412').effort}`)
+    check(rrPrompt(r).includes(`git diff ${SHA}..HEAD`) && pr0(r).reviewedSha === SHA, 'the re-review is given the commit the review read, so the fix is one diff')
+    r = await run({ review: rv, fix: { ...FIX_RESULT, filesChanged: 5, linesChanged: 150 } })
+    check(modelOf(r.dispatches, 'rereview:412') === 'sonnet' && optsOf(r, 'rereview:412').effort === 'medium' && !/as new code/.test(rrPrompt(r)),
+      'a fix of exactly 5 files / 150 lines keeps the confirming re-review')
+    r = await run({ review: { ...BLOCKING_REVIEW, headSha: 'main; rm -rf /' } })
+    check(pr0(r).reviewedSha === null && !rrPrompt(r).includes('rm -rf') && !/git diff \S+\.\.HEAD/.test(rrPrompt(r)) && pr0(r).fixSize === null
+      && modelOf(r.dispatches, 'rereview:412') === 'sonnet',
+    'a head commit that is not a hex SHA never reaches a prompt, and a fix of unreported size keeps the confirming re-review')
+    check(/git diff --shortstat/.test(r.dispatches.find((d) => d.label === 'fix:412')?.prompt || '')
+      && ['filesChanged', 'linesChanged'].every((k) => r.dispatches.find((d) => d.label === 'fix:412')?.schema?.properties?.[k]),
+    'the fix is asked for the size of its own commits, as structured output')
+  }
+
+  // --- two issues reported against one PR get one review
+  r = await run({ argv: '412 413', implement: { issues: [412, 413].map((n) => ({ issue: n, pr: 1500, headRefName: 'feature/both', ...MEDIUM_ISSUE, report: `r${n}` })) } })
+  check(r.dispatches.filter((d) => d.label?.startsWith('review:')).length === 1 && r.result.batches[0].prs.length === 2
+    && r.result.batches[0].prs[1].sameReviewAs === 412 && r.result.batches[0].prs[1].issue === 413
+    && JSON.stringify(r.result.batches[0].prs[1].outputTokens) === '{}' && r.result.reviewCompleted === true
+    && r.logs.some((l) => /#413: shares PR #1500 with #412/.test(l)),
+  'two issues the implementer put in one PR are reviewed once, and the second is recorded against the same review')
+
+  // --- --pr: existing pull requests go through review, fix and re-review with no implement phase
+  {
+    r = await run({ argv: '--pr 88 #89', review: BLOCKING_REVIEW })
+    const labels = r.dispatches.map((d) => d.label)
+    check(JSON.stringify(labels) === '["review:pr88","fix:pr88","rereview:pr88","review:pr89","fix:pr89","rereview:pr89"]'
+      && JSON.stringify(r.phases.slice(0, 3)) === '["Review","Fix","Re-review"]' && r.dispatches.every((d) => d.agentType !== 'delivery:code-issue' || d.label.startsWith('fix:')),
+    '--pr reviews, fixes and re-reviews each existing PR and dispatches no implementer', labels.join(','))
+    const b = r.result.batches[0]
+    check(JSON.stringify(b.existingPrs) === '[88,89]' && b.prs.length === 2 && b.prs[0].pr === 88 && b.prs[0].issue === null
+      && JSON.stringify(b.prs[0].models) === '{"review":"session model","fix":"sonnet","rereview":"sonnet"}' && !('implement' in b.prs[0].effort)
+      && r.result.reviewCompleted === true,
+    '--pr records the PRs it was given, and no implement model or effort', JSON.stringify(b.prs[0].models))
+    check(r.dispatches[0].prompt.includes('Review pull request #88, opened for the issue its body closes')
+      && modelOf(r.dispatches, 'review:pr88') === null && optsOf(r, 'review:pr88').effort === 'high'
+      && r.dispatches.find((d) => d.label === 'fix:pr88').prompt.includes('gh pr view 88 --json headRefName'),
+    '--pr gives each PR the full review on the session model, and the fix reads the head branch from gh')
+    r = await run({ argv: '--pr 88 ; 89' })
+    check(r.result.batches.length === 2 && r.dispatches.every((d) => d.isolation === 'worktree'), '--pr batches separated by ; run concurrently in worktrees')
+    for (const bad of ['--pr', '--pr fix the login page', '--pr 88 --epic 3']) {
+      let threw = null, dispatched = 0
+      try { const y = await run({ argv: bad }); dispatched = y.dispatches.length } catch (e) { threw = e.message }
+      check(threw && /Nothing was dispatched/.test(threw) && dispatched === 0, `an unusable --pr ("${bad}") fails loudly and dispatches nothing`, `threw=${threw}`)
+    }
+    const cr = await import(join(ROOT, 'scripts/cost-report.mjs'))
+    r = await run({ argv: '--pr 88', review: BLOCKING_REVIEW })
+    let out = null
+    try { out = cr.render(cr.summarise([{ id: 'pr', data: r.result }])) } catch (e) { out = `THREW ${e.message}` }
+    check(/#88\s+Review/.test(out) && /#88\s+Re-review/.test(out) && !/THREW/.test(out), 'the cost-report reads a --pr result', out.split('\n').slice(0, 5).join(' | '))
+  }
+
+  // --- --per-issue: one implementer per issue of a batch, each told where the earlier ones landed
+  {
+    r = await run({ argv: '412 413 415 --per-issue', budget: 'metered' })
+    const impls = r.dispatches.filter((d) => d.label?.startsWith('implement:'))
+    check(JSON.stringify(impls.map((d) => d.label)) === '["implement:412","implement:413","implement:415"]'
+      && r.result.batches[0].prs.length === 3 && r.result.batches[0].implementers === 'per-issue' && r.result.batches[0].outputTokens.implement === 3000,
+    '--per-issue gives each issue of a batch its own implementer, and sums their tokens', impls.map((d) => d.label).join(','))
+    check(impls[0].prompt.includes('Implement issue #412 end to end') && !/Earlier issues of this batch/.test(impls[0].prompt)
+      && impls[2].prompt.includes('#412 is PR #1412 on branch `feature/issue-412-stub`') && impls[2].prompt.includes('#413 is PR #1413')
+      && !impls[1].prompt.includes('never combine two issues'),
+    'each per-issue implementer gets a one-issue prompt and the branches of the issues before it')
+    r = await run({ argv: '412 --per-issue' })
+    check(r.dispatches[0].label === 'implement:412' && r.result.batches[0].implementers === 'per-batch', '--per-issue changes nothing for a single issue')
+    r = await run({ argv: '412 413' })
+    check(r.dispatches.filter((d) => d.label?.startsWith('implement:')).length === 1 && r.result.batches[0].implementers === 'per-batch',
+      'without --per-issue a batch still has one implementer')
+    r = await run({ argv: '412 413 --per-issue', implement: (o) => (o.label === 'implement:412' ? null : { issues: [{ issue: 413, pr: 1413, headRefName: 'b', ...MEDIUM_ISSUE, report: 'x' }] }) })
+    check(JSON.stringify(r.result.batches[0].notImplemented) === '[412]' && r.result.batches[0].prs.length === 1 && r.result.reviewCompleted === false,
+      'a per-issue implementer that did not return leaves its issue named as not implemented, and the rest carry on')
+  }
+
+  // --- --triage and --epic: one haiku dispatch reads the facts; the code routes and batches
+  {
+    const T = (issue, o = {}) => ({ issue, state: 'open', storyPoints: null, labels: [], openPr: null, blockedBy: [], ownerGate: null, ...o })
+    const withTriage = (issues) => (o) => (o.label.startsWith('triage') ? { issues } : CLEAN_REVIEW)
+    r = await run({ argv: '412 413 --triage', review: withTriage([T(412, { storyPoints: 1 }), T(413, { storyPoints: 2 })]) })
+    const tr = r.dispatches[0]
+    check(tr.label === 'triage' && tr.agentType === 'delivery:triage' && tr.model === 'haiku' && tr.effort === 'low' && tr.phase === 'Triage'
+      && tr.prompt.includes('#412, #413') && r.phases[0] === 'Triage',
+    '--triage is one delivery:triage dispatch on haiku at low effort, before anything is implemented')
+    check(modelOf(r.dispatches, 'implement:412+413') === 'sonnet' && /triage read 2 story points/.test(r.result.batches[0].implementEffortWhy)
+      && r.result.triage.issues.length === 2,
+    'a batch whose every issue states 2 points or fewer is implemented on the small tier, sized by its largest issue')
+    r = await run({ argv: '412 413 --triage', review: withTriage([T(412, { storyPoints: 1 }), T(413)]) })
+    check(modelOf(r.dispatches, 'implement:412+413') === null, 'one issue with no points line keeps the whole batch on the session model')
+    r = await run({ argv: '412 413 --triage', review: withTriage([T(412, { storyPoints: 1 }), T(413, { storyPoints: 8 })]) })
+    check(modelOf(r.dispatches, 'implement:412+413') === null, 'a batch with one large issue is implemented on the session model')
+    r = await run({ argv: '412 --points 5 --triage', review: withTriage([T(412, { storyPoints: 1 })]) })
+    check(modelOf(r.dispatches, 'implement:412') === null && /caller hint 5/.test(r.result.batches[0].implementEffortWhy), 'the caller\'s own size hint wins over triage')
+    r = await run({ argv: '412 413 --triage', review: withTriage([T(412, { state: 'closed' }), T(413, { openPr: 77, ownerGate: 'Owner approves the screenshots' })]) })
+    check(JSON.stringify(r.result.batches[0].issues) === '[413]' && r.logs.some((l) => /#412: already closed/.test(l))
+      && r.dispatches.find((d) => d.label === 'implement:413')?.prompt.includes('already open for #413 (PR #77)')
+      && r.logs.some((l) => /#413: needs its owner before merge/.test(l)),
+    'triage leaves out a closed issue, tells the implementer about a PR already open, and logs an owner gate')
+    r = await run({ argv: '412 --triage', review: (o) => (o.label === 'triage' ? null : CLEAN_REVIEW) })
+    check(r.dispatches.some((d) => d.label === 'implement:412') && r.logs.some((l) => /Triage did not return/.test(l)) && r.result.triage.issues === null,
+      'a triage that did not return is logged and the run carries on unsized')
+    r = await run({ argv: '412' })
+    check(r.result.triage === null && !r.dispatches.some((d) => d.agentType === 'delivery:triage'), 'without --triage or --epic no triage agent is dispatched')
+
+    const EPIC = [T(10, { storyPoints: 2 }), T(11, { storyPoints: 3, blockedBy: [10] }), T(12, { storyPoints: 1 }), T(13, { state: 'closed' }), T(14, { openPr: 90 }), T(15, { blockedBy: [11, 999] })]
+    r = await run({ argv: '--epic 47', review: withTriage(EPIC) })
+    check(r.dispatches[0].label === 'triage:epic47' && r.dispatches[0].prompt.includes('sub-issues of epic #47')
+      && JSON.stringify(r.result.batches.map((b) => b.issues)) === '[[10,11,15],[12]]' && r.dispatches.filter((d) => d.label?.startsWith('implement:')).every((d) => d.isolation === 'worktree'),
+    '--epic batches the open sub-issues: a dependency chain shares a batch in order, unrelated issues run concurrently',
+    JSON.stringify(r.result.batches.map((b) => b.issues)))
+    check(modelOf(r.dispatches, 'implement:12') === 'sonnet' && modelOf(r.dispatches, 'implement:10+11+15') === null
+      && r.logs.some((l) => /#13: already closed/.test(l)) && r.logs.some((l) => /#14: PR #90 is already open/.test(l)) && r.result.triage.epic === 47,
+    '--epic sizes each batch from the points triage read, and leaves out closed issues and issues with an open PR')
+    r = await run({ argv: '--epic 47', review: withTriage(Array.from({ length: 9 }, (_, i) => T(20 + i))) })
+    check(r.result.batches.length === 4 && r.result.batches.flatMap((b) => b.issues).sort().join() === '20,21,22,23,24,25,26,27,28',
+      '--epic folds unrelated issues into at most four concurrent batches and loses none')
+    r = await run({ argv: '--epic 47', review: withTriage([T(30, { blockedBy: [31] }), T(31, { blockedBy: [30] })]) })
+    check(JSON.stringify(r.result.batches.map((b) => b.issues)) === '[[30,31]]', 'a dependency cycle in an epic still yields one ordered batch')
+    r = await run({ argv: '--epic 47', review: withTriage([T(13, { state: 'closed' })]) })
+    check(r.dispatches.length === 1 && r.result.batches.length === 0 && r.result.reviewCompleted === false && r.logs.some((l) => /nothing to implement/.test(l)),
+      'an epic with no open sub-issue implements nothing and does not claim a review')
+    r = await run({ argv: '--epic 47', review: (o) => (o.label.startsWith('triage') ? null : CLEAN_REVIEW) })
+    check(r.dispatches.length === 1 && r.result.batches.length === 0 && r.logs.some((l) => /did not return — nothing was implemented/.test(l)),
+      'an epic whose triage did not return implements nothing')
+    for (const bad of ['--epic', '--epic abc']) {
+      let threw = null
+      try { await run({ argv: bad }) } catch (e) { threw = e.message }
+      check(threw && /--epic needs the epic's issue number/.test(threw), `"${bad}" fails loudly and dispatches nothing`, `threw=${threw}`)
+    }
+  }
+
+  // --- --e2e: Playwright specs for a UI-labelled PR, before its review
+  {
+    const e2e = (added) => (o) => (o.label.startsWith('e2e:') ? { added, tests: added ? 3 : 0, uncovered: [] } : CLEAN_REVIEW)
+    r = await run({ argv: '412 413 --e2e', review: e2e(true), facts: { 412: { ...SMALL_ISSUE, labels: ['frontend'] }, 413: SMALL_ISSUE } })
+    const labels = r.dispatches.map((d) => d.label)
+    check(JSON.stringify(labels) === '["implement:412+413","e2e:412","review:412","review:413"]' && r.dispatches[1].agentType === 'delivery:e2e-test'
+      && JSON.stringify(r.phases) === '["Implement","E2E tests","Review"]' && r.dispatches[1].prompt.includes('`feature/issue-412-stub`')
+      && /never stop to ask/.test(r.dispatches[1].prompt) && r.result.batches[0].prs[0].e2e?.result?.tests === 3 && !('e2e' in r.result.batches[0].prs[1]),
+    '--e2e dispatches delivery:e2e-test for the UI-labelled PR only, before the reviews, on the PR\'s own branch', labels.join(','))
+    check(modelOf(r.dispatches, 'review:412') === null && modelOf(r.dispatches, 'review:413') === 'sonnet',
+      'a PR that gained specs is reviewed at full scope (its measured size is stale); its unlabelled sibling keeps the light review')
+    r = await run({ argv: '412 --e2e', review: e2e(false), facts: { 412: { ...SMALL_ISSUE, labels: ['ui'] } } })
+    check(modelOf(r.dispatches, 'review:412') === 'sonnet', 'an e2e pass that added nothing leaves the review routing as it was')
+    r = await run({ argv: '412', facts: { 412: { ...SMALL_ISSUE, labels: ['frontend'] } } })
+    check(!r.dispatches.some((d) => d.label?.startsWith('e2e:')), 'without --e2e no e2e agent is dispatched, whatever the labels')
+    r = await run({ argv: '412 --e2e', review: e2e(true), facts: { 412: { ...SMALL_ISSUE, labels: ['build', 'guidelines'] } } })
+    check(!r.dispatches.some((d) => d.label?.startsWith('e2e:')), 'a label that merely contains "ui" is not a UI label')
+  }
 
   // --- batches
   r = await run({ argv: '412 413 415' })

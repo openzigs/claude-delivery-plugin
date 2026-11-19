@@ -179,6 +179,62 @@ description is never split into batches, even if it contains a `;`.
 
 Identical to `412`. The `#` is stripped.
 
+**Worked example — a pull request that already exists:**
+
+```
+/delivery:orchestrate --pr 88
+/delivery:orchestrate --pr 88 89 ; 90
+```
+
+With `--pr` the numbers are pull requests, not issues, and there is no implement phase: each PR
+gets the full review on the session model, then a fix and a re-review if the review blocks. Use
+it for a PR an earlier run left blocking once you have cleared what was yours, for a PR a person
+opened, or to re-run a review that never returned. It cannot be combined with `--epic`, and it
+takes numbers only.
+
+**Worked example — a whole epic:**
+
+```
+/delivery:orchestrate --epic 47
+```
+
+One `delivery:triage` dispatch on Haiku lists the epic's sub-issues (GitHub sub-issues, or the
+`- [ ] #N` task list in its body) and reports each one's state, `Story Points` line, labels,
+open PR and stated blockers. The script then builds the batches: issues linked by "Blocked by"
+share a batch, in dependency order, so a later one can stack on an earlier one's branch;
+unrelated groups run concurrently, folded into at most four batches. Closed issues and issues
+that already have an open PR are left out and named in the log (`--pr` reviews those). Each
+batch is sized from the points triage read. `/delivery:plan-epic` now returns this command as
+its `next` field.
+
+**Opt-in phases, all unmeasured or situational:**
+
+| Flag | What it adds | Why it is not the default |
+|---|---|---|
+| `--triage` | The same Haiku dispatch for the issues you named: a batch whose every issue is ≤ 2 points is implemented on the small tier without `--points`; closed issues are left out; an open PR and an owner-only criterion are reported | An earlier sizing agent cost more than it saved. On 1,589 real PRs 56% had no points line and 97% of implementers ran on the session model, so it may pay now; a replay has to show it |
+| `--per-issue` | One implementer per issue of a batch, in turn, each told the branches of the earlier ones | A real implementer's context reaches a median 385k tokens by the end of one issue and every later turn re-reads it, so a shared context looks dearer than a fresh start. That is an inference from single-issue runs, not a comparison |
+| `--e2e` | `delivery:e2e-test` writes Playwright specs for each PR whose issue carries a UI label, before its review | It needs a Playwright setup in the project and adds an agent per UI PR |
+
+To compare one of them on your own repository, run a ref twice with
+`bench-run.mjs --orchestrate-args "--per-issue"` (see [benchmarks](benchmarks.md)).
+
+**Who can clear a blocker, and what the fix agent is shown.** Every blocking finding carries
+`resolvableBy`: `author` (the default), `owner` (only a person can: an approval, a check on a
+real device) or `wait` (only time can: CI still running, an outage). The fix phase starts only
+if at least one blocker is the author's. A PR blocked solely on you or on a wait gets no fix and
+no re-review; it is listed in the result's `awaitingOwner`, and its PR entry's `awaiting` says
+which. Over 630 real runs at least 128 of 557 fix cycles were started by such blockers alone,
+and each paid for a fix and a re-review that could not change the outcome. When a fix does run,
+it is given the blocking findings and the non-blocking ones at `medium` or above; `low` and
+`nit` findings stay on the PR as inline comments and are counted in `withheldFromFix` (81% of
+8,615 real findings were `low` or `nit`). The re-reviewer still sees all of them.
+
+**A large fix is reviewed as new code.** The fix reports the size of its own commits. Over the
+light-review limit (5 files or 150 lines) the re-review runs on the session model at `high`
+effort and reads the fix's diff with the security, correctness and test steps, instead of
+confirming the listed findings on the small tier. When the first review reported the commit it
+read (`reviewedSha`), the re-reviewer is given `git diff <sha>..HEAD`, which is exactly the fix.
+
 **Why the fix decision is structured output and not a regex.** Reviewers phrase blockers
 several ways — "must fix before merge", "blocking", "I would not ship this". A regex that
 missed one would silently skip the fix phase, which is precisely the class of failure this
@@ -275,6 +331,7 @@ example of this — it can dispatch `delivery:code-issue` and `delivery:code-rev
 | `delivery:research` | Docs, URLs, or an unfamiliar standard govern the work | Read-only. Its output feeds planning |
 | `delivery:e2e-test` | There is user-visible behaviour to lock down | Playwright specs; MCP optional, CLI fallback |
 | `delivery:ui-vision` | "Walk through the UI", "reproduce this visually" | **Requires the Playwright MCP server.** Writes no tests |
+| `delivery:triage` | Never directly: `/delivery:orchestrate --triage` or `--epic` dispatches it | Holds `Bash` only. Reports issue facts as written; estimates and changes nothing. Runs on Haiku at low effort |
 
 Two design decisions worth understanding:
 
@@ -297,21 +354,51 @@ that has `Skill` in its `tools:` invoke it.
 | `/delivery:code-issue` | The full implement-an-issue procedure: plan, branch, TDD loop, security scan, CI, PR |
 | `/delivery:code-review` | The full review procedure: requirements, design, OWASP, quality, performance, tests, docs, publish |
 | `/delivery:cost-report` | Per-run, per-phase cost table from saved workflow results; read-only. See [reading the cost of a run](#reading-the-cost-of-a-run) |
+| `/delivery:doctor` | Is this repository ready: instruction-file size, `.claude/delivery.md`, shadowed agents, CI on pull requests and its duration, story-point coverage; read-only |
 | `/delivery:e2e-test` | Map acceptance criteria to Playwright specs, Page Object Model, accessible locators |
 | `/delivery:epic-planner` | Epic and sub-issue structure, Mermaid diagrams, story points, phase ordering |
+| `/delivery:handoff` | Write `.claude/handoff.md` so work continues in a fresh session; `resume` reads it back. See [long sessions](long-sessions.md) |
 | `/delivery:repo-scaffold` | New repository from nothing: stack selection, scaffolding, CI, and the `CLAUDE.md` this pipeline reads |
 | `/delivery:research-gather` | Collect and convert research material from local files, the web and library docs |
 | `/delivery:resolve-pr-comments` | Fetch unresolved review threads, triage, fix, reply, and resolve them via the GraphQL API |
+| `/delivery:retro` | What the reviews found across saved runs, and what that suggests changing in the project; read-only. See [what the reviews keep finding](#what-the-reviews-keep-finding) |
 | `/delivery:ui-vision` | Structured browser walkthrough with screenshots, console capture and bug filing |
 
 **Worked examples:**
 
 ```
+/delivery:doctor
+/delivery:handoff
+/delivery:handoff resume
+/delivery:retro --discover --last 50
 /delivery:code-review 88
 /delivery:resolve-pr-comments 88
 /delivery:repo-scaffold my-new-service
 /delivery:e2e-test 412
 ```
+
+### What the reviews keep finding
+
+`/delivery:retro` reads the same saved results as `/delivery:cost-report` and answers a different
+question: not what a run spent, but what the reviews found and whether the pipeline's routes
+fired. It runs `scripts/findings-report.mjs`, which prints:
+
+- **routing**: how many batches were implemented on the small tier, how many reviews were light,
+  and how many PRs had no `Story Points` line;
+- **review and fix**: fix cycles, how many were still blocking after the re-review, how many PRs
+  were blocked only on their owner or a wait, fixes whose gates failed or that were not pushed,
+  findings changed and declined, withheld and suppressed;
+- **blocking findings by class** (tests, requirements, security, CI, docs, scope, owner-or-wait)
+  and by the top-level directory they point at;
+- **what this suggests**: lines that fire on fixed thresholds, each stating its own evidence;
+- **the project notes the reviews suggested**, deduplicated, with how often each recurred.
+
+It prints counts and those notes, never a finding's text. The classes are keyword counts, a
+proxy for where to look. Ask it what to add to `.claude/delivery.md` and it drafts the lines in
+its reply; it writes nothing.
+
+`/delivery:doctor` is the check to run first in a repository: it reports what will make runs
+slow, expensive or unverifiable before any agent is dispatched.
 
 ### Reading the cost of a run
 

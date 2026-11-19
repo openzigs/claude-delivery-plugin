@@ -187,11 +187,11 @@ Expect:
 
 ```
 Component inventory
-  Skills (9)  code-issue, code-review, cost-report, e2e-test, epic-planner, repo-scaffold, research-gather, resolve-pr-comments, ui-vision
-  Agents (7)  orchestrator, ui-vision, research, code-review, e2e-test, code-issue, code-planner
+  Skills (12)  code-issue, code-review, cost-report, doctor, e2e-test, epic-planner, handoff, repo-scaffold, research-gather, resolve-pr-comments, retro, ui-vision
+  Agents (8)  orchestrator, ui-vision, research, code-review, e2e-test, code-issue, code-planner, triage
 ```
 
-**A count lower than 9 or 7 is the diagnostic.** A missing agent is almost always a
+**A count lower than 12 or 8 is the diagnostic.** A missing agent is almost always a
 frontmatter problem — see
 [precedence-and-gotchas](precedence-and-gotchas.md#3-an-agent-is-named-by-its-name-not-its-filename).
 

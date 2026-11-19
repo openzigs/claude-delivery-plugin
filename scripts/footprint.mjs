@@ -38,11 +38,15 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 // Measured at introduction: implement 17,925, full review 25,347 (21,243 + the 4,104 B
 // FULL_REVIEW_STEPS.md it reads), light review 21,971, fix 18,107, re-review 25,695 bytes
 // (0.7.1 was 30-32 KB for each).
+// `fix` was raised from 19,000 with the 630-run cost pass (0.10.0): its prompt now asks for the
+// size of the fix and says a blocker only a person or time can clear is not the fix agent's,
+// and Fix mode says the same. Both are there to stop a fix pass that cannot succeed, which costs
+// far more than their text. The other four fitted their existing ceilings after trimming.
 export const CEILINGS = {
   implement: 18800,
   'full review': 26600,
   'light review': 23100,
-  fix: 19000,
+  fix: 19400,
   're-review': 27000,
 }
 

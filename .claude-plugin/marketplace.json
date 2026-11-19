@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "delivery",
-      "description": "A project-agnostic delivery pipeline: workflows that take a GitHub issue through implement, independent review, fix and re-review, and that turn a topic into a filed epic with sub-issues. Seven agents, nine skills, no hardcoded project rules.",
+      "description": "A project-agnostic delivery pipeline: workflows that take a GitHub issue through implement, independent review, fix and re-review, and that turn a topic into a filed epic with sub-issues. Eight agents, twelve skills, no hardcoded project rules.",
       "author": {
         "name": "openzigs"
       },

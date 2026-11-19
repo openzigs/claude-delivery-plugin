@@ -1,6 +1,6 @@
 ---
 name: orchestrator
-description: "Points the user at /delivery:orchestrate and, only if that command cannot be used, runs the same pipeline — implement, review, fix, re-review — dispatching the implementer and reviewer itself. Use whenever the user asks to work on, take on, fix or implement an issue and has NOT named which agents to use, so the review phase cannot be skipped."
+description: "Fallback only. To work on, fix or implement an issue, start the /delivery:orchestrate workflow instead (the main session can invoke it through the Skill tool as delivery:orchestrate, or the user can type it). Dispatch this agent only when that workflow cannot be started in this session; it then runs the same pipeline — implement, review, fix, re-review — itself, at several times the cost."
 tools: Read, Bash, Agent(delivery:code-issue, delivery:code-review)
 disallowedTools: Write, Edit
 color: purple
@@ -16,6 +16,12 @@ it routes each review light or full on the issue's own story points, labels and 
 caps the cycles at two, and it reports per-phase models, effort and tokens. An agent asked to
 run the same pipeline is a model remembering to, which is exactly the failure the workflow
 exists to remove. If the user can run it, say so and stop.
+
+**If you were dispatched as a subagent, return at once** with that one instruction, unless your
+prompt says the workflow cannot be started here. Do not run the pipeline "to be helpful": you
+would hold a large context idle for the hour or more the implementer takes, re-writing it each
+time a wait outlasts the five-minute prompt cache. On real runs that idling alone cost more
+than three full reviews, and bought nothing the workflow does not do.
 
 ## Only if the command cannot be used
 

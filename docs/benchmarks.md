@@ -18,6 +18,30 @@ change that moves a prompt, a skill or a review tier, and compare.
 | 2. Review precision and recall | `node scripts/eval-run.mjs` (`claude plugin eval` + `scripts/eval-tiers.mjs`) | about $83 at list price for the full matrix at N=3 (haiku $2, sonnet $23, session model $58) | no |
 | 3–5. Pipeline replay and behaviour checks | `node scripts/bench-run.mjs` + `node scripts/bench-report.mjs` | a few million tokens for two refs | no |
 
+## What real runs measure that these scenarios cannot
+
+The three scenarios below run on a small fixture with a six-second CI. Two free, read-only
+scripts read your own project's saved runs instead:
+
+```bash
+node scripts/findings-report.mjs --discover --last 50   # also /delivery:retro
+node scripts/doctor.mjs                                 # also /delivery:doctor
+```
+
+`findings-report.mjs` reports fix and still-blocking rates, blocking findings by class and area,
+and which routes fired, from the same result files `cost-report.mjs` reads. `doctor.mjs` reports
+what will make a run slow, expensive or unverifiable in the current repository.
+
+The 0.10.0 changes rest on such data rather than on the replay: 630 orchestrate runs (1,589 PRs)
+and about 9,000 subagent transcripts from four real repositories. Weighting tokens as cache
+read 0.1, 5-minute cache write 1.25 and output 5, a single-issue implementer on the session
+model (n=103) took a median 113 turns, its context grew to a median 385k tokens, and its cost
+split 64% cache reads, 35% cache writes and 1% output. It hit 3.7 gaps of more than five minutes
+per run, and about two thirds of all such gaps followed a CI wait. That is why one CI wait is
+capped at 270 s, and why per-phase output tokens (`budget.spent()` deltas) understate where a
+run's cost goes. The replay cannot reproduce either effect: its issues are small and its CI
+finishes inside the cache window.
+
 ## Scenario 1 — static prompt footprint per dispatch
 
 ```bash
