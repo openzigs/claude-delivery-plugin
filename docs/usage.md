@@ -245,6 +245,49 @@ than being treated as clean.
 
 ---
 
+### `/delivery:land` — reviewed PRs to merged
+
+```
+/delivery:land 88 91 92
+/delivery:land 88 91 92 --merge
+/delivery:land 88 --merge --method squash
+```
+
+The numbers are pull requests, landed in the order given. Without `--merge` nothing is merged:
+each PR is brought up to date with its base, conflicts are resolved, the gates and CI are re-run,
+and the result's `ready` list says which you can merge. With `--merge`, each ready PR is merged
+before the next is prepared, so a later branch is updated against what has just landed.
+
+| Phase | Agent | Runs when | Model and effort |
+|---|---|---|---|
+| Prepare | `delivery:land` | Always, once per PR | Session model, `high` |
+| Review | `delivery:code-review` | A conflict resolution changed at least one line, or its size was not reported | Session model, `high` |
+| Merge | `delivery:land` | `--merge`, and the PR is ready | Sonnet, `medium` |
+
+A PR is **blocked**, and never merged, when: it is closed or a draft; it has no delivery review
+(run `/delivery:orchestrate --pr <n>` first); its last `Recommendation:` says `do not merge`; its
+CI is failing or still pending; it is stacked on another open PR; the agent could not resolve a
+conflict without guessing; the review of a resolution blocked or did not return; or the head
+commit was not reported, so the merge could not be pinned. The script checks the review, CI and
+commit conditions itself. One blocked PR does not stop an independent one after it.
+
+The merge is `gh pr merge <n> --<method> --match-head-commit <sha>`: if anything was pushed after
+the checks, GitHub refuses it. `--method` is `squash`, `merge` or `rebase`; without it the agent
+uses the method the project states, else the first the repository allows. Open PRs stacked on a
+merged branch are retargeted to the default branch, and no branch is deleted.
+
+**Worked example — a stack.** #91 is stacked on #88:
+
+```
+/delivery:land 88 91 --merge
+```
+
+#88 is prepared and merged. #91's base was #88's branch, so it is retargeted to the default
+branch; its own Prepare then merges the default branch in, resolves what the squash of #88
+disturbed, and, if that resolution changed code, has it reviewed before #91 merges.
+
+---
+
 ### `/delivery:plan-epic` — a topic to filed issues
 
 ```
@@ -331,6 +374,7 @@ example of this — it can dispatch `delivery:code-issue` and `delivery:code-rev
 | `delivery:research` | Docs, URLs, or an unfamiliar standard govern the work | Read-only. Its output feeds planning |
 | `delivery:e2e-test` | There is user-visible behaviour to lock down | Playwright specs; MCP optional, CLI fallback |
 | `delivery:ui-vision` | "Walk through the UI", "reproduce this visually" | **Requires the Playwright MCP server.** Writes no tests |
+| `delivery:land` | Never directly: `/delivery:land` dispatches it, one PR at a time | Writes only what a merge from the base requires. Never force-pushes, bypasses a check, or deletes a branch; merges only in Merge mode |
 | `delivery:triage` | Never directly: `/delivery:orchestrate --triage` or `--epic` dispatches it | Holds `Bash` only. Reports issue facts as written; estimates and changes nothing. Runs on Haiku at low effort |
 
 Two design decisions worth understanding:

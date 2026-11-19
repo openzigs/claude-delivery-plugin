@@ -141,6 +141,14 @@ requests into three groups:
 | Waiting on you | `awaitingOwner` | Give the approval or do the check the review names, then merge |
 | Still blocking after the re-review | `stillBlocking: true` on the PR | Decide, or fix what is yours, then `/delivery:orchestrate --pr <numbers>` |
 
+Merging by hand is fine. When there are several, or they are stacked or have drifted from the
+base, land them with one command instead of dispatching agents for conflicts one at a time:
+
+```
+/delivery:land 88 91 92             bring each up to date and verify; merge nothing
+/delivery:land 88 91 92 --merge     and merge each one that is ready, in that order
+```
+
 Run `--epic 47` again whenever you like: it leaves out sub-issues that are closed or already have
 an open PR, so each run picks up only what is left. That is how an epic with several waves is
 worked: merge a wave, run the epic again.
@@ -153,6 +161,25 @@ Single issues need none of this:
 /delivery:orchestrate 412 413 ; 500 501    two independent batches at once
 /delivery:orchestrate 412 --points 2       a small issue: small tier and light review
 ```
+
+## One session per workstream
+
+A session that is working an epic, landing a stack of PRs and trying out something unrelated
+carries all three in every call, and a single note cannot describe three things well. Give each
+workstream its own session, and its own named note so that notes in the same checkout do not
+overwrite each other:
+
+```
+/delivery:handoff connect            writes .claude/handoff-connect.md
+/delivery:handoff pacer-stack        writes .claude/handoff-pacer-stack.md
+/delivery:handoff resume connect     in a fresh session, picks the Connect work back up
+/delivery:handoff resume             with only named notes present, lists them and asks which
+```
+
+A named note gains one section, `Scope`, listing the epic, issues and pull requests that belong
+to that workstream, because the facts above it cover the whole repository. Agents that a
+workflow dispatches are not affected by any of this: they never read a handoff note, and one
+session can still run several batches at once.
 
 ## When to reset the session
 
@@ -232,7 +259,7 @@ Three of those are worth spelling out for the handoff method:
 
    ```
    # .gitignore
-   .claude/handoff.md
+   .claude/handoff*.md
    ```
 
    Commit it instead only if a team hands work to each other through it. The skill tells you

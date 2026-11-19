@@ -1,6 +1,6 @@
 # delivery — a Claude Code plugin
 
-A project-agnostic delivery pipeline for Claude Code: two workflows, eight agents and
+A project-agnostic delivery pipeline for Claude Code: three workflows, nine agents and
 twelve skills that take a GitHub issue from implementation through **independent review**,
 fix and re-review — or turn a topic into a filed epic with sub-issues — plus a read-only
 report of what each run cost.
@@ -233,6 +233,34 @@ once GitHub has retargeted it (or you have rebased it) onto the default branch.
 
 Details: [`docs/usage.md`](docs/usage.md#deliveryorchestrate--issues-to-reviewed-prs).
 
+### `/delivery:land` — reviewed pull requests to merged
+
+```
+/delivery:land 88 91 92                  bring each up to date, resolve conflicts, verify; merge nothing
+/delivery:land 88 91 92 --merge          the same, then merge each one that is ready
+/delivery:land 88 --merge --method squash
+```
+
+`/delivery:orchestrate` stops before merging. This is the step after it, for PRs you have decided
+to land, in the order you list them (a PR stacked on another goes after it).
+
+1. **Prepare** — `delivery:land` checks the PR is open, was through the delivery review, and that
+   its last `Recommendation:` is not `do not merge`. It merges the base branch into the PR's
+   branch, resolves conflicts keeping the intent of both sides, re-runs the project's gates, pushes
+   and waits for CI. A conflict it would have to guess at is aborted and reported, not resolved.
+2. **Review** — only when a conflict resolution changed code. `delivery:code-review` reads exactly
+   that diff and judges one thing: whether both sides' intent survived. A blocking answer stops
+   the merge.
+3. **Merge** — only with `--merge`, and only a PR that is ready. The merge is pinned to the commit
+   that was checked (`--match-head-commit`), so a push that lands in between is not merged
+   unreviewed. Open PRs stacked on the merged branch are retargeted to the default branch.
+
+**It will not** force-push, pass `--admin`, skip a required check, delete a branch, or merge a PR
+that was never reviewed, whose review said `do not merge`, or whose CI is not passing. The script
+re-checks those itself rather than trusting the agent's word that a PR is ready. Without
+`--merge` the result's `ready` list is what you can merge by hand; with it, `merged` and `blocked`
+say what happened, and each blocked PR names what would clear it.
+
 ### `/delivery:plan-epic` — a topic to filed issues
 
 ```
@@ -350,12 +378,19 @@ have notified the session anyway. Keep the memory outside the conversation inste
 /delivery:handoff resume                 start of a session: what the note said, what changed since, the next step
 /delivery:orchestrate --epic 47          one command per epic; it notifies when done, so do not poll
 /delivery:orchestrate --pr 88 91         send PRs back through review once what was yours is cleared
+/delivery:land 88 91 --merge             land the ones you have approved, in order
 /delivery:handoff                        before /clear, switching epics, or more than an hour away
+/delivery:handoff connect                the same, one note per workstream when several share a checkout
 /delivery:retro --discover --last 50     weekly: what reviews keep finding, and lines for .claude/delivery.md
 ```
 
+**One session per workstream.** A session doing three unrelated things carries all three in
+every call. Give each workstream its own session and its own named note (`/delivery:handoff
+connect`, later `/delivery:handoff resume connect`), so notes in one checkout do not overwrite
+each other.
+
 **To adopt it in a project**, nothing is required, and three things help: add
-`.claude/handoff.md` to `.gitignore` (it is working state); create `.claude/delivery.md` from the
+`.claude/handoff*.md` to `.gitignore` (it is working state); create `.claude/delivery.md` from the
 [template](docs/templates/delivery.md) and list the criteria only the owner can meet; and give
 issues a `Story Points` line. `/delivery:doctor` reports what a repository is missing.
 
@@ -418,6 +453,7 @@ words ("review PR 88"), but then the main model decides whether to use it.
 | `delivery:research` | Turns local files, web pages and library docs into a research summary. Read-only | By `/delivery:plan-epic` (Research) |
 | `delivery:e2e-test` | Writes Playwright specs mapped to acceptance criteria | By `/delivery:orchestrate --e2e`; directly; or by `delivery:code-issue` for UI work |
 | `delivery:ui-vision` | Drives a real headed browser through a running app and files what it finds. Writes no tests | Directly ("walk through the settings page") |
+| `delivery:land` | Brings one reviewed PR up to date with its base, resolves conflicts, re-runs gates and CI; merges only in Merge mode. Never force-pushes or bypasses a check | By `/delivery:land` |
 | `delivery:triage` | Reads issues and reports their state, story points, labels, open PR, dependencies and owner-only criteria, exactly as written. Read-only | By `/delivery:orchestrate` with `--triage` or `--epic` |
 
 ### Skills
@@ -436,7 +472,7 @@ and is also loaded by the agents that follow it.
 | `/delivery:doctor` | Is this repository ready for the pipeline: instruction-file size, `.claude/delivery.md`, shadowed agents, CI on pull requests and its duration, story-point coverage. Read-only | Typed before the first run, or when runs are slow or expensive |
 | `/delivery:e2e-test` | Acceptance criteria to Playwright specs, Page Object Model, accessible locators | By `delivery:e2e-test`; or typed as `/delivery:e2e-test 412` |
 | `/delivery:epic-planner` | Epic and sub-issue structure, Mermaid diagrams, story points, phase order | By `delivery:code-planner` in `/delivery:plan-epic` |
-| `/delivery:handoff` | Writes `.claude/handoff.md` (open PRs, open epics, what the last runs left unfinished, your decisions and the next step) so work continues in a fresh session; `resume` reads it back and reports what changed | Typed before `/clear` or the end of a day; `/delivery:handoff resume` at the start of the next |
+| `/delivery:handoff` | Writes `.claude/handoff.md` (open PRs, open epics, what the last runs left unfinished, your decisions and the next step) so work continues in a fresh session; `resume` reads it back and reports what changed. A name (`/delivery:handoff connect`) keeps one note per workstream | Typed before `/clear` or the end of a day; `/delivery:handoff resume` at the start of the next |
 | `/delivery:repo-scaffold` | A new repository from nothing: stack, scaffolding, CI, and the `CLAUDE.md` this pipeline reads | Typed on an empty repository, or by `delivery:code-planner` |
 | `/delivery:research-gather` | Collects and converts research material from files, the web and library docs | By `delivery:research` in `/delivery:plan-epic` |
 | `/delivery:resolve-pr-comments` | Triages unresolved review threads, fixes the valid ones, replies and resolves them | Typed after a review: `/delivery:resolve-pr-comments 88` |
@@ -469,7 +505,7 @@ claude plugin details delivery
 claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery
 ```
 
-You should see `Skills (12)` and `Agents (8)`.
+You should see `Skills (12)` and `Agents (9)`.
 
 `claude plugin details` does **not** list workflows — true of every plugin. To confirm them,
 type `/` in a session and look for `/delivery:orchestrate` and `/delivery:plan-epic`. More
@@ -562,7 +598,12 @@ cache re-writes after a wait longer than the 5-minute prompt cache.
 - **New opt-in, unmeasured flags:** `--triage`, `--per-issue`, `--e2e`.
 - **New agent `delivery:triage`**, new read-only skills **`/delivery:retro`** and
   **`/delivery:doctor`**, and **`/delivery:handoff`**, which writes a short note so work continues
-  in a fresh session instead of one endless one ([why](docs/long-sessions.md)).
+  in a fresh session instead of one endless one ([why](docs/long-sessions.md)); a name keeps one
+  note per workstream.
+- **New workflow `/delivery:land`** and agent **`delivery:land`**: reviewed PRs are brought up to
+  date, conflicts resolved and reviewed, CI re-verified, and merged only with `--merge`, pinned
+  to the commit that was checked. On one real day, 13 of 27 hand-dispatched background agents
+  were doing this by hand.
 - **The implementer** greps the consumers of every contract it changes, and lists each
   acceptance criterion with its test (or as the owner's) in the PR body. **The reviewer** leaves
   a clean tree after its mutation checks and reports the commit it read.
@@ -671,7 +712,7 @@ docs/                  # installation, usage, configuration, gotchas, customisin
    ```bash
    node scripts/verify-plugin.mjs              # structure, frontmatter, meta purity, phase order
    claude plugin validate . --strict           # manifest schema, warnings as errors
-   claude --plugin-dir . plugin details delivery   # expect Skills (12), Agents (8)
+   claude --plugin-dir . plugin details delivery   # expect Skills (12), Agents (9)
    ```
 4. Keep it project-agnostic. This is the one rule that matters: no project names, no
    organisation names, no domain vocabulary, no toolchain assumptions, and no bare issue

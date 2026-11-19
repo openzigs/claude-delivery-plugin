@@ -10,8 +10,8 @@
 // It prints Markdown. The handoff skill puts that under "State" in the note it writes and adds
 // what only the conversation knows (decisions, the next step). Nothing here is a judgement: a PR
 // is listed with what GitHub and the saved result say about it, in their words.
-import { readFileSync, realpathSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { readFileSync, readdirSync, statSync, realpathSync } from 'node:fs'
+import { resolve, join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { unwrap, discoverFiles, configDir } from './cost-report.mjs'
@@ -54,8 +54,29 @@ export function unfinished(results) {
   return out
 }
 
-export function gather(cwd, { gh = true, runs = 10, run = execFileSync, config = configDir() } = {}) {
-  const facts = { gh: null, repo: null, prs: [], epics: [], runsRead: 0, unfinished: unfinished([]) }
+// A checkout holds one unnamed note (.claude/handoff.md) and any number of named ones
+// (.claude/handoff-<name>.md), one per workstream, so two sessions on different work do not
+// overwrite each other's decisions.
+export const NOTE_NAME = /^[a-z0-9][a-z0-9-]{0,40}$/
+export const noteFile = (name) => (name ? `.claude/handoff-${name}.md` : '.claude/handoff.md')
+export function notesIn(cwd) {
+  let names = []
+  try { names = readdirSync(join(cwd, '.claude')) } catch { return [] }
+  return names.map((f) => /^handoff(?:-([a-z0-9][a-z0-9-]{0,40}))?\.md$/.exec(f)).filter(Boolean).map((m) => {
+    let written = null
+    try { written = statSync(join(cwd, '.claude', m[0])).mtime.toISOString().slice(0, 10) } catch { /* vanished */ }
+    return { name: m[1] ?? null, file: `.claude/${m[0]}`, written }
+  }).sort((a, b) => (a.name ?? '') < (b.name ?? '') ? -1 : 1)
+}
+
+// Whether git ignores the notes here. `git check-ignore -q` exits 0 when it does; anything else
+// (not ignored, or not a repository) reads as not ignored, which is the safe thing to say.
+export const ignoredByGit = (cwd, run = execFileSync) => {
+  try { run('git', ['check-ignore', '-q', '.claude/handoff.md'], { cwd, stdio: 'ignore' }); return true } catch { return false }
+}
+
+export function gather(cwd, { gh = true, runs = 10, run = execFileSync, config = configDir(), ignored = ignoredByGit } = {}) {
+  const facts = { gh: null, repo: null, prs: [], epics: [], runsRead: 0, unfinished: unfinished([]), notes: notesIn(cwd), notesIgnored: ignored(cwd) }
   const saved = []
   for (const f of discoverFiles(config, cwd).files) {
     try { const u = unwrap(JSON.parse(readFileSync(f, 'utf8'))); if (!u.skip && Array.isArray(u.data?.batches)) saved.push({ data: u.data, time: u.startTime ?? 0 }) } catch { /* not a result */ }
@@ -104,6 +125,10 @@ export function render(f, today = new Date().toISOString().slice(0, 10)) {
     const again = [...u.stillBlocking, ...u.notReviewed]
     if (again.length) out.push('', `To take those back through review once what was yours is cleared: \`/delivery:orchestrate --pr ${again.join(' ')}\`. A PR listed above may have been merged or closed since; the open pull request list is the current truth.`)
   }
+  const notes = Array.isArray(f.notes) ? f.notes : []
+  out.push('', `**Handoff notes in this checkout (${notes.length})**`, '')
+  out.push(...(notes.length ? notes.map((n) => `- ${n.name ?? '(unnamed)'} — \`${n.file}\`, written ${n.written ?? 'unknown'}`) : ['- none']))
+  if (f.notesIgnored === false) out.push('', 'Git does not ignore `.claude/handoff*.md` here. A note is working state: add that pattern to `.gitignore` unless the team shares notes.')
   return out.join('\n')
 }
 

@@ -648,7 +648,7 @@ checkSkill(/Nothing is written to `CLAUDE\.md`, `AGENTS\.md` or `\.claude\/deliv
   checkSkill(JSON.stringify(u) === '{"awaitingOwner":[2],"stillBlocking":[3],"notReviewed":[1],"notImplemented":[7,8]}',
     `handoff: saved runs yield the PRs awaiting the owner, still blocking and unreviewed, and the issues not implemented, each once (got ${JSON.stringify(u)})`)
   const calls = []
-  const f = ho.gather(ROOT, { config: join(tmpdir(), 'no-such-config'), run: (cmd, args) => { calls.push([cmd, ...args].join(' ')); if (args[0] === 'repo') return '{"nameWithOwner":"a/b"}'
+  const f = ho.gather(ROOT, { config: join(tmpdir(), 'no-such-config'), ignored: () => true, run: (cmd, args) => { calls.push([cmd, ...args].join(' ')); if (args[0] === 'repo') return '{"nameWithOwner":"a/b"}'
     if (args[0] === 'pr') return JSON.stringify([{ number: 9, title: 'T'.repeat(200), headRefName: 'feature/x', isDraft: true, updatedAt: '2026-11-18T10:00:00Z', statusCheckRollup: [{ conclusion: 'SUCCESS' }], reviews: [{ body: 'Recommendation: merge — no blocking findings' }] }])
     return JSON.stringify([{ number: 47, title: '[EPIC] Reporting' }]) } })
   const WRITE = /\b(create|edit|close|comment|delete|merge|reopen|api|review|ready)\b/
@@ -660,20 +660,41 @@ checkSkill(/Nothing is written to `CLAUDE\.md`, `AGENTS\.md` or `\.claude\/deliv
     && /Waiting on the owner or on CI, no fix ran: #92/.test(out) && /`\/delivery:orchestrate --pr 91`/.test(out) && !/--pr 91 92/.test(out),
     'handoff: the note lists each PR with its branch, CI and last recommendation, and offers --pr only for PRs a re-review can still move')
   const off = ho.gather(ROOT, { gh: false, config: join(tmpdir(), 'no-such-config'), run: () => { throw new Error('must not run') } })
+  checkSkill(ho.ignoredByGit(ROOT, () => '') === true && ho.ignoredByGit(ROOT, () => { throw new Error('exit 1') }) === false
+    && /Git does not ignore `\.claude\/handoff\*\.md` here/.test(ho.render({ ...off, notesIgnored: false })) && !/Git does not ignore/.test(ho.render({ ...off, notesIgnored: true })),
+    'handoff: the facts say when git does not ignore the notes, and say nothing when it does')
   checkSkill(off.gh === null && /GitHub was not queried/.test(ho.render(off)) && /no saved runs found/.test(ho.render(off)), 'handoff: --no-gh runs no gh query and says so; no saved runs is said, not shown as "none"')
 
+  {
+    const d = mkdtempSync(join(tmpdir(), 'handoff-notes-'))
+    mkdirSync(join(d, '.claude'))
+    for (const n of ['handoff.md', 'handoff-connect.md', 'handoff-pacer-stack.md', 'handoff-Bad.md', 'handoff-.md', 'handoff.txt', 'delivery.md']) writeFileSync(join(d, '.claude', n), 'x')
+    const notes = ho.notesIn(d)
+    checkSkill(JSON.stringify(notes.map((n) => n.name)) === '[null,"connect","pacer-stack"]' && notes[1].file === '.claude/handoff-connect.md' && /^\d{4}-\d\d-\d\d$/.test(notes[0].written)
+      && ho.notesIn(join(d, 'nope')).length === 0 && ho.noteFile('connect') === '.claude/handoff-connect.md' && ho.noteFile(null) === '.claude/handoff.md'
+      && ho.NOTE_NAME.test('pacer-stack') && !ho.NOTE_NAME.test('Bad') && !ho.NOTE_NAME.test('../x') && !ho.NOTE_NAME.test(''),
+    `handoff: a checkout's unnamed and named notes are listed, and a name is lowercase letters, digits and hyphens (got ${JSON.stringify(notes.map((n) => n.name))})`)
+    const withNotes = ho.render({ ...off, notes }, '2026-11-19')
+    checkSkill(/\*\*Handoff notes in this checkout \(3\)\*\*/.test(withNotes) && /- connect — `\.claude\/handoff-connect\.md`, written \d{4}/.test(withNotes) && /- \(unnamed\) — `\.claude\/handoff\.md`/.test(withNotes)
+      && /Handoff notes in this checkout \(0\)\*\*\n\n- none/.test(ho.render({ ...off, notes: [] })),
+    'handoff: the facts end with the notes that exist, so resume lists them instead of guessing')
+    rmSync(d, { recursive: true, force: true })
+  }
   const body = readFileSync(join(ROOT, 'skills/handoff/SKILL.md'), 'utf8')
+  checkSkill(/`\.claude\/handoff-<name>\.md` when a name was\s+given/.test(body) && /\| `resume connect` \| `\.claude\/handoff-connect\.md` \| reads back \|/.test(body)
+    && /never `resume`/.test(body) && /say what a\s+valid name looks like and stop, writing nothing/.test(body) && /ask which one; do not pick/.test(body) && /### Scope/.test(body),
+    'handoff: a name keeps one note per workstream, an invalid name writes nothing, and resume asks rather than picks when only named notes exist')
   const cmds = bashBlocks(body).flatMap((b) => b.split('\n').map((l) => l.trim()).filter(Boolean))
   checkSkill(cmds.length === 1 && cmds[0] === 'node "${CLAUDE_PLUGIN_ROOT}/scripts/handoff.mjs"', `handoff: the skill's only command is its facts script (found ${JSON.stringify(cmds)})`)
   const writes = [/\bgh\s+issue\s+(edit|create|close|comment|delete|reopen)\b/, /\bgh\s+pr\s+(create|edit|close|merge|comment|review)\b/, /\bgh\s+api\b/, /\bagent\s*\(/i, /\bAgent tool\b/, /subagent_type/]
-  checkSkill(writes.every((re) => !re.test(body)) && /\*\*one file\*\*: `\.claude\/handoff\.md`/.test(body) && /never edits\s+`CLAUDE\.md`, `AGENTS\.md` or `\.claude\/delivery\.md`/.test(body),
+  checkSkill(writes.every((re) => !re.test(body)) && /\*\*one file\*\*: the note for this run/.test(body) && /never edits\s+`CLAUDE\.md`, `AGENTS\.md` or `\.claude\/delivery\.md`/.test(body),
     'handoff: writes one file, names no gh write and no agent dispatch, and never edits the project\'s instruction files')
   checkSkill(/at most 30 lines/.test(body) && /If you are unsure whether something was decided, leave it out/.test(body) && /no secret, token or credential/.test(body)
     && /Do not start the next step until the user says to/.test(sectionOf(body, '## With `resume`')) && /say so and stop/.test(sectionOf(body, '## With `resume`')),
     'handoff: the note is short, holds only what was said or shown, carries no secret, and resuming reports and waits')
   const ls = readFileSync(join(ROOT, 'docs/long-sessions.md'), 'utf8'), readme = readFileSync(join(ROOT, 'README.md'), 'utf8')
   checkSkill(['/delivery:handoff resume', '/delivery:orchestrate --epic', '/delivery:orchestrate --pr', '/delivery:retro --discover', '.claude/handoff.md', '## What to add to a project', '## Owner-only criteria'].every((t) => ls.includes(t))
-    && readme.includes('docs/long-sessions.md') && readme.includes('/delivery:handoff resume') && /add\s+`\.claude\/handoff\.md` to `\.gitignore`/.test(readme)
+    && readme.includes('docs/long-sessions.md') && readme.includes('/delivery:handoff resume') && /add\s+`\.claude\/handoff\*\.md` to `\.gitignore`/.test(readme) && readme.includes('/delivery:handoff resume connect') && ls.includes('## One session per workstream') && ls.includes('/delivery:land 88 91 92 --merge')
     && readFileSync(join(ROOT, 'docs/templates/delivery.md'), 'utf8').includes('## Owner-only criteria'),
     'the long-session method is written up with its commands, an example note and what a project adds, and the README carries the commands and links it')
 }
@@ -911,7 +932,9 @@ for (const file of workflowFiles) {
   for (const [label, argv] of [['with an issue number', '412'], ['with a description', 'make the export honour a date range'], ['with no args', '']]) {
     try {
       const { phases, dispatches, logs, result } = await run({ argv })
-      const expected = file === 'orchestrate.js' ? ['Implement', 'Review'] : ['Research', 'Plan']
+      // land.js takes pull request numbers only: a description or nothing dispatches no agent,
+      // and with the stub's answer (no state) its one PR is prepared and reported as not ready.
+      const expected = file === 'orchestrate.js' ? ['Implement', 'Review'] : file === 'land.js' ? (argv === '412' ? ['Prepare'] : []) : ['Research', 'Plan']
       JSON.stringify(phases) === JSON.stringify(expected)
         ? ok(`${file} ${label}: phase order ${phases.join(' -> ')}`)
         : bad(`${file} ${label}: phase order ${phases.join(' -> ')} != ${expected.join(' -> ')}`)
@@ -996,6 +1019,89 @@ for (const file of workflowFiles) {
           : bad(`${msg} — got ${JSON.stringify(result.outputTokens)}`)
       } catch (e) { bad(`${msg} — threw: ${e.message}`) }
     }
+  }
+
+  if (file === 'land.js') {
+    const ck = (cond, msg, detail) => (cond ? ok(`land.js: ${msg}`) : bad(`land.js: ${msg}${detail ? ` — ${detail}` : ''}`))
+    const SHA1 = 'a'.repeat(40), SHA0 = 'b'.repeat(40)
+    const READY = { state: 'ready', headBefore: SHA1, headSha: SHA1, conflictsResolved: false, conflictFiles: [], resolutionLines: 0, ci: 'passing', lastRecommendation: 'merge — no blocking findings', stackedOn: null }
+    const prNo = (o) => Number(o.label.split(':')[1])
+    const land = (prep, extra = {}) => (o) => {
+      if (o.label.startsWith('prepare:')) { const p = typeof prep === 'function' ? prep(prNo(o)) : prep; return p && { pr: prNo(o), ...p } }
+      if (o.label.startsWith('review:')) return 'review' in extra ? extra.review : { blocking: false, recommendation: 'fine', findings: [], verification: 'ran the gate' }
+      if (o.label.startsWith('merge:')) return 'merge' in extra ? extra.merge : { pr: prNo(o), merged: true, mergeCommit: 'c'.repeat(40), retargeted: [] }
+      return null
+    }
+    const labels = (x) => x.dispatches.map((d) => d.label).join(',')
+    let x = await run({ argv: '88 #89, 88', review: land(READY) })
+    ck(labels(x) === 'prepare:88,prepare:89' && JSON.stringify(x.result.ready) === '[88,89]' && x.result.merged.length === 0 && x.result.mergeRequested === false
+      && /Nothing was merged/.test(x.result.note) && x.logs.some((l) => /#88: ready at aaaaaaaa — not merged \(no --merge\)/.test(l)),
+    'without --merge each PR is prepared once, in order, reported ready, and nothing is merged', labels(x))
+    ck(x.dispatches.every((d) => d.agentType === 'delivery:land' && d.effort === 'high' && /never merges/.test(d.prompt) && !d.model),
+      'the prepare dispatch is delivery:land on the session model at high effort, and is told it never merges')
+    x = await run({ argv: '88 89 --merge --method squash', review: land(READY) })
+    ck(labels(x) === 'prepare:88,merge:88,prepare:89,merge:89' && JSON.stringify(x.result.merged) === '[88,89]' && JSON.stringify(x.phases) === '["Prepare","Merge","Prepare","Merge"]',
+      'with --merge each ready PR is merged before the next is prepared, so a later branch is updated against what landed', labels(x))
+    const mg = x.dispatches.find((d) => d.label === 'merge:88')
+    ck(mg.prompt.includes(`--match-head-commit ${SHA1}`) && /Merge mode\./.test(mg.prompt) && mg.prompt.includes('merge method `squash`') && mg.model === 'sonnet' && mg.effort === 'medium',
+      'the merge dispatch is pinned to the commit that was checked and names the method')
+    x = await run({ argv: '88 --merge', review: land(READY) })
+    ck(/method the project states/.test(x.dispatches.find((d) => d.label === 'merge:88').prompt) && x.result.method === null, 'with no --method the merge uses the project\'s stated method, else the first the repository allows')
+    for (const [name, prep, why] of [
+      ['whose last review says do not merge', { ...READY, lastRecommendation: 'do not merge — 1 blocking finding' }, /last delivery review says/],
+      ['that was never reviewed', { ...READY, lastRecommendation: null }, /--pr 88 first/],
+      ['whose CI is failing', { ...READY, ci: 'failing' }, /CI is failing/],
+      ['whose CI is still pending', { ...READY, ci: 'pending' }, /CI is pending/],
+      ['with no head commit reported', { ...READY, headSha: null }, /could not be pinned/],
+      ['with a head commit that is not a SHA', { ...READY, headSha: 'main; rm -rf /' }, /could not be pinned/],
+      ['the agent reported blocked', { ...READY, state: 'blocked', reason: 'stacked on #70', stackedOn: 70 }, /stacked on #70/],
+      ['whose prepare step returned nothing', null, /did not return a usable result/],
+      ['whose prepare step returned no state', { headSha: SHA1 }, /did not return a usable result/],
+    ]) {
+      x = await run({ argv: '88 --merge', review: land(prep) })
+      ck(labels(x) === 'prepare:88' && JSON.stringify(x.result.blocked) === '[88]' && x.result.merged.length === 0 && why.test(String(x.result.prs[0].reason)),
+        `a PR ${name} is blocked and never merged, even though the agent called it ready`, `${labels(x)} / ${x.result.prs[0].reason}`)
+    }
+    x = await run({ argv: '88 --merge', review: land({ ...READY, ci: 'none' }) })
+    ck(JSON.stringify(x.result.merged) === '[88]', 'a repository with no CI on pull requests can still land a PR whose local gate passed')
+    const CONFLICT = { ...READY, headBefore: SHA0, conflictsResolved: true, conflictFiles: ['src/a.ts', 'src/`b`.ts'], resolutionLines: 12 }
+    x = await run({ argv: '88 --merge', review: land(CONFLICT) })
+    const rv = x.dispatches.find((d) => d.label === 'review:88')
+    ck(labels(x) === 'prepare:88,review:88,merge:88' && rv.agentType === 'delivery:code-review' && rv.effort === 'high' && rv.prompt.includes(`git diff ${SHA0}..${SHA1}`)
+      && rv.prompt.includes('`src/a.ts`') && rv.prompt.includes('`src/b.ts`') && /intent of BOTH sides/.test(rv.prompt) && JSON.stringify(x.result.merged) === '[88]',
+    'a conflict resolution that changed code is reviewed, on exactly its own diff, before the PR can merge', labels(x))
+    for (const [name, review] of [['blocks', { blocking: true, recommendation: 'no', findings: [], verification: '' }],
+      ['has a blocking finding under blocking=false', { blocking: false, recommendation: 'ok', findings: [{ severity: 'high', location: 'a', summary: 's', blocking: true }], verification: '' }],
+      ['never returned', null]]) {
+      x = await run({ argv: '88 --merge', review: land(CONFLICT, { review }) })
+      ck(labels(x) === 'prepare:88,review:88' && JSON.stringify(x.result.blocked) === '[88]' && x.result.merged.length === 0, `a resolution review that ${name} stops the merge`, labels(x))
+    }
+    x = await run({ argv: '88 --merge', review: land({ ...CONFLICT, resolutionLines: null }) })
+    ck(labels(x) === 'prepare:88,review:88,merge:88', 'a conflict resolution of unreported size is reviewed too')
+    x = await run({ argv: '88 --merge', review: land({ ...CONFLICT, resolutionLines: 0 }) })
+    ck(labels(x) === 'prepare:88,merge:88', 'a resolution that changed no line needs no second review')
+    x = await run({ argv: '88 89 --merge', review: land(READY, { merge: { pr: 88, merged: false, mergeCommit: null, retargeted: [], reason: 'head moved' } }) })
+    ck(JSON.stringify(x.result.blocked) === '[88,89]' && x.result.merged.length === 0 && /head moved/.test(x.result.prs[0].reason) && labels(x) === 'prepare:88,merge:88,prepare:89,merge:89',
+      'a merge the agent could not make is reported as not merged with its reason, and the next PR is still attempted')
+    x = await run({ argv: '88 89 --merge', review: land((n) => (n === 88 ? { ...READY, state: 'blocked', reason: 'draft' } : READY), { merge: { pr: 89, merged: true, mergeCommit: 'd'.repeat(40), retargeted: [90, 'x'] } }) })
+    ck(JSON.stringify(x.result.blocked) === '[88]' && JSON.stringify(x.result.merged) === '[89]' && JSON.stringify(x.result.prs[1].retargeted) === '[90]',
+      'one blocked PR does not stop an independent one, and retargeted stacked PRs are recorded')
+    for (const bad of ['88 --method fast', '88 --method', '88 --method=']) {
+      let threw = null, n = 0
+      try { const y = await run({ argv: bad }); n = y.dispatches.length } catch (e) { threw = e.message }
+      ck(threw && /--method must be one of squash, merge, rebase/.test(threw) && n === 0, `an invalid --method ("${bad}") fails loudly and dispatches nothing`, `threw=${threw}`)
+    }
+    x = await run({ argv: 'land the pacer stack --merge' })
+    ck(x.dispatches.length === 0 && x.logs.some((l) => /^Usage: \/delivery:land/.test(l)) && x.result.prs.length === 0, 'anything but PR numbers dispatches nothing and prints the usage')
+    x = await run({ argv: '88 --merge', review: land(READY), budget: 'metered' })
+    ck(x.result.prs[0].outputTokens.prepare === 0 && 'merge' in x.result.prs[0].outputTokens, 'each phase records its output tokens')
+    const agentSrc = readFileSync(join(ROOT, 'agents/land.md'), 'utf8')
+    ck(/\*\*Never force-push\*\*/.test(agentSrc) && /no `--admin`/.test(agentSrc) && /\*\*Never merge in Prepare mode\*\*/.test(agentSrc) && /\*\*Never delete a branch\.\*\*/.test(agentSrc)
+      && /--match-head-commit <sha>/.test(agentSrc) && /`timeout` at most `270000` ms/.test(agentSrc) && /git merge --abort/.test(agentSrc)
+      && !/git push[^\n`]*(--force|-f\b)/.test(agentSrc) && squash(agentSrc).includes(UNATTENDED),
+    'the land agent never force-pushes, never bypasses a check, never merges in Prepare mode, never deletes a branch, aborts a merge it would have to guess at, and pins its merge to a commit')
+    ck(!/--delete-branch|--admin|--auto/.test(src.replace(/Do not pass[^.]*\./g, '')) && /never merges a PR whose last delivery review said do not merge or that was never reviewed/.test(extractMeta(src)),
+      'the workflow passes no flag that deletes a branch, bypasses a check or merges later, and says what it will not merge')
   }
 
   if (file !== 'orchestrate.js') continue

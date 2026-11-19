@@ -1,7 +1,7 @@
 ---
 name: handoff
 description: Writes, or reads back, a short handoff note so delivery work can continue in a fresh session without one endless conversation. Use when the user is about to clear the session, stop for the day, or step away for more than an hour ("write a handoff", "wrap up", "save where we are"), and at the start of a new session ("resume", "pick up where we left off", "what was I doing"). Writing gathers open pull requests, open epics and what the last orchestrate runs left unfinished with the plugin's own script, adds the decisions and the next step from this conversation, and saves .claude/handoff.md. Resuming reads that note, refreshes the facts, and reports what changed. It dispatches nothing and changes nothing on GitHub.
-argument-hint: "[resume] — no argument writes the note; 'resume' reads it back in a fresh session"
+argument-hint: "[name] | resume [name] — no argument writes the note; 'resume' reads it back; a name keeps one note per workstream"
 ---
 
 # Handoff
@@ -15,8 +15,9 @@ The arguments for this run: `$ARGUMENTS`
 
 ## What this skill may and may not do
 
-It runs the facts script, and it reads and writes **one file**: `.claude/handoff.md` in the
-current repository. It runs no other GitHub command, dispatches no agent, and never edits
+It runs the facts script, and it reads and writes **one file**: the note for this run, in the
+current repository. That is `.claude/handoff.md`, or `.claude/handoff-<name>.md` when a name was
+given. It runs no other GitHub command, dispatches no agent, and never edits
 `CLAUDE.md`, `AGENTS.md` or `.claude/delivery.md`: a lesson worth keeping for every future agent
 is proposed to the maintainer in your reply, not written by you.
 
@@ -28,15 +29,35 @@ the script is current.
 node "${CLAUDE_PLUGIN_ROOT}/scripts/handoff.mjs"
 ```
 
-## With no argument: write the note
+## Which note: one per workstream
+
+A session that works one thing uses the unnamed note. Two sessions on different work in the same
+checkout would overwrite each other's decisions in it, so each takes a name:
+
+| Arguments | Note | Does |
+|---|---|---|
+| *(none)* | `.claude/handoff.md` | writes |
+| `connect` | `.claude/handoff-connect.md` | writes |
+| `resume` | `.claude/handoff.md` | reads back |
+| `resume connect` | `.claude/handoff-connect.md` | reads back |
+
+A name is lowercase letters, digits and hyphens, and is never `resume`. Anything else: say what a
+valid name looks like and stop, writing nothing. The script's output ends with the notes that
+exist in this checkout; use that list, never a guess, to say which notes there are.
+
+## With no argument, or a name: write the note
 
 1. Run the script above.
-2. Write `.claude/handoff.md`, replacing any earlier one, with exactly these sections:
+2. Write the note for this run, replacing any earlier one of the same name, with exactly these
+   sections:
 
    ```markdown
    # Handoff
 
    <the script's output, verbatim, starting at its "### State on" line>
+
+   ### Scope
+   - <named notes only: the epic, issues and pull requests that are this workstream's, by number>
 
    ### In flight
    - <a workflow still running, or a step started and not finished, with what to check>
@@ -57,15 +78,17 @@ node "${CLAUDE_PLUGIN_ROOT}/scripts/handoff.mjs"
    in a handoff is acted on by a session that cannot ask where it came from.
 4. Put no secret, token or credential in the note, and no content from a path the project
    protects.
-5. Tell the user, in two lines: the note is saved, and to continue they start a fresh session (or
-   `/clear`) and type `/delivery:handoff resume`. If `.claude/handoff.md` is not ignored by git
-   (`git check-ignore -q .claude/handoff.md` exits non-zero), say so once: it is working state,
-   and the project should ignore it unless the team wants to share it.
+5. Tell the user, in two lines: which note is saved, and that to continue they start a fresh
+   session (or `/clear`) and type `/delivery:handoff resume`, with the name if the note has one.
+   If the script's output says git does not ignore the notes here, pass that on once.
+   An unnamed note has no Scope section.
 
 ## With `resume`: read the note back
 
-1. Read `.claude/handoff.md`. If it does not exist, say so and stop: there is nothing to resume.
-2. Run the script above for the current facts.
+1. Run the script above for the current facts and the list of notes.
+2. Read the note for this run. If it does not exist, say so and stop: there is nothing to resume.
+   If no name was given and the unnamed note does not exist but named ones do, list them from the
+   script's output and ask which one; do not pick.
 3. Report, briefly: what the note says was in flight and decided; **what has changed since it was
    written** (a pull request merged or closed, a review that arrived, CI that turned); and the
    note's next step, corrected if the current facts overtook it.
