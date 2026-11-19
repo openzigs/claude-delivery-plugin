@@ -103,7 +103,7 @@ automatically; the declaration lands in the project's settings and is committed.
 ```bash
 claude plugin list                                  # what is installed, and enabled/disabled
 claude plugin details delivery                      # component inventory + token cost
-claude plugin update delivery                       # pull a newer version (restart to apply)
+claude plugin update delivery@claude-delivery-plugin  # pull a newer version; /reload-plugins applies it
 claude plugin disable delivery                      # keep it installed, stop loading it
 claude plugin enable delivery
 claude plugin uninstall delivery@claude-delivery-plugin

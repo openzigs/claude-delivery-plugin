@@ -85,18 +85,35 @@ settings, so everyone working in that repository gets it.
 
 ### Update
 
-Inside a session, run these two commands, each at the very start of the line — a slash
-command with a space before the `/` is sent as an ordinary message and does nothing:
+Updating changes the copy on disk; a session that is already open keeps the version it loaded
+until you reload it. No restart is needed.
+
+**From a terminal**, refresh the marketplace and then update the plugin. The first command alone
+only refreshes the listing and leaves the installed plugin where it was:
+
+```bash
+claude plugin marketplace update claude-delivery-plugin
+claude plugin update delivery@claude-delivery-plugin
+```
+
+**Inside a session**, run `/plugin`, open the **Marketplaces** tab, select
+`claude-delivery-plugin` and choose **Update marketplace**, which refreshes the listing and
+updates the plugin. Closing the panel reloads plugins for you.
+
+**Then, in each session that is already open**, type this at the very start of the line (a slash
+command with a space before the `/` is sent as an ordinary message and does nothing):
 
 ```
-/plugin marketplace update claude-delivery-plugin
 /reload-plugins
 ```
 
-**A session that is already open keeps the copy it loaded until you reload it.** Updating
-from a terminal (`claude plugin marketplace update claude-delivery-plugin`, then
-`claude plugin update delivery`) changes what the *next* session loads; any session already
-running still behaves like the old version until you run `/reload-plugins` in it or restart it.
+If it warns that the reload would invalidate the prompt cache and leaves the update pending,
+`/reload-plugins --force` applies it at the cost of one uncached request. New sessions load the
+new version without any of this. Let a running `/delivery:*` workflow finish before you reload.
+
+Auto-update is off by default for this marketplace. To have new versions arrive on their own,
+turn it on in `/plugin` → **Marketplaces** → `claude-delivery-plugin`; a session then shows
+`Plugin updated: delivery · Run /reload-plugins to apply` when one lands.
 
 ### Try it without installing
 
@@ -353,8 +370,9 @@ Details: [`docs/usage.md`](docs/usage.md#reading-the-cost-of-a-run).
    carries the context; split independent ones with `;` to run them concurrently.
 3. **Review and merge** the PRs yourself, base PRs before stacked ones.
    `/delivery:resolve-pr-comments <pr>` works through review threads you or a teammate left.
-4. **Update and reload** when the plugin itself changed: `/plugin marketplace update
-   claude-delivery-plugin`, then `/reload-plugins`.
+4. **Update and reload** when the plugin itself changed: `claude plugin update
+   delivery@claude-delivery-plugin` after refreshing the marketplace (see [Update](#update)),
+   then `/reload-plugins` in any open session.
 5. **Check the cost** with `/delivery:cost-report --discover --last 5`: tokens and findings per
    phase, to judge a routing or effort change by measurement rather than impression.
 

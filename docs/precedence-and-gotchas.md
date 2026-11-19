@@ -178,10 +178,19 @@ coming from an alias or a wrapper.
 
 ---
 
-## 9. `claude plugin update` needs a restart
+## 9. An update does not reach a session that is already open
 
-`update` fetches the new version but the running session keeps the old one. The command says
-so; it is easy to miss.
+`claude plugin update` (or **Update now** / **Update marketplace** in `/plugin`) changes the copy
+on disk. A session that is already running keeps the version it loaded and behaves like the old
+version until you run `/reload-plugins` in it; a new session loads the new version. A restart
+also works but is not needed. The CLI's own help still says "restart required to apply", which
+is how this used to read here.
+
+Two more traps sit next to it. `claude plugin marketplace update` refreshes the marketplace's
+listing but does not update an installed plugin, so run `claude plugin update
+delivery@claude-delivery-plugin` after it. And `/reload-plugins` can decline when the reload
+would invalidate the prompt cache, leaving the update pending: `/reload-plugins --force` applies
+it anyway.
 
 ---
 
