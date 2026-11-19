@@ -608,6 +608,15 @@ To fork an agent, override one for a single project or add your own workflow, se
 refresh the same version in place, so without a bump two machines can report one version
 while running different code, and nobody can tell which copy produced a result.
 
+### What changed in 0.10.1
+
+- **`/delivery:handoff` accounts for agents dispatched outside a workflow.** Its facts script sees
+  only workflow runs and pull requests, so an agent dispatched by hand reached the note only if it
+  opened a PR. Writing a note now goes through this session's agent results: what a finished
+  agent found or ruled out goes under "Decisions" or "Do not redo", and one still running is
+  listed under "In flight" with a warning not to `/clear` until it reports back. Taken from one
+  real day in which 27 agents were dispatched by hand from one session.
+
 ### What changed in 0.10.0
 
 Driven by 630 real orchestrate runs (1,589 PRs) and about 9,000 subagent transcripts. The

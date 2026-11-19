@@ -48,7 +48,20 @@ exist in this checkout; use that list, never a guess, to say which notes there a
 ## With no argument, or a name: write the note
 
 1. Run the script above.
-2. Write the note for this run, replacing any earlier one of the same name, with exactly these
+2. **Account for every agent this session dispatched outside a workflow.** The script sees only
+   workflow runs and pull requests, so an agent dispatched directly from this session, in the
+   foreground or the background, reaches the note only through you. Go back
+   through this session's agent results and, for each one:
+   - **finished**: if it found, decided, changed or ruled out something that did not end in a pull
+     request, put that under "Decisions made, and why" or "Do not redo", naming the agent's task.
+     A pull request it opened is already in the facts; do not repeat it;
+   - **still running**: list it under "In flight" with what it was doing, and tell the user, before
+     anything else in your reply, not to `/clear` or close the session until it reports back,
+     because a background task ends with its session. The same holds for a workflow still running.
+
+   Report only what an agent's returned result says. An agent whose result you cannot find in this
+   session is listed under "In flight" as unknown, not guessed at.
+3. Write the note for this run, replacing any earlier one of the same name, with exactly these
    sections:
 
    ```markdown
@@ -60,7 +73,7 @@ exist in this checkout; use that list, never a guess, to say which notes there a
    - <named notes only: the epic, issues and pull requests that are this workstream's, by number>
 
    ### In flight
-   - <a workflow still running, or a step started and not finished, with what to check>
+   - <a workflow or agent still running, or a step started and not finished, with what to check>
 
    ### Decisions made, and why
    - <a choice the user made in this session that a newcomer would otherwise re-open>
@@ -72,13 +85,13 @@ exist in this checkout; use that list, never a guess, to say which notes there a
    - <something already tried or ruled out, and what ruled it out>
    ```
 
-3. Keep everything below the script's output to **at most 30 lines**. A section with nothing in it
+4. Keep everything below the script's output to **at most 30 lines**. A section with nothing in it
    says `- none`. Write only what the user said or decided, or what a tool result in this session
    showed. If you are unsure whether something was decided, leave it out: an invented decision
    in a handoff is acted on by a session that cannot ask where it came from.
-4. Put no secret, token or credential in the note, and no content from a path the project
+5. Put no secret, token or credential in the note, and no content from a path the project
    protects.
-5. Tell the user, in two lines: which note is saved, and that to continue they start a fresh
+6. Tell the user, in two lines: which note is saved, and that to continue they start a fresh
    session (or `/clear`) and type `/delivery:handoff resume`, with the name if the note has one.
    If the script's output says git does not ignore the notes here, pass that on once.
    An unnamed note has no Scope section.
