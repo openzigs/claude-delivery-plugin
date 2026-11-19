@@ -84,6 +84,55 @@ Ask it what to add to `.claude/delivery.md`; it drafts the lines in its reply an
 ones you agree with. That is how a lesson reaches every future agent instead of living in one
 session's summary.
 
+## Working an epic from idea to merged
+
+```
+/delivery:plan-epic add CSV export to the reporting screen
+```
+
+This researches, files an epic and its sub-issues with story points and blockers, and returns
+the command that takes it forward as `next`. Say it filed epic #47:
+
+```
+/delivery:orchestrate --epic 47
+```
+
+Triage reads the sub-issues, the script batches them by dependency, and each issue goes through
+implement, review and, if needed, fix and re-review. When the run ends its result sorts the pull
+requests into three groups:
+
+| Group | Where it shows | What you do |
+|---|---|---|
+| Clean | No blocking findings | Read the review and merge, in dependency order |
+| Waiting on you | `awaitingOwner` | Give the approval or do the check the review names, then merge |
+| Still blocking after the re-review | `stillBlocking: true` on the PR | Decide, or fix what is yours, then `/delivery:orchestrate --pr <numbers>` |
+
+Run `--epic 47` again whenever you like: it leaves out sub-issues that are closed or already have
+an open PR, so each run picks up only what is left. That is how an epic with several waves is
+worked: merge a wave, run the epic again.
+
+Single issues need none of this:
+
+```
+/delivery:orchestrate 412                  one issue
+/delivery:orchestrate 412 413 415          related issues, one implementer, a PR each
+/delivery:orchestrate 412 413 ; 500 501    two independent batches at once
+/delivery:orchestrate 412 --points 2       a small issue: small tier and light review
+```
+
+## When to reset the session
+
+| Moment | Do this | Why |
+|---|---|---|
+| An epic's run has finished and you have dealt with its PRs | `/delivery:handoff`, then `/clear` | The next epic needs none of this one's conversation |
+| Switching to a different epic or area | `/delivery:handoff`, then `/clear` | The same |
+| Stepping away for more than an hour, or ending the day | `/delivery:handoff`, then close or `/clear` | Returning re-writes the whole context once the one-hour cache has expired |
+| The session has been compacted | `/delivery:handoff`, then `/clear` | It has already lost detail; a note you can read beats a summary you cannot |
+| Starting any session | `/delivery:handoff resume` | It reports where things stand and waits for you |
+| A workflow is still running | Do not reset or close yet | The run is a background task of that session; let it finish first |
+
+A rule of thumb: one session per epic, or per working day, whichever is shorter.
+
 ## What a handoff note looks like
 
 ```markdown
@@ -128,8 +177,22 @@ the session, in at most 30 lines.
 
 ## What to add to a project
 
-Nothing is required. `/delivery:handoff` works in any repository. Three small additions make the
-method hold up:
+Nothing is required. The pipeline, every flag and every skill work in any repository where `gh`
+is authenticated. Setup decides how cheap and how accurate the runs are, and `/delivery:doctor`
+reports each item below, warning only where a run would suffer:
+
+| Item | Needed? | What it buys |
+|---|---|---|
+| `gh` authenticated, a GitHub remote | Required | The pipeline reads issues and opens PRs through `gh` |
+| A small `CLAUDE.md` with the exact test, lint and build commands | Recommended | Agents run the real gates instead of inferring them. It is injected into every agent, so keep it under 40 KB ([template](templates/CLAUDE.md)) |
+| `.claude/delivery.md` | Recommended | Gates, known traps and owner-only criteria reach every dispatched agent without growing `CLAUDE.md` ([template](templates/delivery.md)) |
+| A `**Story Points**: N` line on each issue | Recommended | A small issue takes the light review and, with a hint or `--triage`, the small tier |
+| CI that runs on pull requests | Recommended | CI is verified rather than reported as "not configured" |
+| Labels | Optional | A risk label (`security`, `auth`, `migration`, `breaking`, `payment`, `billing`, `privacy`, `infra`, `data-loss`) forces the full review; a `ui`, `ux`, `frontend`, `client`, `web` or `design` label is what `--e2e` looks for |
+| `.claude/handoff.md` in `.gitignore` | Optional | Keeps one person's working note out of the repository |
+| A Playwright config | Only for `--e2e` | Gives the e2e agent something to run against |
+
+Three of those are worth spelling out for the handoff method:
 
 1. **Ignore the note.** It is one person's working state, not project documentation:
 

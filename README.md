@@ -357,8 +357,14 @@ have notified the session anyway. Keep the memory outside the conversation inste
 **To adopt it in a project**, nothing is required, and three things help: add
 `.claude/handoff.md` to `.gitignore` (it is working state); create `.claude/delivery.md` from the
 [template](docs/templates/delivery.md) and list the criteria only the owner can meet; and give
-issues a `Story Points` line. The measurements, a full example note and the optional one-line
-`CLAUDE.md` pointer are in [`docs/long-sessions.md`](docs/long-sessions.md).
+issues a `Story Points` line. `/delivery:doctor` reports what a repository is missing.
+
+**When to reset:** after an epic's run is dealt with, when switching epics, before more than an
+hour away, and once a session has been compacted. Not while a workflow is still running. A rule
+of thumb is one session per epic or per working day, whichever is shorter.
+
+The measurements, a worked epic from idea to merged, the full setup table, an example note and the
+optional one-line `CLAUDE.md` pointer are in [`docs/long-sessions.md`](docs/long-sessions.md).
 
 ---
 
