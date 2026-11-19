@@ -57,6 +57,17 @@ describing it.
 - `<defect class that recurs here, and how to detect it>`
 - `<a check that has repeatedly paid off>`
 
+## Owner-only criteria
+
+<!--
+  Acceptance criteria only a person can meet: an approval, a ruling, a check on a real
+  device. The implementer lists these as `owner:` in the PR body instead of marking them met,
+  and the reviewer marks them for the owner instead of sending them to a fix pass that
+  cannot clear them.
+-->
+
+- `<what needs the owner, and where the approval is recorded>`
+
 ## Protected paths
 
 <!--

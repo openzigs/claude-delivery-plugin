@@ -92,6 +92,9 @@ moves its HEAD mid-task. Create your own worktree (`git worktree add`) and remov
 - **State that nothing reads.** New state needs a consumer that actually reads it.
 - **An endpoint with no consumer.** Wire at least one real caller, or say in the PR that it ships
   unconsumed.
+- **A changed contract with an unchanged consumer.** For every exported function, route, column or
+  message whose shape or meaning you changed, `grep` the repository for its other users and update or
+  test each one. A suite that never exercises the caller stays green while the caller breaks.
 
 #### 3c. Lint and Format
 
@@ -147,15 +150,17 @@ scale is `critical | high | medium | low | nit`, the same words as the review's 
 1. Find the CI configuration (`.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`).
 2. Run the equivalent gate locally, batched, before pushing.
 3. Verify: tests pass, linter clean on changed files, typecheck/build clean, coverage floor held.
-4. After pushing, wait for the remote run with **one bounded blocking call**, and give the Bash
-   tool an explicit `timeout` of at most `600000` ms:
+4. After pushing, wait for the remote run with **a bounded blocking call**, and give the Bash
+   tool an explicit `timeout` of at most `270000` ms:
    ```bash
    gh pr checks {number} --watch --fail-fast --interval 30 >/dev/null 2>&1; gh pr checks {number} --json name,bucket
    ```
-   Only the compact JSON reaches your context. Do not poll in a loop, and do not raise the timeout
-   casually: a dispatched subagent's prompt cache lives about 5 minutes.
-   **If the timeout fires with checks still pending**, run `gh pr checks {number} --json name,bucket`
-   once more. If any `bucket` is still `pending`, report CI as **not verified**, never as passed.
+   Only the compact JSON reaches your context. **Never wait longer in one call**: a dispatched
+   subagent's prompt cache lives about 5 minutes, and a wait that outlasts it makes your next turn
+   re-write your whole context at full price.
+   **If the timeout fires with checks still pending**, run the same call again, at most 8 times in
+   all. If any `bucket` is still `pending` after that, report CI as **not verified**, never as passed.
+   Split a local gate that runs longer than 4 minutes, for the same reason.
    **If any `bucket` is `fail`** (the usual result of `--fail-fast`), read the failing job's log
    with `gh run view <run-id> --log-failed`, fix the cause, push, and wait again with the same
    bounded call. **If `gh pr checks` says `no checks reported`**, the repository runs no CI on
@@ -182,9 +187,11 @@ architectural, adds configuration, or would touch `CLAUDE.md` / `AGENTS.md`.
 3. Push the branch to the origin remote
 4. Create the PR with `gh pr create --body-file <file>`:
    - Title: `feat: Resolve #{issue-number} — {description}`
-   - Body: summary of changes; `Closes #N`; the coverage numbers; the mutations you used to prove
-     the tests can fail; the security scan result; **Defects found**; and **Deferred** (anything in
-     scope you left undone, with the reason). The reviewer reads the PR body, not your report.
+   - Body: summary of changes; `Closes #N`; **Acceptance criteria**, one line per criterion of the
+     issue naming the test that proves it, or `owner:` and what a person must do when no code or test
+     can meet it (never mark such a criterion met); the coverage numbers; the mutations you used to
+     prove the tests can fail; the security scan result; **Defects found**; and **Deferred** (anything
+     in scope you left undone, with the reason). The reviewer reads the PR body, not your report.
 5. Add inline review comments on your own diff wherever a reviewer will want the reasoning. You
    cannot approve your own PR.
 
@@ -215,6 +222,8 @@ not a new implementation, so most of the workflow above does not apply:
   as Step 5 describes.
 - **Skip** Step 1's issue planning, Step 2 (branch setup), the full Step 4 security scan (review
   only the lines you changed), Step 5.5 (living documents), Step 6's PR creation and Step 7.
+- **A blocker only a person or time can clear is not yours.** An owner's approval, a check on a real
+  device, CI that is merely still running: change nothing for it and decline it with that reason.
 - **Report** in the structured fix output the dispatch asks for: each finding changed, with its
   test; each declined, with the reason; and whether the gates passed and the fixes are pushed.
 
@@ -237,7 +246,7 @@ Digest; the full rules, with examples, are in `${CLAUDE_PLUGIN_ROOT}/skills/code
 1. **Batch** dependent commands in one shell call joined with `&&`; the read-only orient batch in
    Step 1 is joined with `;` on purpose.
 2. **No watch mode** — use the run-once form (`--run`, `--watch=false`, `CI=1`). The only exception
-   is the bounded `gh pr checks` wait in Step 5, with a Bash `timeout` of at most `600000` ms.
+   is the bounded `gh pr checks` wait in Step 5, with a Bash `timeout` of at most `270000` ms.
 3. **No background processes** (`&`, `nohup`, `disown`) and **no interactive sessions** (REPLs).
 4. **Run the CI gate as one batched call per toolchain**, only for the side(s) your change touches.
 5. **Keep output small** — quiet reporters, `tail -n 60` or a `grep` for failures.

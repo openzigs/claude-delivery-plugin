@@ -23,7 +23,10 @@ inline under `## Shell Execution Rules` and points here.
    `--watch=false`, `CI=1`; the exact flag depends on the runner) and check what the project's
    script actually does before trusting it.
    **The only exception** is the bounded `gh pr checks` CI wait your procedure describes: streamed output
-   discarded, an explicit Bash `timeout` of at most `600000` ms, then one compact JSON read.
+   discarded, an explicit Bash `timeout` of at most `270000` ms, then one compact JSON read. The
+   ceiling is under the Bash maximum on purpose: a dispatched subagent's prompt cache lives about 5
+   minutes, so a longer wait is paid for with a full re-write of the context on the next turn. Repeat
+   the call rather than lengthen it.
 
 3. **No background processes** — never use `&`, `nohup` or `disown`. Dev servers and hot-reloading
    application servers are long-running and never belong in a gate.

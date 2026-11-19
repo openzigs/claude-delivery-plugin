@@ -1,7 +1,7 @@
 # delivery — a Claude Code plugin
 
-A project-agnostic delivery pipeline for Claude Code: two workflows, seven agents and
-nine skills that take a GitHub issue from implementation through **independent review**,
+A project-agnostic delivery pipeline for Claude Code: three workflows, nine agents and
+twelve skills that take a GitHub issue from implementation through **independent review**,
 fix and re-review — or turn a topic into a filed epic with sub-issues — plus a read-only
 report of what each run cost.
 
@@ -17,6 +17,7 @@ from it alone. [`docs/`](docs/) holds the detailed reference, linked from each s
 [A typical loop](#a-typical-loop) · [What a result contains](#what-a-result-contains) ·
 [Agents and skills](#agents-and-skills) · [Verifying it loaded](#verifying-it-loaded) ·
 [MCP servers](#mcp-servers-what-this-plugin-needs-and-what-it-merely-uses) ·
+[Many issues, one short session at a time](#many-issues-without-one-endless-session) ·
 [Per-project configuration](#per-project-configuration) ·
 [Precedence and gotchas](#precedence-and-gotchas) · [Releases](#releases) ·
 [Contributing](#contributing)
@@ -133,6 +134,11 @@ command on the same line.
 /delivery:orchestrate 412 --small --small-effort medium
                                               the small-tier implementer's effort: high (default) or medium; unmeasured
 /delivery:orchestrate 412 413 --batch-review  experimental cheap mode: one review for the whole batch
+/delivery:orchestrate --pr 88 89              pull requests that already exist: review, fix, re-review; no implement
+/delivery:orchestrate --epic 47               the epic's open sub-issues, batched by their dependencies
+/delivery:orchestrate 412 413 --triage        read each issue's story points first, so size routing needs no hint; unmeasured
+/delivery:orchestrate 412 413 --per-issue     a fresh implementer per issue instead of one for the batch; unmeasured
+/delivery:orchestrate 412 --e2e               Playwright specs for a UI-labelled PR, before its review
 /delivery:orchestrate make the audit filter honour a date range
                                               a description: the implementer files the issue first
 ```
@@ -160,6 +166,37 @@ conversation.
 4. **Re-review** — `delivery:code-review` checks the fix. That is cycle 2 of a **maximum
    of 2**; anything still blocking after it is left for you, not a third automated pass.
 
+**Who can clear a blocker.** Each blocking finding says whether the author can clear it, or only
+the owner (an approval, a check on a real device), or only time (CI still running, an outage).
+A fix pass starts only when something is the author's: a PR blocked solely on you or on a wait
+gets no fix and no re-review, and is listed in the result's `awaitingOwner`. The fix agent is
+given the blocking findings and the non-blocking ones at `medium` or above; `low` and `nit`
+stay on the PR as inline comments for you (`withheldFromFix` counts them). A fix larger than the
+light-review limit (5 files, 150 lines) is re-reviewed as new code, on the session model at
+`high`, instead of by a confirming pass.
+
+**Entry points and opt-in phases.**
+
+- **`--pr 88 89`** takes pull requests that already exist through review, fix and re-review,
+  with no implement phase: a PR an earlier run left blocking, or one a person opened. The
+  numbers are PR numbers; `;` still separates concurrent batches.
+- **`--epic 47`** has `delivery:triage` read the epic's sub-issues and builds the batches for
+  you: issues that depend on each other share a batch, in dependency order; unrelated ones run
+  concurrently, folded into at most four batches. Closed issues and issues with an open PR are
+  left out and named in the log.
+- **`--triage`** is one `delivery:triage` dispatch on Haiku before anything is implemented. It
+  reads each issue's `Story Points` line, so a batch whose every issue is ≤ 2 points is
+  implemented on the small tier without `--points`. It also leaves out closed issues, tells the
+  implementer about a PR already open, and logs an acceptance criterion only you can meet.
+  **Unmeasured**: an earlier sizing agent cost more than it saved, so it is off by default.
+- **`--per-issue`** gives each issue of a batch its own implementer, in turn, each told which
+  branches the earlier ones produced. **Unmeasured**: on real runs an implementer's context
+  reaches a median 385k tokens by the end of one issue and every later turn re-reads it, which
+  suggests a shared context costs more than a fresh start, but no replay has compared them.
+- **`--e2e`** dispatches `delivery:e2e-test` for each PR whose issue carries a UI label (`ui`,
+  `ux`, `frontend`, `client`, `web` or `design` as a whole word), before the review, so the specs
+  are reviewed with the change. A PR that gained specs takes the full review.
+
 **Model and effort per phase:**
 
 | Phase | Model | Effort |
@@ -167,7 +204,9 @@ conversation.
 | Implement | Sonnet with `--small` or `--points N` ≤ 2; otherwise the session model | `high`; a small-tier implementer follows `--small-effort` (default `high`) |
 | Review | Sonnet when light; the session model when full | `high` |
 | Fix | Sonnet (the session model if Sonnet did the implementing) | `medium` |
-| Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked | `medium`, or `high` when escalated |
+| Re-review | Sonnet; escalated to the session model at full scope if the first review was light and still blocked, or if the fix is over 5 files / 150 lines | `medium`, or `high` when escalated |
+| Triage (`--triage`, `--epic`) | Haiku | `low` |
+| E2E tests (`--e2e`) | The batch's implement model | The batch's implement effort |
 
 **Batches.** Space-separated issues are one batch for one implementer — use it for related
 issues that touch the same code. Each issue still gets its own branch and PR, and its own
@@ -193,6 +232,34 @@ once GitHub has retargeted it (or you have rebased it) onto the default branch.
 (see [What a result contains](#what-a-result-contains)) and a note that nothing was merged.
 
 Details: [`docs/usage.md`](docs/usage.md#deliveryorchestrate--issues-to-reviewed-prs).
+
+### `/delivery:land` — reviewed pull requests to merged
+
+```
+/delivery:land 88 91 92                  bring each up to date, resolve conflicts, verify; merge nothing
+/delivery:land 88 91 92 --merge          the same, then merge each one that is ready
+/delivery:land 88 --merge --method squash
+```
+
+`/delivery:orchestrate` stops before merging. This is the step after it, for PRs you have decided
+to land, in the order you list them (a PR stacked on another goes after it).
+
+1. **Prepare** — `delivery:land` checks the PR is open, was through the delivery review, and that
+   its last `Recommendation:` is not `do not merge`. It merges the base branch into the PR's
+   branch, resolves conflicts keeping the intent of both sides, re-runs the project's gates, pushes
+   and waits for CI. A conflict it would have to guess at is aborted and reported, not resolved.
+2. **Review** — only when a conflict resolution changed code. `delivery:code-review` reads exactly
+   that diff and judges one thing: whether both sides' intent survived. A blocking answer stops
+   the merge.
+3. **Merge** — only with `--merge`, and only a PR that is ready. The merge is pinned to the commit
+   that was checked (`--match-head-commit`), so a push that lands in between is not merged
+   unreviewed. Open PRs stacked on the merged branch are retargeted to the default branch.
+
+**It will not** force-push, pass `--admin`, skip a required check, delete a branch, or merge a PR
+that was never reviewed, whose review said `do not merge`, or whose CI is not passing. The script
+re-checks those itself rather than trusting the agent's word that a PR is ready. Without
+`--merge` the result's `ready` list is what you can merge by hand; with it, `merged` and `blocked`
+say what happened, and each blocked PR names what would clear it.
 
 ### `/delivery:plan-epic` — a topic to filed issues
 
@@ -293,9 +360,54 @@ Details: [`docs/usage.md`](docs/usage.md#reading-the-cost-of-a-run).
 
 ---
 
+## Many issues, without one endless session
+
+Keeping one session open for weeks does not preserve memory and costs more per step. On real
+projects the longest sessions were compacted 12 to 108 times each (about once every 170 model
+calls), every call re-read a context of 179k to 617k tokens, each return after more than an hour
+re-wrote all of it, and about a third of the calls were status checks on workflows that would
+have notified the session anyway. Keep the memory outside the conversation instead:
+
+| What | Where it lives | Who reads it |
+|---|---|---|
+| What was done and why | GitHub: the issue, the PR body, the published review | Any session, any agent |
+| Lessons about the codebase | `.claude/delivery.md` | Every dispatched agent |
+| Where the work stands now | `.claude/handoff.md`, written by `/delivery:handoff` | The next main session |
+
+```
+/delivery:handoff resume                 start of a session: what the note said, what changed since, the next step
+/delivery:orchestrate --epic 47          one command per epic; it notifies when done, so do not poll
+/delivery:orchestrate --pr 88 91         send PRs back through review once what was yours is cleared
+/delivery:land 88 91 --merge             land the ones you have approved, in order
+/delivery:handoff                        before /clear, switching epics, or more than an hour away
+/delivery:handoff connect                the same, one note per workstream when several share a checkout
+/delivery:retro --discover --last 50     weekly: what reviews keep finding, and lines for .claude/delivery.md
+```
+
+**One session per workstream.** A session doing three unrelated things carries all three in
+every call. Give each workstream its own session and its own named note (`/delivery:handoff
+connect`, later `/delivery:handoff resume connect`), so notes in one checkout do not overwrite
+each other.
+
+**To adopt it in a project**, nothing is required, and three things help: add
+`.claude/handoff*.md` to `.gitignore` (it is working state); create `.claude/delivery.md` from the
+[template](docs/templates/delivery.md) and list the criteria only the owner can meet; and give
+issues a `Story Points` line. `/delivery:doctor` reports what a repository is missing.
+
+**When to reset:** after an epic's run is dealt with, when switching epics, before more than an
+hour away, and once a session has been compacted. Not while a workflow is still running. A rule
+of thumb is one session per epic or per working day, whichever is shorter.
+
+The measurements, a worked epic from idea to merged, the full setup table, an example note and the
+optional one-line `CLAUDE.md` pointer are in [`docs/long-sessions.md`](docs/long-sessions.md).
+
+---
+
 ## What a result contains
 
-`/delivery:orchestrate` returns `{ batches, reviewCompleted, merged: false, suggestedProjectNotes, note }`.
+`/delivery:orchestrate` returns `{ batches, reviewCompleted, merged: false, awaitingOwner, triage, suggestedProjectNotes, note }`.
+`awaitingOwner` lists the PRs blocked only on a person or on time, for which no fix ran; `triage`
+holds what `--triage` or `--epic` read, and is `null` without them.
 `suggestedProjectNotes` lists the reviews' durable findings, deduplicated across the run — lessons
 to copy into your notes or `CLAUDE.md` if you want them; the plugin never writes them there. Each batch
 records its `issues`, `implementModel` and `outputTokens.implement`, and a `prs` list. Each PR
@@ -309,10 +421,15 @@ entry records:
 | `findingCounts` | `{ review, rereview }`, each a count per severity: `critical`, `high`, `medium`, `low`, `nit` |
 | `suppressedFindings` | Non-blocking findings dropped for a confidence below 50; blocking findings are never dropped |
 | `stillBlocking` | After a re-review: `true` if blocking findings remain, `false` if not; `null` when no re-review ran |
+| `awaiting` | Who else must act on a blocker: `owner`, `wait`, both, or `[]` |
+| `withheldFromFix` | `low` and `nit` non-blocking findings left on the PR and not given to the fix agent |
+| `fixSize`, `reviewedSha` | The fix's own `{ files, lines }`, and the commit the first review read; `null` when not reported |
 
 Also present: `reviewScope` (`light` or `full`) with its `reviewRouting` reason, the review,
 fix and re-review outputs, and `reviewCompleted: false` with a note when a review never
-returned. `/delivery:plan-epic` returns its `research`, its `plan` and
+returned. `/delivery:plan-epic` returns its `research`, its `plan` (the epic, each filed issue with
+its story points and blockers, and what was not filed), `filedIssues`, `missingStoryPoints`,
+`next` (the `/delivery:orchestrate` command that takes it forward) and
 `outputTokens: { research, plan }`.
 
 The full field table, and why concurrent runs overlap, are in
@@ -334,13 +451,15 @@ words ("review PR 88"), but then the main model decides whether to use it.
 | `delivery:code-review` | Reviews a PR against its requirements, OWASP, design, performance and tests; publishes inline comments. No write tools | By `/delivery:orchestrate` (Review, Re-review); or directly before a merge |
 | `delivery:code-planner` | Files an epic and sub-issues with diagrams, story points and phase order | By `/delivery:plan-epic` (Plan) |
 | `delivery:research` | Turns local files, web pages and library docs into a research summary. Read-only | By `/delivery:plan-epic` (Research) |
-| `delivery:e2e-test` | Writes Playwright specs mapped to acceptance criteria | Directly, or by `delivery:code-issue` for UI work |
+| `delivery:e2e-test` | Writes Playwright specs mapped to acceptance criteria | By `/delivery:orchestrate --e2e`; directly; or by `delivery:code-issue` for UI work |
 | `delivery:ui-vision` | Drives a real headed browser through a running app and files what it finds. Writes no tests | Directly ("walk through the settings page") |
+| `delivery:land` | Brings one reviewed PR up to date with its base, resolves conflicts, re-runs gates and CI; merges only in Merge mode. Never force-pushes or bypasses a check | By `/delivery:land` |
+| `delivery:triage` | Reads issues and reports their state, story points, labels, open PR, dependencies and owner-only criteria, exactly as written. Read-only | By `/delivery:orchestrate` with `--triage` or `--epic` |
 
 ### Skills
 
-`code-issue`, `code-review`, `cost-report`, `e2e-test`, `epic-planner`, `repo-scaffold`,
-`research-gather`, `resolve-pr-comments`, `ui-vision`.
+`code-issue`, `code-review`, `cost-report`, `doctor`, `e2e-test`, `epic-planner`, `handoff`,
+`repo-scaffold`, `research-gather`, `resolve-pr-comments`, `retro`, `ui-vision`.
 
 Each is typed namespaced, as `/delivery:<name>`, to run its procedure in the current session,
 and is also loaded by the agents that follow it.
@@ -350,11 +469,14 @@ and is also loaded by the agents that follow it.
 | `/delivery:code-issue` | The implement-an-issue procedure: plan, branch, TDD, security scan, CI, PR | Preloaded by `delivery:code-issue`; type it to run the procedure in your session |
 | `/delivery:code-review` | The review procedure: requirements, design, OWASP, quality, performance, tests, publish | Preloaded by `delivery:code-review`; type it as `/delivery:code-review 88` |
 | `/delivery:cost-report` | The per-run, per-phase cost report above | Typed only |
+| `/delivery:doctor` | Is this repository ready for the pipeline: instruction-file size, `.claude/delivery.md`, shadowed agents, CI on pull requests and its duration, story-point coverage. Read-only | Typed before the first run, or when runs are slow or expensive |
 | `/delivery:e2e-test` | Acceptance criteria to Playwright specs, Page Object Model, accessible locators | By `delivery:e2e-test`; or typed as `/delivery:e2e-test 412` |
 | `/delivery:epic-planner` | Epic and sub-issue structure, Mermaid diagrams, story points, phase order | By `delivery:code-planner` in `/delivery:plan-epic` |
+| `/delivery:handoff` | Writes `.claude/handoff.md` (open PRs, open epics, what the last runs left unfinished, your decisions and the next step) so work continues in a fresh session; `resume` reads it back and reports what changed. A name (`/delivery:handoff connect`) keeps one note per workstream | Typed before `/clear` or the end of a day; `/delivery:handoff resume` at the start of the next |
 | `/delivery:repo-scaffold` | A new repository from nothing: stack, scaffolding, CI, and the `CLAUDE.md` this pipeline reads | Typed on an empty repository, or by `delivery:code-planner` |
 | `/delivery:research-gather` | Collects and converts research material from files, the web and library docs | By `delivery:research` in `/delivery:plan-epic` |
 | `/delivery:resolve-pr-comments` | Triages unresolved review threads, fixes the valid ones, replies and resolves them | Typed after a review: `/delivery:resolve-pr-comments 88` |
+| `/delivery:retro` | What the reviews found across saved runs: fix and still-blocking rates, blocking findings by class and area, routes that never fired, and the notes the reviews suggested. Read-only; proposes `.claude/delivery.md` lines and writes none | Typed: `/delivery:retro --discover` |
 | `/delivery:ui-vision` | A structured browser walkthrough with screenshots, console capture and bug filing | By `delivery:ui-vision`; or typed with the app running |
 
 The reviewer and the QA agent hold `disallowedTools: Write, Edit` on purpose: removing the
@@ -362,8 +484,11 @@ write tools from a reviewer's schema is a stronger guarantee than trusting it no
 for them. More in [`docs/usage.md`](docs/usage.md#agents).
 
 **Cost.** Every dispatched agent pays for the project's `CLAUDE.md` before it starts, so the
-pipeline keeps the agent count low: no sizing agent, one implementer per batch, and a clean
-issue costs two agents. The biggest lever is yours: keep `CLAUDE.md` a small index — see
+pipeline keeps the agent count low: no sizing agent unless you pass `--triage`, one implementer
+per batch unless you pass `--per-issue`, and a clean issue costs two agents. Output tokens are a
+few percent of a run: on real runs an implementer's cost is almost all re-reading its own growing
+context, and a third of it was cache re-writes after a wait longer than five minutes, which is why
+one CI wait is capped at 270 seconds. The biggest lever is yours: keep `CLAUDE.md` a small index — see
 [per-project configuration](docs/per-project-configuration.md#keep-claudemd-small--it-is-the-biggest-cost-lever).
 
 ---
@@ -380,7 +505,7 @@ claude plugin details delivery
 claude --plugin-dir /path/to/claude-delivery-plugin plugin details delivery
 ```
 
-You should see `Skills (9)` and `Agents (7)`.
+You should see `Skills (12)` and `Agents (9)`.
 
 `claude plugin details` does **not** list workflows — true of every plugin. To confirm them,
 type `/` in a session and look for `/delivery:orchestrate` and `/delivery:plan-epic`. More
@@ -450,6 +575,44 @@ To fork an agent, override one for a single project or add your own workflow, se
 **Bump `version` in `.claude-plugin/plugin.json` for any change in behaviour.** An update can
 refresh the same version in place, so without a bump two machines can report one version
 while running different code, and nobody can tell which copy produced a result.
+
+### What changed in 0.10.0
+
+Driven by 630 real orchestrate runs (1,589 PRs) and about 9,000 subagent transcripts. The
+central finding: output tokens, which the pipeline metered, are a few percent of a run. An
+implementer's cost is almost all re-reading its own growing context, and a third of it was
+cache re-writes after a wait longer than the 5-minute prompt cache.
+
+- **One CI wait is at most 270 s, repeated up to 8 times** (was one call of up to 600 s). About
+  two thirds of the gaps over five minutes followed a CI wait, each paid for with a full
+  re-write of the implementer's context.
+- **A fix pass runs only for a blocker the author can clear.** Findings carry `resolvableBy`
+  (`author`, `owner`, `wait`); a PR blocked only on its owner or on a wait gets no fix and no
+  re-review, and is listed in `awaitingOwner`.
+- **The fix agent is given blocking findings and non-blocking ones at `medium` or above.** `low`
+  and `nit` stay on the PR as comments.
+- **A fix over 5 files / 150 lines is re-reviewed as new code**, on the session model at `high`.
+- **Two issues in one PR are reviewed once.**
+- **New entry points:** `--pr` (existing pull requests: review, fix, re-review) and `--epic`
+  (batches built from an epic's sub-issues and their dependencies).
+- **New opt-in, unmeasured flags:** `--triage`, `--per-issue`, `--e2e`.
+- **New agent `delivery:triage`**, new read-only skills **`/delivery:retro`** and
+  **`/delivery:doctor`**, and **`/delivery:handoff`**, which writes a short note so work continues
+  in a fresh session instead of one endless one ([why](docs/long-sessions.md)); a name keeps one
+  note per workstream.
+- **New workflow `/delivery:land`** and agent **`delivery:land`**: reviewed PRs are brought up to
+  date, conflicts resolved and reviewed, CI re-verified, and merged only with `--merge`, pinned
+  to the commit that was checked. On one real day, 13 of 27 hand-dispatched background agents
+  were doing this by hand.
+- **The implementer** greps the consumers of every contract it changes, and lists each
+  acceptance criterion with its test (or as the owner's) in the PR body. **The reviewer** leaves
+  a clean tree after its mutation checks and reports the commit it read.
+- **`/delivery:plan-epic` returns structure**: the epic, each filed issue's story points, the
+  issues filed without a points line, and the next command.
+- **The orchestrator agent is a fallback** behind `/delivery:orchestrate`, no longer described as
+  the default for "work on issue N". Dispatched by hand it idled for a median 110 minutes holding
+  a large context.
+- **`resolve-pr-comments`** stages explicit paths, as `code-issue` does, and shares its shell rules.
 
 ### What changed in 0.9.1
 
@@ -549,7 +712,7 @@ docs/                  # installation, usage, configuration, gotchas, customisin
    ```bash
    node scripts/verify-plugin.mjs              # structure, frontmatter, meta purity, phase order
    claude plugin validate . --strict           # manifest schema, warnings as errors
-   claude --plugin-dir . plugin details delivery   # expect Skills (9), Agents (7)
+   claude --plugin-dir . plugin details delivery   # expect Skills (12), Agents (9)
    ```
 4. Keep it project-agnostic. This is the one rule that matters: no project names, no
    organisation names, no domain vocabulary, no toolchain assumptions, and no bare issue

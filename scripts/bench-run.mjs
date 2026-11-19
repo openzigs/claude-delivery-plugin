@@ -228,7 +228,12 @@ function runStep(step, o) {
     prompts.forEach((c, k) => {
       const issuesBefore = step.scenario === 'plan-epic' ? issueCount() : null
       const t0 = Date.now()
-      const r = spawnSync('claude', claudeArgs(c.prompt, pluginDir), { cwd: work, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, timeout: o.timeoutMin * 60000 })
+      // A workflow runs as a background task of the `claude -p` session, and since Claude Code 2.1.3xx
+      // print mode stops background tasks 10 minutes after its last turn unless told to wait. A real
+      // orchestrate run takes longer than that, so without this the workflow is killed mid-review and
+      // the run reads as incomplete. --timeout-min still bounds the call.
+      const r = spawnSync('claude', claudeArgs(c.prompt, pluginDir), { cwd: work, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: 64 * 1024 * 1024, timeout: o.timeoutMin * 60000,
+        env: { ...process.env, CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: '0' } })
       const wallMs = Date.now() - t0
       writeFileSync(join(step.out, `claude-${k + 1}.json`), r.stdout || '{}')
       const issuesAfter = step.scenario === 'plan-epic' ? issueCount() : null

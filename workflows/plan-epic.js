@@ -39,6 +39,34 @@ Ground rules for this dispatch:
    your report, and carry on. Those steps apply only when a user invoked you interactively.
 `.trim()
 
+// The planner answers in structure, so the workflow can check the one thing the delivery
+// workflow routes on -- every sub-issue's Story Points line -- instead of trusting prose, and can
+// name the command that takes the epic forward. A missing field is reported, never guessed.
+const PLAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    epic: { type: ['integer', 'null'], description: 'The epic you filed (the master epic, if there are several); null if you filed a single issue or none' },
+    issues: {
+      type: 'array',
+      description: 'One entry per issue you filed that is to be implemented (not the epics themselves)',
+      items: {
+        type: 'object',
+        properties: {
+          number: { type: 'integer' },
+          title: { type: 'string' },
+          storyPoints: { type: ['integer', 'null'], description: 'The number on the "Story Points" line you wrote in its body; null if you wrote none' },
+          labels: { type: 'array', items: { type: 'string' } },
+          blockedBy: { type: 'array', items: { type: 'integer' }, description: 'Issue numbers its body says it is blocked by' },
+        },
+        required: ['number', 'title', 'storyPoints', 'labels', 'blockedBy'],
+      },
+    },
+    notFiled: { type: 'string', description: 'What you deliberately did not file, and why' },
+    report: { type: 'string', description: 'Your planning report: the structure, what you inferred, the open questions carried over' },
+  },
+  required: ['epic', 'issues', 'notFiled', 'report'],
+}
+
 const topic = (args && String(args).trim()) || ''
 if (!topic) {
   log(
@@ -86,17 +114,33 @@ const [planned, planTokens] = await metered(() => agent(
     `The research agent gathered the following. Use it as the primary requirements ` +
     `source rather than re-deriving it:\n\n${research}\n\n${RULES}\n\n` +
     `File them, then report every number you created with its title, and say plainly ` +
-    `what you deliberately did NOT file and why.`,
-  { label: 'plan', phase: 'Plan', agentType: 'delivery:code-planner' },
+    `what you deliberately did NOT file and why. Every issue to be implemented carries a ` +
+    `\`**Story Points**: N\` line and names what blocks it; report both as you wrote them.`,
+  { label: 'plan', phase: 'Plan', agentType: 'delivery:code-planner', schema: PLAN_SCHEMA },
 ))
+const filed = Array.isArray(planned?.issues) ? planned.issues.filter((i) => i && Number.isInteger(i.number)) : []
+// The delivery workflow sends an issue with no points line to the full review on the session
+// model, whatever its size. Over 1,589 real PRs, 56% had none.
+const missingStoryPoints = filed.filter((i) => !Number.isInteger(i.storyPoints)).map((i) => i.number)
+if (missingStoryPoints.length) {
+  log(`Filed without a Story Points line: ${missingStoryPoints.map((n) => `#${n}`).join(', ')}. /delivery:orchestrate cannot size these.`)
+}
+const epic = Number.isInteger(planned?.epic) ? planned.epic : null
 
 return {
   topic: topic || null,
   research,
   plan: planned,
+  epic,
+  filedIssues: filed.map((i) => i.number),
+  missingStoryPoints,
   implemented: false,
   outputTokens: { research: researchTokens, plan: planTokens },
+  next: epic != null && filed.length
+    ? `/delivery:orchestrate --epic ${epic}`
+    : filed.length ? `/delivery:orchestrate ${filed.map((i) => i.number).join(' ')}` : null,
   note:
     'Nothing was implemented and no pull request was opened. To take one of the filed ' +
-    'issues forward, use /delivery:orchestrate <issue number>.',
+    'issues forward, use /delivery:orchestrate <issue number>; --epic <epic number> batches ' +
+    'an epic\'s sub-issues by their dependencies.',
 }

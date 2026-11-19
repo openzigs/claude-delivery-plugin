@@ -57,9 +57,10 @@ turns**: every separate fetch is a full model turn over a growing context.
      (A light review reads the diff plus only the changed files it needs, as its scope note says);
    - the project's own documentation that bears on the change: architecture notes, specs, user
      guides. Wherever they live in this repository; do not assume a `docs/` directory exists.
-3. **Read CI from the batch.** Failing CI is blocking. A job stuck in `queued` is not the PR's
-   fault — a deep queue and a runner outage look identical from `gh pr checks`, so say which it is
-   (or that you could not tell) rather than reporting a red check.
+3. **Read CI from the batch.** Failing CI is blocking. CI that is still running or stuck in
+   `queued` is not the PR's fault — a deep queue and a runner outage look identical from
+   `gh pr checks`, so say which it is (or that you could not tell) rather than reporting a red
+   check.
 
 ### Step 2: Requirements Validation
 
@@ -151,7 +152,7 @@ keep, because a green suite is not evidence.
 | Check | Question |
 |-------|----------|
 | **Coverage** | Are the new code paths covered? Target at least 80% on touched code — unless `CLAUDE.md` names its own floor, which wins |
-| **Can it fail?** | **A test that cannot fail is not a test.** Did the author state which mutations they made and what went red? If not, mutate the implementation yourself and confirm the test catches it |
+| **Can it fail?** | **A test that cannot fail is not a test.** Did the author state which mutations they made and what went red? If not, mutate the implementation yourself and confirm the test catches it. Restore every mutation and leave `git status --short` clean |
 | **Read-back assertions** | Does the test assert by reading through the same path a real consumer uses, or does it assert against the object it just constructed? The latter cannot detect a write that never landed |
 | **Happy path** | Do tests verify the primary use case? |
 | **Edge cases** | Empty inputs, nulls, boundary values, large inputs? |
@@ -249,6 +250,11 @@ change; a missing changelog entry on a user-facing change. Everything else is a 
 type findings. Rate each finding's `confidence` (0-100) that it is real; the workflow drops only
 low-confidence non-blocking ones.
 
+**Say who can clear each blocking finding** (`resolvableBy`): `author`, a change to this PR;
+`owner`, only a person (an approval the issue requires, a check on a real device); `wait`, only
+time (CI still running, an outage). A fix pass runs only for `author`; never soften a real defect
+into `owner`. Report the commit you read as `headSha` (`gh pr view {PR_NUMBER} --json headRefOid`).
+
 **Review body structure:**
 
 ```markdown
@@ -299,10 +305,8 @@ gh pr review {PR_NUMBER} --comment --body-file "${PAYLOAD%.json}.md"
 
 After Google's engineering-practices guidance on review comments:
 
-- **Be kind.** Critique the code, not the person.
-- **Explain why.** Do not just say "this is wrong" — say what is better, and why.
-- **Prefix nits.** Use `nit:` for stylistic suggestions that are not blockers.
-- **Give credit.** If something is done well, say so.
+- **Be kind and explain why.** Critique the code, not the person; say what is better, and why.
+- **Prefix nits** with `nit:`, and **give credit** where something is done well.
 - **Be specific.** Reference the exact line and suggest a concrete alternative.
 - **Prioritize.** Security > correctness > performance > style.
 - **Own your uncertainty.** If a finding rests on an inferred convention rather than a documented
@@ -315,11 +319,8 @@ After Google's engineering-practices guidance on review comments:
 | Cannot read the PR diff | Fall back to `git fetch origin pull/{N}/head` and diff locally |
 | No linked issue found | Review without requirements validation, and note that gap in the review |
 | `422 Path could not be resolved` | The payload references files not on this branch — you are almost certainly POSTing a stale payload; re-check the file path is PR-unique, and re-read it with `jq` |
-| `422` on submit with APPROVE / REQUEST_CHANGES | You are the PR author, and should have published `COMMENT` anyway — see Step 9 |
-| `414` on submit | `body` was passed as `-f` and went into the query string; move it inside the `--input` JSON |
 | Too many files to review | Prioritize non-generated, non-config files; state in the review what was not read |
 | Cannot determine coverage | Run the project's coverage command; if it will not run, say so rather than implying a number |
-| No project documentation exists | Skip the documentation cross-reference and note it in the review |
 
 ## Shell Execution Rules
 

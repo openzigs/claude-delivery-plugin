@@ -241,7 +241,8 @@ For each **valid** and **nit** comment:
 
 ### Step 5: Commit
 
-1. Stage the changes: `git add -A` (check `git status` first — do not sweep in stray files).
+1. Stage explicit paths with `git add <paths>` — never `git add -A`, never a path the project
+   protects, and never `git add -f` past an ignore rule. Check `git status` first.
 2. Commit with a message that maps each change back to its comment:
    ```
    fix: address review comments from PR #{PR_NUMBER}
@@ -389,55 +390,19 @@ Address the changes requested on the open PR for this branch
 
 ## Shell Execution Rules
 
-**Critical — follow these so runs stay non-interactive and terminate:**
+The full rules, shared with code-issue, are in
+`${CLAUDE_PLUGIN_ROOT}/skills/code-issue/SHELL_RULES.md` — read it before your first gate run.
 
-1. **Batch commands** — chain related commands into a SINGLE call using `&&`. Do not split
-   one logical step across several invocations.
-   ```bash
-   # CORRECT — one call
-   npm run lint && npm run test && npm run build
-
-   # WRONG — three calls
-   npm run lint
-   npm run test
-   npm run build
-   ```
-
-2. **No watch mode** — never run watch or interactive commands. Always enforce one-shot
-   execution:
-   - Use the run-once form of the test runner (`vitest run`, plain `pytest`,
-     `go test ./...`, `cargo test`), never a `--watch` variant.
-   - Dev servers and `--reload` processes are long-running; they never belong in a gate.
-
-3. **No background processes** — never use `&`, `nohup`, or `disown`. Each command must run
-   to completion before continuing.
-
-4. **No interactive sessions** — never launch a bare REPL (`node`, `python`, a database
-   shell without `-c`). Use one-shot variants with command flags. The same applies to git:
-   no `-i` rebases, no interactive add.
-
-5. **Long text goes in a file, never on the command line.** Reply bodies, PR bodies, issue
-   bodies, summary comments — write the markdown to a file and pass it by path
-   (`--body-file <path>`, or `-F body=@<path>` for `gh api`). Inlining multi-line markdown
-   into a shell command corrupts it on backticks, quotes and `$`, silently.
-
-6. **The quality gate is whatever the project says it is.** Read the exact commands from
-   `CLAUDE.md` (or `.claude/delivery.md`) and run those, in that form — including any
-   directory to `cd` into first, any explicit interpreter path, and any task-runner prefix.
-   A bare tool name on `PATH` is not always the project's installation of that tool, and
-   substituting the command you expected for the command the project documents is how a
-   session ends up reporting a green gate it never ran.
-
-   If the project has multiple independent toolchains (for example a separate workspace per
-   language), that is one batched call per toolchain. Run the side(s) your change touches;
-   run all of them if it touches all of them.
-
-   If no such file exists, infer the gate from the manifest scripts and the CI workflow,
-   run it, and state in your report what you inferred.
-
-7. **Lint scope follows the tree's state.** In a repo with pre-existing findings, lint only
-   the files you changed — a repo-wide run can never go green and is useless as a gate. In a
-   clean repo, run the project's configured lint command as documented.
+1. **Batch** dependent commands in one shell call joined with `&&`.
+2. **No watch mode**, **no background processes** (`&`, `nohup`, `disown`) and **no interactive
+   sessions** (REPLs, `git rebase -i`).
+3. **Long text goes in a file, never on the command line**: `--body-file <path>`, or
+   `-F body=@<path>` for `gh api`. Inline multi-line markdown is corrupted silently.
+4. **The gate is whatever the project says it is.** Run the exact commands `CLAUDE.md` or
+   `.claude/delivery.md` names, one batched call per toolchain your change touches; if neither
+   names one, infer it from the manifest and CI workflow and say so.
+5. **Lint only the files you changed** when the tree carries pre-existing findings.
+6. **Keep output small** — quiet reporters, `tail -n 60` or a `grep` for failures.
 
 ## Prerequisites
 

@@ -263,6 +263,30 @@ Each batch records `implementEffort` and `implementEffortWhy` in the result, and
 cost-report prints them on the Implement row. Any value other than `medium` or `high`, or the
 flag with no value, stops the run before anything is dispatched.
 
+### Entry points and opt-in phases: `--pr`, `--epic`, `--triage`, `--per-issue`, `--e2e`
+
+All five are whole-run arguments, for the same reason `--small-model` is: a workflow script can
+read only `args`. Each is off by default, so a run without it dispatches what it always did.
+
+| Flag | Dispatches | Model and effort |
+|---|---|---|
+| `--pr <numbers>` | No implementer. Review, and fix and re-review if it blocks, per existing PR | As any PR with no issue facts: the full review on the session model at `high` |
+| `--epic <number>` | One `delivery:triage` first; the batches are built from what it returns | Haiku at `low`, set in the script; `--small-model` does not move it |
+| `--triage` | The same triage dispatch, for the issues you named | Haiku at `low` |
+| `--per-issue` | One implementer per issue of a batch instead of one per batch | The batch's implement model and effort |
+| `--e2e` | `delivery:e2e-test` per UI-labelled PR, before its review | The batch's implement model and effort |
+
+`--triage` and `--per-issue` are **unmeasured**. Compare one before relying on it, the way
+`--small-effort` is compared: run a ref with and without it through
+`bench-run.mjs --orchestrate-args "--per-issue"` and read `bench-report.mjs`. The bench fixture
+has small issues and a six-second CI, so it understates anything that depends on context growth
+or on CI waits; `/delivery:retro --discover` on your own project's runs is the better evidence
+for routing questions.
+
+To change triage's model, edit the `model: 'haiku'` on its dispatch in `workflows/orchestrate.js`.
+It is fixed because the agent only copies facts out of `gh` output, and the script, not the
+model, decides what to do with them.
+
 ### Comparing tiers before changing them: `evals/`
 
 Before moving a review tier, compare the candidates on the same inputs. `evals/` holds a
