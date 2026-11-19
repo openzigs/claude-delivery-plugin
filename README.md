@@ -407,13 +407,27 @@ every call. Give each workstream its own session and its own named note (`/deliv
 connect`, later `/delivery:handoff resume connect`), so notes in one checkout do not overwrite
 each other.
 
+**Several agents in one session are fine; the handoff just has to come after them.** A session
+can run several workflow batches at once. Three things to know:
+
+- **Workflow agents are recorded; agents you dispatch by hand are not.** The handoff reads each
+  workflow run's saved result, so those PRs appear in the note as clean, waiting on you or still
+  blocking. An agent you dispatch yourself leaves no saved result: its work reaches the note
+  only if it opened a PR, and anything else it found exists only in the conversation. For
+  follow-up work prefer `/delivery:orchestrate --pr` and `/delivery:land`, which are recorded.
+- **Write the note after the agents report back**, not while they run. A note written mid-run can
+  only list them as in flight.
+- **Do not `/clear` or close while any agent is still running.** A workflow is a background task
+  of its session and ends with it; treat a hand-dispatched background agent the same way.
+
 **To adopt it in a project**, nothing is required, and three things help: add
 `.claude/handoff*.md` to `.gitignore` (it is working state); create `.claude/delivery.md` from the
 [template](docs/templates/delivery.md) and list the criteria only the owner can meet; and give
 issues a `Story Points` line. `/delivery:doctor` reports what a repository is missing.
 
 **When to reset:** after an epic's run is dealt with, when switching epics, before more than an
-hour away, and once a session has been compacted. Not while a workflow is still running. A rule
+hour away, and once a session has been compacted. Not while a workflow or background agent is
+still running. A rule
 of thumb is one session per epic or per working day, whichever is shorter.
 
 The measurements, a worked epic from idea to merged, the full setup table, an example note and the

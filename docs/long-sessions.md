@@ -181,6 +181,36 @@ to that workstream, because the facts above it cover the whole repository. Agent
 workflow dispatches are not affected by any of this: they never read a handoff note, and one
 session can still run several batches at once.
 
+## Multiple agents in one session
+
+Running several agents from one session is fine: a session can run several workflow batches at
+once, and the handoff covers all of them in one note. What needs care is the order of things,
+and the difference between agents a workflow dispatches and agents you dispatch yourself.
+
+| | Dispatched by a workflow (`/delivery:orchestrate`, `/delivery:land`) | Dispatched by hand ("have an agent fix the conflicts on #2767") |
+|---|---|---|
+| Reads the handoff note | No. It reads `CLAUDE.md` and `.claude/delivery.md` | No |
+| Its outcome is saved | Yes, in the workflow's result | No |
+| What the note's facts show | Every PR it touched: clean, waiting on you, still blocking, or never reviewed | Only a PR it opened. Anything else it found exists only in the conversation |
+| Review guaranteed | Yes, the workflow's code runs it | Only if you remember to ask |
+
+So, in practice:
+
+1. **Prefer the workflows for follow-up work.** A review or fix on an existing PR is
+   `/delivery:orchestrate --pr <n>`; merging, conflicts and stacks are `/delivery:land`. Both are
+   recorded, and both keep the review step.
+2. **Write the note after the agents report back.** Their results arrive in the session when
+   they finish. A note written before that can only list them under "In flight", and the next
+   session has to find out what happened from GitHub.
+3. **If you did dispatch agents by hand, say what they found when you write the note.** Anything
+   that did not end in a PR (a decision, an investigation's answer, a dead end) belongs in the
+   note's "Decisions" or "Do not redo" section, or it is gone after `/clear`.
+4. **Do not `/clear` or close while any agent is still running.** A workflow is a background task
+   of its session and was seen to end with it; treat a hand-dispatched background agent the same
+   way.
+5. **Keep unrelated workstreams in separate sessions** (above). Many agents on one epic is one
+   workstream; an epic, a PR stack and an unrelated experiment are three.
+
 ## When to reset the session
 
 | Moment | Do this | Why |
@@ -190,7 +220,7 @@ session can still run several batches at once.
 | Stepping away for more than an hour, or ending the day | `/delivery:handoff`, then close or `/clear` | Returning re-writes the whole context once the one-hour cache has expired |
 | The session has been compacted | `/delivery:handoff`, then `/clear` | It has already lost detail; a note you can read beats a summary you cannot |
 | Starting any session | `/delivery:handoff resume` | It reports where things stand and waits for you |
-| A workflow is still running | Do not reset or close yet | The run is a background task of that session; let it finish first |
+| A workflow or background agent is still running | Do not reset or close yet; write the note once they have reported back | The run is a background task of that session; let it finish first |
 
 A rule of thumb: one session per epic, or per working day, whichever is shorter.
 
