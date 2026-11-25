@@ -40,6 +40,10 @@
 //      runs, the batch criterion and the confidence calibration
 //  11. scripts/footprint.mjs measures every dispatch, and the code-issue and code-review
 //      dispatches stay under their stored byte ceiling
+//  12. scripts/check-commit-identity.mjs fails a commit range whose author, committer,
+//      trailers or message carry an (invented) private term, naming only the SHA and the
+//      field, passes a clean one, falls back to 50 commits, and skips or fails with no list;
+//      verify.yml hands its secret to that one step
 //
 // It exists because every one of those failures is silent at runtime.
 import { readFileSync, readdirSync, existsSync, statSync, rmSync, mkdirSync, mkdtempSync, symlinkSync, copyFileSync, cpSync, realpathSync, writeFileSync } from 'node:fs'
@@ -2917,6 +2921,130 @@ console.log('\n== bench/ and scripts/bench-*.mjs ==')
     c(tr.turns === 1 && tr.tokens.output === 7 && tr.tools.length === 1 && JSON.stringify(tr.efforts) === '["high"]',
       'streamed blocks of one message count as one turn, and its usage once')
   } catch (e) { c(false, `bench-report.mjs threw — ${e.message}`) }
+}
+
+// The commit-identity check (scripts/check-commit-identity.mjs). Throwaway git repositories
+// and INVENTED terms: the real list is a repository secret and is in no file here. Every red
+// case also proves the report does not print the term in any spelling, and every clean case
+// proves how many commits it read, so a range that silently reads nothing cannot pass.
+console.log('\n== scripts/check-commit-identity.mjs ==')
+{
+  const c = (cond, msg) => (cond ? ok(`commit identity: ${msg}`) : bad(`commit identity: ${msg}`))
+  const CHECK = join(ROOT, 'scripts/check-commit-identity.mjs')
+  const TERMS = '# invented terms\nacme-corp\n\nzq\n'
+  const ZERO = '0'.repeat(40), UNKNOWN = '1234567890abcdef1234567890abcdef12345678'
+  const gitEnv = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+  for (const k of ['PRIVATE_TERMS', 'PRIVATE_TERMS_FILE', 'REQUIRE_PRIVATE_TERMS', 'GITHUB_ACTIONS']) delete gitEnv[k]
+  const dirs = []
+  const repo = () => {
+    const dir = mkdtempSync(join(tmpdir(), 'commit-identity-'))
+    dirs.push(dir)
+    spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: dir, env: gitEnv })
+    return dir
+  }
+  const clean = { GIT_AUTHOR_NAME: 'Ada Rider', GIT_AUTHOR_EMAIL: 'ada@example.com', GIT_COMMITTER_NAME: 'Ada Rider', GIT_COMMITTER_EMAIL: 'ada@example.com' }
+  const commit = (dir, message, id = {}) =>
+    spawnSync('git', ['commit', '-q', '--allow-empty', '-m', message], { cwd: dir, env: { ...gitEnv, ...clean, ...id } })
+  const sha = (dir, rev = 'HEAD') => spawnSync('git', ['rev-parse', rev], { cwd: dir, encoding: 'utf8', env: gitEnv }).stdout.trim()
+  const run = (dir, args, env = { PRIVATE_TERMS: TERMS }) => {
+    const r = spawnSync(process.execPath, [CHECK, ...args], { cwd: dir, encoding: 'utf8', env: { ...gitEnv, ...env } })
+    return { status: r.status, out: `${r.stdout}${r.stderr}` }
+  }
+  const noLeak = (out) => !/acme|corp|(^|[^a-z0-9])zq([^a-z0-9]|$)/i.test(out)
+  const counted = (r, n) => r.status === 0 && r.out.includes(`check-commit-identity: ${n} commit(s) in`)
+  const hit = (r, line) => r.status === 1 && r.out.includes(line) && noLeak(r.out)
+  // A repository with one clean root and then one commit made with `message` and `id`.
+  const one = (message, id) => { const d = repo(); commit(d, 'root'); const b = sha(d); commit(d, message, id); return [d, b] }
+
+  try {
+    {
+      const d = repo(); commit(d, 'root'); const b = sha(d); commit(d, 'feat: a clean change'); commit(d, 'fix: another', { GIT_AUTHOR_NAME: 'Bea Climber' })
+      c(counted(run(d, ['--base', b, '--head', 'HEAD']), 2), 'a clean range passes and counts its 2 commits')
+      c(counted(run(d, ['--base', sha(d), '--head', 'HEAD']), 0), 'an empty range passes and says it read nothing')
+    }
+    for (const [field, message, id] of [
+      ['author name', 'feat: x', { GIT_AUTHOR_NAME: 'Acme Corp Builder' }],
+      ['author email', 'feat: x', { GIT_AUTHOR_EMAIL: 'ada@laptop.acme-corp.example' }],
+      ['committer name', 'feat: x', { GIT_COMMITTER_NAME: 'ACME_CORP' }],
+      ['committer email', 'feat: x', { GIT_COMMITTER_EMAIL: 'ci@AcmeCorp.example' }],
+      ['Co-authored-by trailer', 'feat: x\n\nCo-authored-by: Ada <ada@build-host.acme-corp.lan>', {}],
+      ['Signed-off-by trailer', 'feat: x\n\nSigned-off-by: Ada <ada@acme-corp.example>', {}],
+      ['commit message', 'feat: x\n\nTraced on the acme.corp staging box.', {}],
+      ['trailer 1 (key not shown)', 'feat: x\n\nAcme-Corp-Reviewer: Ada <ada@example.com>', {}],
+    ]) {
+      const [d, b] = one(message, id)
+      c(hit(run(d, ['--base', b, '--head', 'HEAD']), `${sha(d)}  ${field}`), `a term in the ${field} fails, naming the SHA and the field and not the term`)
+    }
+    {
+      let [d, b] = one('fix: x', { GIT_COMMITTER_EMAIL: 'ci@buildacmecorp01.example' })
+      c(hit(run(d, ['--base', b, '--head', 'HEAD']), `${sha(d)}  committer email`), 'a long term matches inside a fused hostname')
+      ;[d, b] = one('fix: the zqHost probe')
+      c(hit(run(d, ['--base', b, '--head', 'HEAD']), `${sha(d)}  commit message`), 'a short term matches a camelCase token')
+      ;[d, b] = one('fix: build-zq-01', { GIT_AUTHOR_EMAIL: 'ada@zq.example' })
+      c(hit(run(d, ['--base', b, '--head', 'HEAD']), `${sha(d)}  author email`), 'a short term matches a whole token in an email')
+      ;[d, b] = one('fix: the pizqa bazq and zqx words', { GIT_AUTHOR_NAME: 'Lizqa Ride' })
+      c(counted(run(d, ['--base', b, '--head', 'HEAD']), 1), 'a short term does not match inside a word')
+      ;[d, b] = one('fix: acme and corp, apart')
+      c(counted(run(d, ['--base', b, '--head', 'HEAD']), 1), 'a long term does not match its words apart')
+    }
+    {
+      const d = repo(); commit(d, 'root', { GIT_AUTHOR_NAME: 'Acme Corp' }); const b = sha(d); commit(d, 'feat: clean')
+      c(counted(run(d, ['--base', b, '--head', 'HEAD']), 1), 'a hit before the base is outside the range')
+    }
+    {
+      // 52 commits, the oldest two with the term: the last 50 are clean.
+      const d = repo(); commit(d, 'oldest', { GIT_AUTHOR_NAME: 'Acme Corp' }); commit(d, 'second', { GIT_AUTHOR_NAME: 'Acme Corp' })
+      for (let i = 1; i <= 50; i++) commit(d, `commit ${i}`)
+      for (const [args, reason] of [
+        [['--base', ZERO, '--head', 'HEAD'], "the base is all zeros (a branch's first push)"],
+        [['--head', 'HEAD'], 'no base was given'],
+        [['--base', UNKNOWN, '--head', 'HEAD'], 'the base is not a commit this clone holds'],
+        [['--base', sha(d, 'HEAD~1'), '--head', 'HEAD', '--forced', 'true'], 'the push was forced'],
+      ]) {
+        const r = run(d, args)
+        c(counted(r, 50) && r.out.includes(`the last 50 commits, because ${reason}`), `falls back to the last 50 commits when ${reason}`)
+      }
+      const e = repo(); commit(e, 'oldest', { GIT_AUTHOR_NAME: 'Acme Corp' })
+      for (let i = 1; i <= 49; i++) commit(e, `commit ${i}`)
+      c(hit(run(e, ['--base', ZERO, '--head', 'HEAD']), `${sha(e, 'HEAD~49')}  author name`), 'the 50th commit back is inside the fallback')
+      c(hit(run(e, ['--base', sha(e, 'HEAD~1'), '--head', 'HEAD', '--forced', 'true']), `${sha(e, 'HEAD~49')}  author name`), 'a forced push is not read as before..after')
+      c(counted(run(e, ['--base', sha(e, 'HEAD~1'), '--head', 'HEAD', '--forced', 'false']), 1), 'an unforced push reads before..after')
+    }
+    {
+      const d = repo(); commit(d, 'root')
+      let r = run(d, ['--head', 'HEAD'], { PRIVATE_TERMS: '' })
+      c(r.status === 0 && r.out.split('\n').includes('private-terms secret not available: identity check skipped'), 'no list and not required: skips, saying so')
+      r = run(d, ['--head', 'HEAD'], { PRIVATE_TERMS: '', GITHUB_ACTIONS: 'true' })
+      c(r.out.split('\n').includes('::warning::private-terms secret not available: identity check skipped'), 'no list in Actions: the skip is a warning annotation')
+      for (const v of ['true', '1']) {
+        r = run(d, ['--head', 'HEAD'], { PRIVATE_TERMS: '', REQUIRE_PRIVATE_TERMS: v })
+        c(r.status === 1 && r.out.includes('NOTHING WAS CHECKED'), `no list and REQUIRE_PRIVATE_TERMS=${v}: fails`)
+      }
+      r = run(d, ['--head', 'HEAD'], { PRIVATE_TERMS: '', REQUIRE_PRIVATE_TERMS: 'false' })
+      c(r.status === 0, "REQUIRE_PRIVATE_TERMS=false (a fork's pull request) still skips")
+      r = run(d, ['--head', 'HEAD'], { PRIVATE_TERMS: '# only a comment\n\n   \n' })
+      c(r.status === 1 && r.out.includes('has no terms'), 'a list of only comments fails')
+    }
+    {
+      const [d, b] = one('feat: x', { GIT_AUTHOR_EMAIL: 'ada@acme-corp.example' })
+      const file = join(d, '.git', 'terms.txt'); writeFileSync(file, TERMS)
+      c(hit(run(d, ['--base', b, '--head', 'HEAD'], { PRIVATE_TERMS: '', PRIVATE_TERMS_FILE: file }), `${sha(d)}  author email`), 'the list can come from PRIVATE_TERMS_FILE')
+      c(hit(run(d, ['--base', b, '--head', UNKNOWN]), '--head is not a commit'), 'an unknown head fails')
+      const r = run(d, ['--base', b, '--head', 'HEAD'], { PRIVATE_TERMS: TERMS, GITHUB_ACTIONS: 'true' })
+      c(r.out.split('\n').includes(`::error::commit ${sha(d)}: private term in its author email`) && noLeak(r.out),
+        'in Actions a hit is an error annotation that names the field only')
+    }
+  } catch (e) { c(false, `threw — ${e.message}`) } finally { for (const d of dirs) rmSync(d, { recursive: true, force: true }) }
+
+  // The CI step: the one secret, before anything else runs, required everywhere but a fork.
+  const ci = readFileSync(join(ROOT, '.github/workflows/verify.yml'), 'utf8').replace(/^\s*#.*\n/gm, '')
+  c((ci.match(/secrets\./g) ?? []).length === 1 && ci.includes('PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}'),
+    'verify.yml hands one secret, PRIVATE_TERMS, to one step')
+  c(ci.includes("REQUIRE_PRIVATE_TERMS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}"),
+    'verify.yml requires the list on a push and on a pull request from this repository')
+  c(/git fetch --no-tags --quiet --filter=tree:0 --unshallow origin "\$RANGE_HEAD"\n\s*node scripts\/check-commit-identity\.mjs --base "\$RANGE_BASE" --head "\$RANGE_HEAD" --forced "\$RANGE_FORCED"/.test(ci)
+    && ci.indexOf('check-commit-identity') < ci.indexOf('verify-plugin.mjs'),
+    'verify.yml fetches the history, runs the check on the event\'s range, and before verify-plugin.mjs')
 }
 
 console.log(`\n${fails === 0 ? 'ALL CHECKS PASSED' : fails + ' CHECK(S) FAILED'}`)
