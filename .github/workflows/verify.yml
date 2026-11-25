@@ -17,4 +17,23 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # A commit's author, committer and trailers are not in the tree, and a push publishes
+      # them all the same. This fails when any commit in the event's range (a pull request's
+      # base..head, a push's before..after, or the last 50 commits on a first or forced push)
+      # carries a private term in them or in its message, and names only the SHA and the field:
+      # this log is public. The checkout is one commit deep, so the step first fetches the
+      # history it reads, commit objects only. The term list is the one secret in this file,
+      # in this step's env alone. A fork's pull request is given no secrets, so there it skips
+      # and says so; on a push or a pull request from this repository REQUIRE_PRIVATE_TERMS
+      # makes a missing secret a failure. Every value reaches the script through env.
+      - name: Commit identity
+        env:
+          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+          REQUIRE_PRIVATE_TERMS: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+          RANGE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          RANGE_HEAD: ${{ github.event.pull_request.head.sha || github.event.after }}
+          RANGE_FORCED: ${{ github.event.forced }}
+        run: |
+          git fetch --no-tags --quiet --filter=tree:0 --unshallow origin "$RANGE_HEAD"
+          node scripts/check-commit-identity.mjs --base "$RANGE_BASE" --head "$RANGE_HEAD" --forced "$RANGE_FORCED"
       - run: node scripts/verify-plugin.mjs
