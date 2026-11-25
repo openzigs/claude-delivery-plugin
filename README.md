@@ -1,5 +1,13 @@
 # delivery — a Claude Code plugin
 
+```bash
+claude plugin marketplace add openzigs/claude-delivery-plugin
+claude plugin install delivery@claude-delivery-plugin
+```
+
+Then, in any GitHub repository, `/delivery:orchestrate <issue number>` takes that issue to a
+reviewed pull request. **Website: [openzigs.com/claude-delivery-plugin](https://openzigs.com/claude-delivery-plugin/)**
+
 A project-agnostic delivery pipeline for Claude Code: three workflows, nine agents and
 twelve skills that take a GitHub issue from implementation through **independent review**,
 fix and re-review — or turn a topic into a filed epic with sub-issues — plus a read-only
